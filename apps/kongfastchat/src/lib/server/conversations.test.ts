@@ -11,7 +11,7 @@ const mockValues = vi.fn()
 const mockReturning = vi.fn()
 const mockSet = vi.fn()
 
-vi.mock("@workspace/db/client", () => ({
+vi.mock("@workspace/universal-memory/client", () => ({
   db: {
     insert: (...args: Array<unknown>) => {
       mockInsert(...args)
@@ -41,7 +41,7 @@ vi.mock("@workspace/db/client", () => ({
   },
 }))
 
-vi.mock("@workspace/db/schema", () => ({
+vi.mock("@workspace/universal-memory/schema", () => ({
   conversations: { id: "conversations.id", userId: "conversations.user_id" },
   messages: {
     id: "messages.id",

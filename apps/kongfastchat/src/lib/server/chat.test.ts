@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-vi.mock("@workspace/db/client", () => ({
+vi.mock("@workspace/universal-memory/client", () => ({
   db: {
     insert: vi.fn(() => ({
       values: vi.fn(() => ({
@@ -23,7 +23,7 @@ vi.mock("@workspace/db/client", () => ({
   },
 }))
 
-vi.mock("@workspace/db/schema", () => ({
+vi.mock("@workspace/universal-memory/schema", () => ({
   conversations: { id: "conversations.id" },
   messages: {
     id: "messages.id",

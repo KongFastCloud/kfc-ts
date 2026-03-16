@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 
-vi.mock("@workspace/db/client", () => ({
+vi.mock("@workspace/universal-memory/client", () => ({
   db: {},
 }))
 

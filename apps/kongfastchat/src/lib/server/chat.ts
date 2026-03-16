@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start"
 import { z } from "zod"
-import { db } from "@workspace/db/client"
-import { conversations, messages } from "@workspace/db/schema"
+import { db } from "@workspace/universal-memory/client"
+import { conversations, messages } from "@workspace/universal-memory/schema"
 import { eq } from "drizzle-orm"
 import { chat } from "@workspace/mastra/chat"
 
