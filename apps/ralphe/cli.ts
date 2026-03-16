@@ -13,6 +13,7 @@ import { loop } from "./src/loop.js"
 import { loadConfig, saveConfig, type RalpheConfig } from "./src/config.js"
 import { detectProject } from "./src/detect.js"
 import { gitCommitAndPush } from "./src/git.js"
+import { report } from "./src/report.js"
 import fs from "node:fs"
 
 // -- config subcommand --
@@ -69,6 +70,18 @@ const config = Command.make("config", {}, () =>
       }),
     )
 
+    const reportMode = yield* Effect.promise(() =>
+      select({
+        message: "Report mode",
+        choices: [
+          { name: "none", value: "none" as const, description: "No verification report" },
+          { name: "basic", value: "basic" as const, description: "Verify via terminal" },
+          { name: "browser", value: "browser" as const, description: "Verify with agent-browser (video)" },
+        ],
+        default: existing.report,
+      }),
+    )
+
     const autoCommit = yield* Effect.promise(() =>
       confirm({
         message: "Auto-commit and push on success?",
@@ -81,6 +94,7 @@ const config = Command.make("config", {}, () =>
       maxAttempts: parseInt(maxAttemptsStr, 10) || 2,
       checks,
       autoCommit,
+      report: reportMode,
     }
 
     saveConfig(newConfig)
@@ -141,18 +155,19 @@ const run = Command.make(
         yield* Console.log(`No checks configured — running agent only.`)
       }
 
-      const workflow = cfg.checks.length > 0
-        ? loop(
-            (feedback) => {
-              let pipeline: Effect.Effect<unknown, any, Engine> = agent(task, { feedback })
-              for (const check of cfg.checks) {
-                pipeline = pipe(pipeline, Effect.andThen(cmd(check)))
-              }
-              return pipeline
-            },
-            { maxAttempts: cfg.maxAttempts },
-          )
-        : agent(task).pipe(Effect.asVoid)
+      const workflow = loop(
+        (feedback) => {
+          let pipeline: Effect.Effect<unknown, any, Engine> = agent(task, { feedback })
+          for (const check of cfg.checks) {
+            pipeline = pipe(pipeline, Effect.andThen(cmd(check)))
+          }
+          if (cfg.report !== "none") {
+            pipeline = pipe(pipeline, Effect.andThen(report(task, cfg.report)))
+          }
+          return pipeline
+        },
+        { maxAttempts: cfg.maxAttempts },
+      )
 
       const engineLayer: Layer.Layer<Engine> =
         engineChoice === "codex" ? CodexEngineLayer : ClaudeEngineLayer

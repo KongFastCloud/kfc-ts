@@ -6,6 +6,7 @@ export interface RalpheConfig {
   readonly maxAttempts: number
   readonly checks: string[]
   readonly autoCommit: boolean
+  readonly report: "browser" | "basic" | "none"
 }
 
 const CONFIG_DIR = ".ralphe"
@@ -16,6 +17,7 @@ const DEFAULTS: RalpheConfig = {
   maxAttempts: 2,
   checks: [],
   autoCommit: false,
+  report: "none",
 }
 
 export const getConfigPath = (workDir = process.cwd()): string =>
@@ -35,6 +37,7 @@ export const loadConfig = (workDir = process.cwd()): RalpheConfig => {
       maxAttempts: raw.maxAttempts ?? DEFAULTS.maxAttempts,
       checks: Array.isArray(raw.checks) ? raw.checks : DEFAULTS.checks,
       autoCommit: raw.autoCommit ?? DEFAULTS.autoCommit,
+      report: raw.report ?? DEFAULTS.report,
     }
   } catch {
     return DEFAULTS

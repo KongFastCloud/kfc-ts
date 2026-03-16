@@ -22,6 +22,7 @@ describe("loadConfig", () => {
       maxAttempts: 2,
       checks: [],
       autoCommit: false,
+      report: "none",
     })
   })
 
@@ -56,7 +57,7 @@ describe("loadConfig", () => {
     fs.mkdirSync(configDir, { recursive: true })
     fs.writeFileSync(path.join(configDir, "config.json"), "not json")
     const config = loadConfig(tmpDir)
-    expect(config).toEqual({ engine: "claude", maxAttempts: 2, checks: [], autoCommit: false })
+    expect(config).toEqual({ engine: "claude", maxAttempts: 2, checks: [], autoCommit: false, report: "none" })
   })
 })
 

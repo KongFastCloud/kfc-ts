@@ -43,7 +43,8 @@ The wizard auto-detects your project type (Node/Python/Go/Rust) and suggests che
     "bun run lint",
     "bun test"
   ],
-  "autoCommit": false
+  "autoCommit": false,
+  "report": "none"
 }
 ```
 
@@ -53,6 +54,7 @@ The wizard auto-detects your project type (Node/Python/Go/Rust) and suggests che
 | `maxAttempts` | `2` | Max retry attempts on check failure |
 | `checks` | `[]` | Shell commands to verify agent output |
 | `autoCommit` | `false` | Auto-commit and push on success |
+| `report` | `"none"` | Verification report mode (`"none"`, `"basic"`, or `"browser"`) |
 
 Without a config, ralphe runs the agent with no checks.
 
@@ -62,11 +64,21 @@ Without a config, ralphe runs the agent with no checks.
 1. Agent receives task (text or file contents)
 2. Agent makes changes
 3. Check commands run (typecheck, lint, test)
-4. If checks fail → retry with error feedback (clean context)
-5. If checks pass → optionally commit + push
+4. Report agent verifies the feature works (if enabled)
+5. If any step fails → retry with error feedback (clean context)
+6. If all pass → optionally commit + push
 ```
 
 When `autoCommit` is enabled, ralphe uses the engine to generate a conventional commit message from the staged diff, then commits and pushes.
+
+## Report
+
+When `report` is set to `"basic"` or `"browser"`, a verification agent runs after checks pass to confirm the feature actually works (not just that it doesn't break anything).
+
+- **`"basic"`** — verifies via terminal commands
+- **`"browser"`** — can use agent-browser for visual verification (video recording)
+
+The agent decides what verification is appropriate based on the task. Reports are saved to `.ralphe/reports/`. If verification fails, it feeds back into the retry loop like any other check failure.
 
 ## Engines
 
