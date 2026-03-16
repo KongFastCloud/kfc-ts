@@ -2,7 +2,7 @@
 import { Args, Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Console, Effect, Layer, pipe } from "effect"
-import { checkbox, select, input } from "@inquirer/prompts"
+import { checkbox, confirm, select, input } from "@inquirer/prompts"
 import { ClaudeEngineLayer } from "./src/engine/ClaudeEngine.js"
 import { CodexEngineLayer } from "./src/engine/CodexEngine.js"
 import { Engine } from "./src/engine/Engine.js"
@@ -11,6 +11,7 @@ import { cmd } from "./src/cmd.js"
 import { loop } from "./src/loop.js"
 import { loadConfig, saveConfig, type RalpheConfig } from "./src/config.js"
 import { detectProject } from "./src/detect.js"
+import { gitCommitAndPush } from "./src/git.js"
 
 // -- config subcommand --
 
@@ -66,10 +67,18 @@ const config = Command.make("config", {}, () =>
       }),
     )
 
+    const autoCommit = yield* Effect.promise(() =>
+      confirm({
+        message: "Auto-commit and push on success?",
+        default: existing.autoCommit,
+      }),
+    )
+
     const newConfig: RalpheConfig = {
       engine: engineChoice,
       maxAttempts: parseInt(maxAttemptsStr, 10) || 2,
       checks,
+      autoCommit,
     }
 
     saveConfig(newConfig)
@@ -125,6 +134,10 @@ const run = Command.make(
         engineChoice === "codex" ? CodexEngineLayer : ClaudeEngineLayer
 
       yield* Effect.provide(workflow, engineLayer)
+
+      if (cfg.autoCommit) {
+        yield* Effect.provide(gitCommitAndPush(), engineLayer)
+      }
 
       yield* Console.log("Done!")
     }),

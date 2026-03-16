@@ -5,6 +5,7 @@ export interface RalpheConfig {
   readonly engine: "claude" | "codex"
   readonly maxAttempts: number
   readonly checks: string[]
+  readonly autoCommit: boolean
 }
 
 const CONFIG_DIR = ".ralphe"
@@ -14,6 +15,7 @@ const DEFAULTS: RalpheConfig = {
   engine: "claude",
   maxAttempts: 2,
   checks: [],
+  autoCommit: false,
 }
 
 export const getConfigPath = (workDir = process.cwd()): string =>
@@ -32,6 +34,7 @@ export const loadConfig = (workDir = process.cwd()): RalpheConfig => {
       engine: raw.engine ?? DEFAULTS.engine,
       maxAttempts: raw.maxAttempts ?? DEFAULTS.maxAttempts,
       checks: Array.isArray(raw.checks) ? raw.checks : DEFAULTS.checks,
+      autoCommit: raw.autoCommit ?? DEFAULTS.autoCommit,
     }
   } catch {
     return DEFAULTS

@@ -21,6 +21,7 @@ describe("loadConfig", () => {
       engine: "claude",
       maxAttempts: 2,
       checks: [],
+      autoCommit: false,
     })
   })
 
@@ -55,13 +56,13 @@ describe("loadConfig", () => {
     fs.mkdirSync(configDir, { recursive: true })
     fs.writeFileSync(path.join(configDir, "config.json"), "not json")
     const config = loadConfig(tmpDir)
-    expect(config).toEqual({ engine: "claude", maxAttempts: 2, checks: [] })
+    expect(config).toEqual({ engine: "claude", maxAttempts: 2, checks: [], autoCommit: false })
   })
 })
 
 describe("saveConfig", () => {
   test("creates directory and writes config", () => {
-    saveConfig({ engine: "codex", maxAttempts: 5, checks: ["cargo test"] }, tmpDir)
+    saveConfig({ engine: "codex", maxAttempts: 5, checks: ["cargo test"], autoCommit: true }, tmpDir)
     const configPath = getConfigPath(tmpDir)
     expect(fs.existsSync(configPath)).toBe(true)
     const saved = JSON.parse(fs.readFileSync(configPath, "utf-8"))
