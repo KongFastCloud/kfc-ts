@@ -10,7 +10,7 @@
     "verbatimModuleSyntax": true,
     "baseUrl": ".",
     "paths": {
-      "@workspace/db/*": ["./src/*"]
+      "@workspace/universal-memory/*": ["./src/*"]
     }
   },
   "include": ["."],
