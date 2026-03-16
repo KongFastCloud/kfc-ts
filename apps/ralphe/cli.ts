@@ -6,12 +6,14 @@ import { checkbox, confirm, select, input } from "@inquirer/prompts"
 import { ClaudeEngineLayer } from "./src/engine/ClaudeEngine.js"
 import { CodexEngineLayer } from "./src/engine/CodexEngine.js"
 import { Engine } from "./src/engine/Engine.js"
+import { FatalError } from "./src/errors.js"
 import { agent } from "./src/agent.js"
 import { cmd } from "./src/cmd.js"
 import { loop } from "./src/loop.js"
 import { loadConfig, saveConfig, type RalpheConfig } from "./src/config.js"
 import { detectProject } from "./src/detect.js"
 import { gitCommitAndPush } from "./src/git.js"
+import fs from "node:fs"
 
 // -- config subcommand --
 
@@ -94,22 +96,44 @@ const config = Command.make("config", {}, () =>
 
 // -- run subcommand --
 
-const task = Args.text({ name: "task" })
+const task = Args.text({ name: "task" }).pipe(Args.optional)
+const file = Options.file("file").pipe(
+  Options.withAlias("f"),
+  Options.optional,
+)
 const engineFlag = Options.choice("engine", ["claude", "codex"]).pipe(
   Options.optional,
 )
 
 const run = Command.make(
   "run",
-  { task, engine: engineFlag },
-  ({ task, engine: engineOverride }) =>
+  { task, file, engine: engineFlag },
+  ({ task: taskArg, file: fileOpt, engine: engineOverride }) =>
     Effect.gen(function* () {
       const cfg = loadConfig()
       const engineChoice = engineOverride.pipe(
         (opt) => opt._tag === "Some" ? opt.value : cfg.engine,
       )
 
-      yield* Console.log(`Task: ${task}`)
+      // Resolve task from file or positional arg
+      let task: string
+      if (fileOpt._tag === "Some") {
+        const filePath = fileOpt.value
+        if (!fs.existsSync(filePath)) {
+          return yield* Effect.fail(
+            new FatalError({ command: "file", message: `File not found: ${filePath}` }),
+          )
+        }
+        task = fs.readFileSync(filePath, "utf-8")
+        yield* Console.log(`Task from file: ${filePath}`)
+      } else if (taskArg._tag === "Some") {
+        task = taskArg.value
+        yield* Console.log(`Task: ${task}`)
+      } else {
+        return yield* Effect.fail(
+          new FatalError({ command: "run", message: `Provide a task as text or with --file` }),
+        )
+      }
       yield* Console.log(`Engine: ${engineChoice}`)
       if (cfg.checks.length > 0) {
         yield* Console.log(`Checks: ${cfg.checks.join(", ")}`)

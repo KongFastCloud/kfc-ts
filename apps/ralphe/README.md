@@ -1,54 +1,72 @@
 # ralphe
 
-Effect TS AI coding agent task runner. Runs AI agents (Claude Code, Codex) against tasks, verifies output with shell commands (typecheck, lint, test), and retries with error feedback on failure.
+Effect TS AI coding agent task runner. Runs AI agents (Claude Code, Codex) against tasks, verifies output with shell commands, and retries with error feedback on failure.
+
+## Install
+
+```bash
+cd apps/ralphe && bun run link
+```
+
+This registers the `ralphe` CLI globally via symlink.
 
 ## Usage
 
 ```bash
-bun run cli.ts "fix the failing tests"
-bun run cli.ts --engine codex "add input validation"
+# Text task
+ralphe run "fix the failing tests"
+
+# File task (e.g. a PRD)
+ralphe run --file PRD.md
+ralphe run -f tasks.txt
+
+# Override engine
+ralphe run --engine codex "add input validation"
 ```
 
 ## Config
 
-Create `.ralphe/config.ts` in your project root:
+Run `ralphe config` to interactively configure per-project settings. This creates `.ralphe/config.json` in the current directory.
 
-```ts
-import { Effect, pipe } from "effect"
-import { agent, cmd, loop } from "ralphe"
-
-export default (task: string) =>
-  loop(
-    (feedback) =>
-      pipe(
-        agent(task, { feedback }),
-        Effect.andThen(cmd("npm run typecheck")),
-        Effect.andThen(cmd("npm run lint")),
-        Effect.andThen(cmd("npm run test")),
-      ),
-    { maxAttempts: 2 },
-  )
+```bash
+ralphe config
 ```
 
-## API
+The wizard auto-detects your project type (Node/Python/Go/Rust) and suggests check commands.
 
-### `agent(task, opts?)`
+```json
+{
+  "engine": "claude",
+  "maxAttempts": 2,
+  "checks": [
+    "bun run typecheck",
+    "bun run lint",
+    "bun test"
+  ],
+  "autoCommit": false
+}
+```
 
-Sends a prompt to the configured AI engine. Appends previous error feedback on retries.
+| Field | Default | Description |
+|-------|---------|-------------|
+| `engine` | `"claude"` | AI engine (`"claude"` or `"codex"`) |
+| `maxAttempts` | `2` | Max retry attempts on check failure |
+| `checks` | `[]` | Shell commands to verify agent output |
+| `autoCommit` | `false` | Auto-commit and push on success |
 
-- Returns `Effect<AgentResult, CheckFailure | FatalError, Engine>`
+Without a config, ralphe runs the agent with no checks.
 
-### `cmd(command)`
+## How It Works
 
-Runs a shell command. Non-zero exit produces a `CheckFailure` (retryable).
+```
+1. Agent receives task (text or file contents)
+2. Agent makes changes
+3. Check commands run (typecheck, lint, test)
+4. If checks fail → retry with error feedback (clean context)
+5. If checks pass → optionally commit + push
+```
 
-- Returns `Effect<CmdResult, CheckFailure | FatalError>`
-
-### `loop(fn, opts?)`
-
-Retry combinator. Catches `CheckFailure`, feeds stderr as feedback to the next attempt. Converts to `FatalError` after `maxAttempts` (default: 2).
-
-- Returns `Effect<void, FatalError, R>` — `CheckFailure` is eliminated from the error channel
+When `autoCommit` is enabled, ralphe uses the engine to generate a conventional commit message from the staged diff, then commits and pushes.
 
 ## Engines
 
@@ -57,5 +75,5 @@ Retry combinator. Catches `CheckFailure`, feeds stderr as feedback to the next a
 
 ## Errors
 
-- `CheckFailure` — retryable (typecheck/lint/test failed)
+- `CheckFailure` — retryable (check command failed)
 - `FatalError` — abort (CLI not found, auth error, max retries exceeded)
