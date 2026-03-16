@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash:*)",
+      "mcp__deepwiki__read_wiki_contents",
+      "mcp__deepwiki__ask_question",
+      "WebSearch",
+      "WebFetch(domain:neon.tech)",
+      "WebFetch(domain:www.better-auth.com)",
+      "WebFetch(domain:neon.com)",
+      "WebFetch(domain:better-auth.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:mastra.ai)",
+      "WebFetch(domain:news.convex.dev)",
+      "WebFetch(domain:www.troublefreeai.com)",
+      "WebFetch(domain:stack.convex.dev)",
+      "WebFetch(domain:electric-sql.com)",
+      "WebFetch(domain:www.answeroverflow.com)",
+      "Bash(gh api:*)",
+      "WebFetch(domain:ai-sdk.dev)",
+      "WebFetch(domain:tanstack.com)",
+      "WebFetch(domain:frontendatscale.com)",
+      "WebFetch(domain:vercel.com)",
+      "Bash(agent-browser eval:*)",
+      "Bash(agent-browser:*)",
+      "mcp__Neon__list_projects",
+      "Bash(npx drizzle-kit:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "neon"
+  ]
+}
