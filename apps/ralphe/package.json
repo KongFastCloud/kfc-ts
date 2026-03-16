@@ -1,0 +1,31 @@
+{
+  "name": "ralphe",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "ralphe": "./cli.ts"
+  },
+  "scripts": {
+    "dev": "bun run cli.ts",
+    "link": "bun link",
+    "build": "echo 'Add build script here'",
+    "test": "bun test tests/",
+    "lint": "echo 'Add lint script here'"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.76",
+    "@effect/cli": "^0.73.2",
+    "@effect/platform-bun": "^0.87.1",
+    "@inquirer/prompts": "^8.3.2",
+    "effect": "^3.19.19"
+  }
+}
