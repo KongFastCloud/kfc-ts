@@ -24,7 +24,10 @@
       "Bash(agent-browser eval:*)",
       "Bash(agent-browser:*)",
       "mcp__Neon__list_projects",
-      "Bash(npx drizzle-kit:*)"
+      "Bash(npx drizzle-kit:*)",
+      "Bash(grep:*)",
+      "Bash(bunx tsc:*)",
+      "Bash(bun test:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
