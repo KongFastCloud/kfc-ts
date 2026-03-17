@@ -122,7 +122,6 @@ vi.mock("@workspace/ui/components/dialog", () => ({
   ),
   DialogClose: ({
     children,
-    asChild,
   }: {
     children: React.ReactNode
     asChild?: boolean

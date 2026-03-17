@@ -26,7 +26,10 @@ pnpm dev
 pnpm build
 pnpm lint
 pnpm typecheck
+pnpm test
 ```
+
+`pnpm test` runs the Turbo test pipeline across the workspace, excluding `@workspace/universal-memory` for now.
 
 ## Monorepo Notes
 

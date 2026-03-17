@@ -5,7 +5,12 @@ import {
   SidebarTrigger,
 } from "@workspace/ui/components/sidebar"
 import { TooltipProvider } from "@workspace/ui/components/tooltip"
-import { SignedIn, SignedOut, AuthLoading, RedirectToSignIn } from "@neondatabase/neon-js/auth/react/ui"
+import {
+  AuthLoading,
+  RedirectToSignIn,
+  SignedIn,
+  SignedOut,
+} from "@neondatabase/neon-js/auth/react/ui"
 import { authClient } from "../lib/auth-client"
 import { AppSidebar } from "../components/app-sidebar"
 

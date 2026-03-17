@@ -1,18 +1,28 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { eq, sql } from "drizzle-orm"
 import { neon } from "@neondatabase/serverless"
+import { drizzle } from "drizzle-orm/neon-http"
 import "dotenv/config"
+import * as schema from "./schema"
 import { apiKeys, conversations, messages } from "./schema"
-import { createDb } from "./client"
-import type { Database } from "./client"
+
+const databaseUrl = process.env.DATABASE_URL
+const describeIfDatabase = databaseUrl ? describe : describe.skip
+const createTestDb = (url: string) => drizzle({ client: neon(url), schema })
+
+type Database = ReturnType<typeof createTestDb>
 
 let db: Database
 let rawSql: ReturnType<typeof neon>
 let testUserId: string
 
 beforeAll(async () => {
-  rawSql = neon(process.env.DATABASE_URL!)
-  db = createDb(process.env.DATABASE_URL!)
+  if (!databaseUrl) {
+    return
+  }
+
+  rawSql = neon(databaseUrl)
+  db = createTestDb(databaseUrl)
 
   // Create a test user in neon_auth.user (requires name, email, emailVerified)
   testUserId = crypto.randomUUID()
@@ -20,6 +30,10 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  if (!databaseUrl) {
+    return
+  }
+
   // Clean up in reverse FK order
   await db.delete(messages)
   await db.delete(apiKeys)
@@ -27,7 +41,7 @@ afterAll(async () => {
   await rawSql`DELETE FROM neon_auth."user" WHERE id = ${testUserId}`
 })
 
-describe("conversations", () => {
+describeIfDatabase("conversations", () => {
   it("creates and reads a conversation", async () => {
     const [conv] = await db
       .insert(conversations)
@@ -105,7 +119,7 @@ describe("conversations", () => {
   })
 })
 
-describe("messages", () => {
+describeIfDatabase("messages", () => {
   it("creates messages linked to a conversation", async () => {
     const [conv] = await db
       .insert(conversations)
@@ -189,7 +203,7 @@ describe("messages", () => {
   })
 })
 
-describe("api_keys", () => {
+describeIfDatabase("api_keys", () => {
   it("creates and reads an API key", async () => {
     const [key] = await db
       .insert(apiKeys)
