@@ -14,5 +14,11 @@ export type { RalpheConfig } from "./config.js"
 export { detectProject } from "./detect.js"
 export { gitCommitAndPush } from "./git.js"
 export { report } from "./report.js"
+export {
+  getGlobalSkillTargets,
+  installGlobalSkill,
+  RALPHE_SKILL_MARKDOWN,
+} from "./skill.js"
 export type { ReportResult } from "./report.js"
 export type { DetectedProject, DetectedCheck } from "./detect.js"
+export type { InstallGlobalSkillOptions, SkillTarget } from "./skill.js"

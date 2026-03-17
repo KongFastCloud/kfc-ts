@@ -14,6 +14,7 @@ import { loadConfig, saveConfig, type RalpheConfig } from "./src/config.js"
 import { detectProject } from "./src/detect.js"
 import { gitCommitAndPush } from "./src/git.js"
 import { report } from "./src/report.js"
+import { installGlobalSkill } from "./src/skill.js"
 import fs from "node:fs"
 
 // -- config subcommand --
@@ -172,10 +173,23 @@ const run = Command.make(
     }),
 )
 
+// -- skill subcommand --
+
+const skill = Command.make("skill", {}, () =>
+  Effect.gen(function* () {
+    const installed = yield* installGlobalSkill()
+
+    yield* Console.log("Installed ralphe skill globally:")
+    for (const target of installed) {
+      yield* Console.log(`- ${target.name}: ${target.path}`)
+    }
+  }),
+)
+
 // -- root --
 
 const ralphe = Command.make("ralphe").pipe(
-  Command.withSubcommands([config, run]),
+  Command.withSubcommands([config, run, skill]),
 )
 
 const cli = Command.run(ralphe, {

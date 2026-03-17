@@ -10,6 +10,14 @@ cd apps/ralphe && bun run link
 
 This registers the `ralphe` CLI globally via symlink.
 
+## Global Skill
+
+```bash
+ralphe skill
+```
+
+This installs the bundled `ralphe` skill into the global Claude and Codex skill directories. Running it again replaces the existing global `ralphe` skill with the version bundled in the CLI, so it works cleanly with `bunx`.
+
 ## Usage
 
 ```bash
@@ -22,6 +30,9 @@ ralphe run -f tasks.txt
 
 # Override engine
 ralphe run --engine codex "add input validation"
+
+# Install or refresh the global ralphe skill
+ralphe skill
 ```
 
 ## Config
