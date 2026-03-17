@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Flox
+        uses: flox/install-flox-action@v2
+
+      - name: Install dependencies
+        uses: flox/activate-action@v1
+        with:
+          command: pnpm install --frozen-lockfile
+
+      - name: Lint
+        uses: flox/activate-action@v1
+        with:
+          command: pnpm lint
+
+      - name: Typecheck
+        uses: flox/activate-action@v1
+        with:
+          command: pnpm typecheck
+
+      - name: Test
+        uses: flox/activate-action@v1
+        with:
+          command: pnpm test
