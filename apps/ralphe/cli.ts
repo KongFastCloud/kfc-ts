@@ -53,16 +53,6 @@ const config = Command.make("config", {}, () =>
         )
       : []
 
-    const customCheck = yield* Effect.promise(() =>
-      input({
-        message: "Add custom check command (leave empty to skip)",
-      }),
-    )
-
-    if (customCheck.trim()) {
-      checks.push(customCheck.trim())
-    }
-
     const maxAttemptsStr = yield* Effect.promise(() =>
       input({
         message: "Max attempts",

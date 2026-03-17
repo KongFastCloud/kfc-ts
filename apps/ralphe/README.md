@@ -32,7 +32,7 @@ Run `ralphe config` to interactively configure per-project settings. This create
 ralphe config
 ```
 
-The wizard auto-detects your project type (Node/Python/Go/Rust) and suggests check commands.
+The wizard auto-detects your project type (Node/Python/Go/Rust) and lets you select from suggested check commands.
 
 ```json
 {
@@ -60,13 +60,18 @@ Without a config, ralphe runs the agent with no checks.
 
 ## How It Works
 
-```
-1. Agent receives task (text or file contents)
-2. Agent makes changes
-3. Check commands run (typecheck, lint, test)
-4. Report agent verifies the feature works (if enabled)
-5. If any step fails → retry with error feedback (clean context)
-6. If all pass → optionally commit + push
+```mermaid
+flowchart TD
+    A["Start `ralphe run`"] --> B["Load config and resolve task text<br/>(inline or `--file`)"]
+    B --> C["Run selected engine<br/>(Claude or Codex)"]
+    C --> D["Run configured checks"]
+    D --> E{"Checks pass?"}
+    E -- "No, retry if attempts remain" --> C
+    E -- "Yes" --> F["Optionally run a verification report<br/>(basic or browser)"]
+    F --> G{"Report passes?"}
+    G -- "No, retry if attempts remain" --> C
+    G -- "Yes" --> H["Optionally auto-commit and push to git"]
+    H --> I["Done"]
 ```
 
 When `autoCommit` is enabled, ralphe uses the engine to generate a conventional commit message from the staged diff, then commits and pushes.
