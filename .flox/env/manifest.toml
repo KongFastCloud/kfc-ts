@@ -1,0 +1,6 @@
+version = 1
+
+[install]
+nodejs.pkg-path = "nodejs_20"
+pnpm.pkg-path = "pnpm_9"
+bun.pkg-path = "bun"
