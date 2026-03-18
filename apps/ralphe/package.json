@@ -13,10 +13,12 @@
     "link": "bun link",
     "build": "echo 'Add build script here'",
     "test": "bun test tests/",
-    "lint": "echo 'Add lint script here'"
+    "lint": "oxlint src tests cli.ts",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
   },
   "peerDependencies": {
     "typescript": "^5"

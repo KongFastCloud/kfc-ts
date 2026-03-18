@@ -63,7 +63,7 @@ describe("loadConfig", () => {
 
 describe("saveConfig", () => {
   test("creates directory and writes config", () => {
-    saveConfig({ engine: "codex", maxAttempts: 5, checks: ["cargo test"], autoCommit: true }, tmpDir)
+    saveConfig({ engine: "codex", maxAttempts: 5, checks: ["cargo test"], autoCommit: true, report: "none" }, tmpDir)
     const configPath = getConfigPath(tmpDir)
     expect(fs.existsSync(configPath)).toBe(true)
     const saved = JSON.parse(fs.readFileSync(configPath, "utf-8"))

@@ -46,8 +46,13 @@ const parseReportResult = (response: string): ReportResult => {
     return { success: false, report: "Agent did not return a structured report." }
   }
 
+  const jsonPayload = jsonMatch[1]
+  if (!jsonPayload) {
+    return { success: false, report: "Agent returned an empty JSON code block." }
+  }
+
   try {
-    const parsed = JSON.parse(jsonMatch[1])
+    const parsed = JSON.parse(jsonPayload)
     return {
       success: Boolean(parsed.success),
       report: String(parsed.report ?? ""),
