@@ -19,6 +19,13 @@ export {
   installGlobalSkill,
   RALPHE_SKILL_MARKDOWN,
 } from "./skill.js"
+export {
+  buildBackgroundArgs,
+  getRalpheDir,
+  getRunLogPath,
+  startBackgroundRun,
+  tailRunLog,
+} from "./background.js"
 export type { ReportResult } from "./report.js"
 export type { DetectedProject, DetectedCheck } from "./detect.js"
 export type { InstallGlobalSkillOptions, SkillTarget } from "./skill.js"

@@ -13,29 +13,10 @@ export interface DetectedProject {
 }
 
 export const detectProject = (workDir = process.cwd()): DetectedProject => {
-  // Node.js / TypeScript
+  // Root package.json is the only supported auto-detection path.
   const packageJsonPath = path.join(workDir, "package.json")
   if (fs.existsSync(packageJsonPath)) {
     return detectNodeProject(workDir, packageJsonPath)
-  }
-
-  // Python
-  if (
-    fs.existsSync(path.join(workDir, "pyproject.toml")) ||
-    fs.existsSync(path.join(workDir, "requirements.txt")) ||
-    fs.existsSync(path.join(workDir, "setup.py"))
-  ) {
-    return detectPythonProject()
-  }
-
-  // Go
-  if (fs.existsSync(path.join(workDir, "go.mod"))) {
-    return detectGoProject()
-  }
-
-  // Rust
-  if (fs.existsSync(path.join(workDir, "Cargo.toml"))) {
-    return detectRustProject()
   }
 
   return { language: "", packageManager: "", checks: [] }
@@ -83,41 +64,5 @@ function detectNodeProject(workDir: string, packageJsonPath: string): DetectedPr
     language: fs.existsSync(path.join(workDir, "tsconfig.json")) ? "TypeScript" : "JavaScript",
     packageManager: pm,
     checks,
-  }
-}
-
-function detectPythonProject(): DetectedProject {
-  return {
-    language: "Python",
-    packageManager: "pip",
-    checks: [
-      { command: "pytest", enabledByDefault: true },
-      { command: "ruff check .", enabledByDefault: true },
-      { command: "mypy .", enabledByDefault: false },
-    ],
-  }
-}
-
-function detectGoProject(): DetectedProject {
-  return {
-    language: "Go",
-    packageManager: "go",
-    checks: [
-      { command: "go test ./...", enabledByDefault: true },
-      { command: "golangci-lint run", enabledByDefault: true },
-      { command: "go build ./...", enabledByDefault: false },
-    ],
-  }
-}
-
-function detectRustProject(): DetectedProject {
-  return {
-    language: "Rust",
-    packageManager: "cargo",
-    checks: [
-      { command: "cargo test", enabledByDefault: true },
-      { command: "cargo clippy", enabledByDefault: true },
-      { command: "cargo build", enabledByDefault: false },
-    ],
   }
 }

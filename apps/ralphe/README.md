@@ -21,6 +21,8 @@ This installs the bundled `ralphe` skill into the global Claude and Codex skill 
 ## Usage
 
 ```bash
+# Run from the repository root
+
 # Text task
 ralphe run "fix the failing tests"
 
@@ -33,17 +35,21 @@ ralphe run --engine codex "add input validation"
 
 # Install or refresh the global ralphe skill
 ralphe skill
+
+# Start a background run and watch its log
+ralphe run --background --file PRD.md
+ralphe log
 ```
 
 ## Config
 
-Run `ralphe config` to interactively configure per-project settings. This creates `.ralphe/config.json` in the current directory.
+Run `ralphe config` from the repository root to configure repo-level settings for a TypeScript/Node project. This creates `.ralphe/config.json` in the repository root.
 
 ```bash
 ralphe config
 ```
 
-The wizard auto-detects your project type (Node/Python/Go/Rust) and lets you select from suggested check commands.
+The wizard reads the root `package.json` and lets you select from the root-level scripts it finds there. In a monorepo, this means `ralphe` verifies changes using the same root commands you already trust for repo-wide health, such as Turbo-powered `lint`, `typecheck`, and `test`.
 
 ```json
 {
@@ -67,15 +73,33 @@ The wizard auto-detects your project type (Node/Python/Go/Rust) and lets you sel
 | `autoCommit` | `false` | Auto-commit and push on success |
 | `report` | `"none"` | Verification report mode (`"none"`, `"basic"`, or `"browser"`) |
 
-Without a config, ralphe runs the agent with no checks.
+Without a config, or when no root scripts are selected, ralphe runs the agent with no verification checks.
+
+`ralphe` only auto-detects TypeScript/Node-style roots with a `package.json`. Other stacks are only supported indirectly when the repo root exposes verification through Node package scripts such as `turbo test` or `turbo lint`.
+
+## Background Runs
+
+To start a detached run:
+
+```bash
+ralphe run --background --file PRD.md
+```
+
+This writes output to `.ralphe/run.log`.
+
+To watch the log in another terminal:
+
+```bash
+ralphe log
+```
 
 ## How It Works
 
 ```mermaid
 flowchart TD
-    A["Start `ralphe run`"] --> B["Load config and resolve task text<br/>(inline or `--file`)"]
+    A["Start `ralphe run` from repo root"] --> B["Load repo config and resolve task text<br/>(inline or `--file`)"]
     B --> C["Run selected engine<br/>(Claude or Codex)"]
-    C --> D["Run configured checks"]
+    C --> D["Run configured root checks"]
     D --> E{"Checks pass?"}
     E -- "No, retry if attempts remain" --> C
     E -- "Yes" --> F["Optionally run a verification report<br/>(basic or browser)"]
@@ -86,6 +110,16 @@ flowchart TD
 ```
 
 When `autoCommit` is enabled, ralphe uses the engine to generate a conventional commit message from the staged diff, then commits and pushes.
+
+## Monorepos
+
+For the first-pass monorepo workflow, `ralphe` assumes you run it from the repository root.
+
+- Config is stored once at the repo root in `.ralphe/config.json`
+- Verification uses only root-level scripts from the root `package.json`
+- Nested app/package scripts are not auto-discovered during configuration
+
+This keeps verification aligned with repo-wide commands, so changes in shared packages can still surface breakages in downstream apps.
 
 ## Report
 

@@ -63,22 +63,33 @@ describe("detectProject", () => {
     expect(result.checks[0]!.command).toBe("pnpm run test")
   })
 
-  test("detects Python", () => {
+  test("uses only root package scripts when nested workspace packages exist", () => {
+    fs.mkdirSync(path.join(tmpDir, "apps", "web"), { recursive: true })
+    fs.writeFileSync(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({ scripts: { lint: "turbo lint" } }),
+    )
+    fs.writeFileSync(
+      path.join(tmpDir, "apps", "web", "package.json"),
+      JSON.stringify({ scripts: { test: "vitest run", typecheck: "tsc --noEmit" } }),
+    )
+    fs.writeFileSync(path.join(tmpDir, "pnpm-lock.yaml"), "")
+
+    const result = detectProject(tmpDir)
+
+    expect(result.packageManager).toBe("pnpm")
+    expect(result.checks).toEqual([
+      { command: "pnpm run lint", enabledByDefault: true },
+    ])
+  })
+
+  test("returns empty for non-package roots", () => {
     fs.writeFileSync(path.join(tmpDir, "pyproject.toml"), "")
-    const result = detectProject(tmpDir)
-    expect(result.language).toBe("Python")
-    expect(result.checks.length).toBe(3)
-  })
-
-  test("detects Go", () => {
     fs.writeFileSync(path.join(tmpDir, "go.mod"), "")
-    const result = detectProject(tmpDir)
-    expect(result.language).toBe("Go")
-  })
-
-  test("detects Rust", () => {
     fs.writeFileSync(path.join(tmpDir, "Cargo.toml"), "")
     const result = detectProject(tmpDir)
-    expect(result.language).toBe("Rust")
+    expect(result.language).toBe("")
+    expect(result.packageManager).toBe("")
+    expect(result.checks).toEqual([])
   })
 })

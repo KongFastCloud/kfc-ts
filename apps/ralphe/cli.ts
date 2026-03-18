@@ -15,6 +15,7 @@ import { detectProject } from "./src/detect.js"
 import { gitCommitAndPush } from "./src/git.js"
 import { report } from "./src/report.js"
 import { installGlobalSkill } from "./src/skill.js"
+import { startBackgroundRun, tailRunLog } from "./src/background.js"
 import fs from "node:fs"
 
 // -- config subcommand --
@@ -24,8 +25,8 @@ const config = Command.make("config", {}, () =>
     const detected = detectProject()
     const existing = loadConfig()
 
-    if (detected.language) {
-      yield* Console.log(`Detected: ${detected.language} (${detected.packageManager})`)
+    if (detected.packageManager) {
+      yield* Console.log(`Detected root package manager: ${detected.packageManager}`)
     }
 
     const engineChoice = yield* Effect.promise(() =>
@@ -42,7 +43,7 @@ const config = Command.make("config", {}, () =>
     const checks = detected.checks.length > 0
       ? yield* Effect.promise(() =>
           checkbox({
-            message: "Check commands (space to toggle)",
+            message: "Root check commands (space to toggle)",
             choices: detected.checks.map((c) => ({
               name: c.command,
               value: c.command,
@@ -89,12 +90,12 @@ const config = Command.make("config", {}, () =>
     }
 
     saveConfig(newConfig)
-    yield* Console.log(`\nSaved .ralphe/config.json`)
+    yield* Console.log(`\nSaved repo config to .ralphe/config.json`)
 
     if (checks.length > 0) {
-      yield* Console.log(`Checks: ${checks.join(", ")}`)
+      yield* Console.log(`Root checks: ${checks.join(", ")}`)
     } else {
-      yield* Console.log(`No checks configured — agent will run without verification.`)
+      yield* Console.log(`No root checks configured — agent will run without verification.`)
     }
   }),
 )
@@ -109,12 +110,34 @@ const file = Options.file("file").pipe(
 const engineFlag = Options.choice("engine", ["claude", "codex"]).pipe(
   Options.optional,
 )
+const backgroundFlag = Options.boolean("background").pipe(
+  Options.withAlias("b"),
+)
 
 const run = Command.make(
   "run",
-  { task, file, engine: engineFlag },
-  ({ task: taskArg, file: fileOpt, engine: engineOverride }) =>
+  { task, file, engine: engineFlag, background: backgroundFlag },
+  ({ task: taskArg, file: fileOpt, engine: engineOverride, background }) =>
     Effect.gen(function* () {
+      if (fileOpt._tag === "Some" && !fs.existsSync(fileOpt.value)) {
+        return yield* Effect.fail(
+          new FatalError({ command: "file", message: `File not found: ${fileOpt.value}` }),
+        )
+      }
+
+      if (fileOpt._tag === "None" && taskArg._tag === "None") {
+        return yield* Effect.fail(
+          new FatalError({ command: "run", message: `Provide a task as text or with --file` }),
+        )
+      }
+
+      if (background) {
+        const result = yield* startBackgroundRun()
+        yield* Console.log(`Started background run (pid ${result.pid}).`)
+        yield* Console.log(`Log: ${result.logPath}`)
+        return
+      }
+
       const cfg = loadConfig()
       const engineChoice = engineOverride.pipe(
         (opt) => opt._tag === "Some" ? opt.value : cfg.engine,
@@ -124,26 +147,17 @@ const run = Command.make(
       let task: string
       if (fileOpt._tag === "Some") {
         const filePath = fileOpt.value
-        if (!fs.existsSync(filePath)) {
-          return yield* Effect.fail(
-            new FatalError({ command: "file", message: `File not found: ${filePath}` }),
-          )
-        }
         task = fs.readFileSync(filePath, "utf-8")
         yield* Console.log(`Task from file: ${filePath}`)
       } else if (taskArg._tag === "Some") {
         task = taskArg.value
         yield* Console.log(`Task: ${task}`)
-      } else {
-        return yield* Effect.fail(
-          new FatalError({ command: "run", message: `Provide a task as text or with --file` }),
-        )
       }
       yield* Console.log(`Engine: ${engineChoice}`)
       if (cfg.checks.length > 0) {
-        yield* Console.log(`Checks: ${cfg.checks.join(", ")}`)
+        yield* Console.log(`Root checks: ${cfg.checks.join(", ")}`)
       } else {
-        yield* Console.log(`No checks configured — running agent only.`)
+        yield* Console.log(`No root checks configured — running agent only.`)
       }
 
       const workflow = loop(
@@ -173,6 +187,14 @@ const run = Command.make(
     }),
 )
 
+// -- log subcommand --
+
+const log = Command.make("log", {}, () =>
+  Effect.gen(function* () {
+    yield* tailRunLog()
+  }),
+)
+
 // -- skill subcommand --
 
 const skill = Command.make("skill", {}, () =>
@@ -189,7 +211,7 @@ const skill = Command.make("skill", {}, () =>
 // -- root --
 
 const ralphe = Command.make("ralphe").pipe(
-  Command.withSubcommands([config, run, skill]),
+  Command.withSubcommands([config, run, log, skill]),
 )
 
 const cli = Command.run(ralphe, {
