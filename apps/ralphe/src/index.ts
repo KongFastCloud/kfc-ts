@@ -19,13 +19,21 @@ export {
   installGlobalSkill,
   RALPHE_SKILL_MARKDOWN,
 } from "./skill.js"
-export {
-  buildBackgroundArgs,
-  getRalpheDir,
-  getRunLogPath,
-  startBackgroundRun,
-  tailRunLog,
-} from "./background.js"
 export type { ReportResult } from "./report.js"
 export type { DetectedProject, DetectedCheck } from "./detect.js"
 export type { InstallGlobalSkillOptions, SkillTarget } from "./skill.js"
+export { runTask } from "./runTask.js"
+export type { TaskResult } from "./runTask.js"
+export {
+  buildPromptFromIssue,
+  queryReady,
+  claimTask,
+  closeTaskSuccess,
+  closeTaskFailure,
+  writeMetadata,
+  queryStaleClaimed,
+  recoverStaleTasks,
+} from "./beads.js"
+export type { BeadsIssue, BeadsMetadata } from "./beads.js"
+export { watch, defaultWorkerId } from "./watcher.js"
+export type { WatcherOptions } from "./watcher.js"

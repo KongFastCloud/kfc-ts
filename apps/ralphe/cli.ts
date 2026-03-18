@@ -1,21 +1,14 @@
 #!/usr/bin/env bun
 import { Args, Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
-import { Console, Effect, Layer, pipe } from "effect"
+import { Console, Effect } from "effect"
 import { checkbox, confirm, select, input } from "@inquirer/prompts"
-import { ClaudeEngineLayer } from "./src/engine/ClaudeEngine.js"
-import { CodexEngineLayer } from "./src/engine/CodexEngine.js"
-import { Engine } from "./src/engine/Engine.js"
 import { FatalError } from "./src/errors.js"
-import { agent } from "./src/agent.js"
-import { cmd } from "./src/cmd.js"
-import { loop } from "./src/loop.js"
 import { loadConfig, saveConfig, type RalpheConfig } from "./src/config.js"
 import { detectProject } from "./src/detect.js"
-import { gitCommitAndPush } from "./src/git.js"
-import { report } from "./src/report.js"
 import { installGlobalSkill } from "./src/skill.js"
-import { startBackgroundRun, tailRunLog } from "./src/background.js"
+import { runTask } from "./src/runTask.js"
+import { watch } from "./src/watcher.js"
 import fs from "node:fs"
 
 // -- config subcommand --
@@ -110,14 +103,10 @@ const file = Options.file("file").pipe(
 const engineFlag = Options.choice("engine", ["claude", "codex"]).pipe(
   Options.optional,
 )
-const backgroundFlag = Options.boolean("background").pipe(
-  Options.withAlias("b"),
-)
-
 const run = Command.make(
   "run",
-  { task, file, engine: engineFlag, background: backgroundFlag },
-  ({ task: taskArg, file: fileOpt, engine: engineOverride, background }) =>
+  { task, file, engine: engineFlag },
+  ({ task: taskArg, file: fileOpt, engine: engineOverride }) =>
     Effect.gen(function* () {
       if (fileOpt._tag === "Some" && !fs.existsSync(fileOpt.value)) {
         return yield* Effect.fail(
@@ -131,20 +120,13 @@ const run = Command.make(
         )
       }
 
-      if (background) {
-        const result = yield* startBackgroundRun()
-        yield* Console.log(`Started background run (pid ${result.pid}).`)
-        yield* Console.log(`Log: ${result.logPath}`)
-        return
-      }
-
       const cfg = loadConfig()
       const engineChoice = engineOverride.pipe(
         (opt) => opt._tag === "Some" ? opt.value : cfg.engine,
-      )
+      ) as "claude" | "codex"
 
       // Resolve task from file or positional arg
-      let task: string
+      let task: string = ""
       if (fileOpt._tag === "Some") {
         const filePath = fileOpt.value
         task = fs.readFileSync(filePath, "utf-8")
@@ -160,39 +142,16 @@ const run = Command.make(
         yield* Console.log(`No root checks configured — running agent only.`)
       }
 
-      const workflow = loop(
-        (feedback) => {
-          let pipeline: Effect.Effect<unknown, any, Engine> = agent(task, { feedback })
-          for (const check of cfg.checks) {
-            pipeline = pipe(pipeline, Effect.andThen(cmd(check)))
-          }
-          if (cfg.report !== "none") {
-            pipeline = pipe(pipeline, Effect.andThen(report(task, cfg.report)))
-          }
-          return pipeline
-        },
-        { maxAttempts: cfg.maxAttempts },
-      )
+      const result = yield* runTask(task, cfg, { engineOverride: engineChoice })
 
-      const engineLayer: Layer.Layer<Engine> =
-        engineChoice === "codex" ? CodexEngineLayer : ClaudeEngineLayer
-
-      yield* Effect.provide(workflow, engineLayer)
-
-      if (cfg.autoCommit) {
-        yield* Effect.provide(gitCommitAndPush(), engineLayer)
+      if (!result.success) {
+        return yield* Effect.fail(
+          new FatalError({ command: "run", message: result.error ?? "Task execution failed" }),
+        )
       }
 
       yield* Console.log("Done!")
     }),
-)
-
-// -- log subcommand --
-
-const log = Command.make("log", {}, () =>
-  Effect.gen(function* () {
-    yield* tailRunLog()
-  }),
 )
 
 // -- skill subcommand --
@@ -208,10 +167,37 @@ const skill = Command.make("skill", {}, () =>
   }),
 )
 
+// -- watch subcommand --
+
+const watchEngineFlag = Options.choice("engine", ["claude", "codex"]).pipe(
+  Options.optional,
+)
+const pollInterval = Options.integer("interval").pipe(
+  Options.withAlias("i"),
+  Options.withDefault(10),
+)
+
+const watchCmd = Command.make(
+  "watch",
+  { engine: watchEngineFlag, interval: pollInterval },
+  ({ engine: engineOverride, interval }) =>
+    Effect.gen(function* () {
+      const engineOpt = engineOverride._tag === "Some"
+        ? engineOverride.value as "claude" | "codex"
+        : undefined
+
+      yield* Console.log("Starting Beads watcher...")
+      yield* watch({
+        pollIntervalMs: interval * 1000,
+        engineOverride: engineOpt,
+      })
+    }),
+)
+
 // -- root --
 
 const ralphe = Command.make("ralphe").pipe(
-  Command.withSubcommands([config, run, log, skill]),
+  Command.withSubcommands([config, run, skill, watchCmd]),
 )
 
 const cli = Command.run(ralphe, {

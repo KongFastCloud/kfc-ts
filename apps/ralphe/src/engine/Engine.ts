@@ -3,6 +3,7 @@ import type { CheckFailure, FatalError } from "../errors.js"
 
 export interface AgentResult {
   readonly response: string
+  readonly resumeToken?: string | undefined
 }
 
 export interface Engine {

@@ -36,9 +36,9 @@ ralphe run --engine codex "add input validation"
 # Install or refresh the global ralphe skill
 ralphe skill
 
-# Start a background run and watch its log
-ralphe run --background --file PRD.md
-ralphe log
+# Start the Beads watcher (polls for ready tasks)
+ralphe watch
+ralphe watch --engine codex --interval 30
 ```
 
 ## Config
@@ -77,20 +77,32 @@ Without a config, or when no root scripts are selected, ralphe runs the agent wi
 
 `ralphe` only auto-detects TypeScript/Node-style roots with a `package.json`. Other stacks are only supported indirectly when the repo root exposes verification through Node package scripts such as `turbo test` or `turbo lint`.
 
-## Background Runs
+## Beads Watcher
 
-To start a detached run:
+`ralphe watch` starts a background worker that continuously polls [Beads](https://github.com/terencek/beads) for ready tasks, claims one atomically, executes it through the same pipeline as `ralphe run`, and writes results back.
 
 ```bash
-ralphe run --background --file PRD.md
+# Start the watcher with default settings (10s poll interval)
+ralphe watch
+
+# Override engine and poll interval (seconds)
+ralphe watch --engine codex --interval 30
 ```
 
-This writes output to `.ralphe/run.log`.
+The watcher:
 
-To watch the log in another terminal:
+- Processes one task at a time (no concurrency)
+- Claims tasks atomically via `bd update <id> --claim` to avoid duplicate execution
+- Builds execution prompts from issue fields: title, description, design, acceptance_criteria, notes
+- Writes execution metadata back to Beads under the `ralphe` namespace (engine, resume token, worker ID, timestamp)
+- Closes tasks as success or failure with appropriate reasons
+- On startup, recovers stale in-progress tasks from previous crashes
+
+Resume tokens (Claude `session_id` / Codex `thread_id`) are persisted in Beads metadata to support manual interactive resume:
 
 ```bash
-ralphe log
+claude --resume <session_id>
+codex resume <thread_id>
 ```
 
 ## How It Works

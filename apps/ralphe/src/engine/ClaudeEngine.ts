@@ -44,7 +44,7 @@ const make: Engine = {
           ? Console.log(`Resume this Claude session with: claude --resume ${result.sessionId}`)
           : Effect.void,
       ),
-      Effect.map(({ response }) => ({ response }) satisfies AgentResult),
+      Effect.map(({ response, sessionId }) => ({ response, resumeToken: sessionId }) satisfies AgentResult),
     ),
 }
 

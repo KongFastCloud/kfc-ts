@@ -105,7 +105,7 @@ const make: Engine = {
           ? Console.log(`Resume this Codex session with: codex resume ${result.threadId}`)
           : Effect.void,
       ),
-      Effect.map(({ response }) => ({ response }) satisfies AgentResult),
+      Effect.map(({ response, threadId }) => ({ response, resumeToken: threadId }) satisfies AgentResult),
     ),
 }
 
