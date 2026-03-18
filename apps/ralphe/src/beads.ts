@@ -171,7 +171,7 @@ export const writeMetadata = (
   id: string,
   metadata: BeadsMetadata,
 ): Effect.Effect<void, FatalError> =>
-  runBd(["update", id, "--metadata-set", `ralphe=${JSON.stringify(metadata)}`]).pipe(
+  runBd(["update", id, "--set-metadata", `ralphe=${JSON.stringify(metadata)}`]).pipe(
     Effect.map(() => undefined),
   )
 

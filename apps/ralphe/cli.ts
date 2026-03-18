@@ -9,6 +9,7 @@ import { detectProject } from "./src/detect.js"
 import { installGlobalSkill } from "./src/skill.js"
 import { runTask } from "./src/runTask.js"
 import { watch } from "./src/watcher.js"
+import { launchWatchTui } from "./src/watchTui.js"
 import fs from "node:fs"
 
 // -- config subcommand --
@@ -176,21 +177,33 @@ const pollInterval = Options.integer("interval").pipe(
   Options.withAlias("i"),
   Options.withDefault(10),
 )
+const headlessFlag = Options.boolean("headless").pipe(
+  Options.withDefault(false),
+)
 
 const watchCmd = Command.make(
   "watch",
-  { engine: watchEngineFlag, interval: pollInterval },
-  ({ engine: engineOverride, interval }) =>
+  { engine: watchEngineFlag, interval: pollInterval, headless: headlessFlag },
+  ({ engine: engineOverride, interval, headless }) =>
     Effect.gen(function* () {
       const engineOpt = engineOverride._tag === "Some"
         ? engineOverride.value as "claude" | "codex"
         : undefined
 
-      yield* Console.log("Starting Beads watcher...")
-      yield* watch({
-        pollIntervalMs: interval * 1000,
-        engineOverride: engineOpt,
-      })
+      if (headless) {
+        // Original headless watcher (no TUI)
+        yield* Console.log("Starting Beads watcher (headless)...")
+        yield* watch({
+          pollIntervalMs: interval * 1000,
+          engineOverride: engineOpt,
+        })
+      } else {
+        // Interactive TUI mode (default) — includes in-process worker
+        yield* launchWatchTui({
+          refreshIntervalMs: interval * 1000,
+          engineOverride: engineOpt,
+        })
+      }
     }),
 )
 

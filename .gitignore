@@ -37,3 +37,9 @@ npm-debug.log*
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Local ralphe config
+.ralphe/config.json
+
+# Local PRDs
+prd/

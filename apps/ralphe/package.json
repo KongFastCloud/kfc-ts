@@ -18,6 +18,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/react": "^19.2.8",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
@@ -28,6 +29,9 @@
     "@effect/cli": "^0.73.2",
     "@effect/platform-bun": "^0.87.1",
     "@inquirer/prompts": "^8.3.2",
-    "effect": "^3.19.19"
+    "@opentui/core": "^0.1.72",
+    "@opentui/react": "^0.1.72",
+    "effect": "^3.19.19",
+    "react": "^19.2.3"
   }
 }

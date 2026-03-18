@@ -37,3 +37,11 @@ export {
 export type { BeadsIssue, BeadsMetadata } from "./beads.js"
 export { watch, defaultWorkerId } from "./watcher.js"
 export type { WatcherOptions } from "./watcher.js"
+export { startTuiWorker } from "./tuiWorker.js"
+export type {
+  WorkerState,
+  WorkerStatus,
+  WorkerLogEntry,
+  TuiWorkerCallbacks,
+  TuiWorkerOptions,
+} from "./tuiWorker.js"

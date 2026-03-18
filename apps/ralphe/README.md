@@ -36,8 +36,13 @@ ralphe run --engine codex "add input validation"
 # Install or refresh the global ralphe skill
 ralphe skill
 
-# Start the Beads watcher (polls for ready tasks)
+# Start watch mode (TUI, default)
 ralphe watch
+
+# Headless mode (no TUI)
+ralphe watch --headless
+
+# Override engine and poll interval (seconds)
 ralphe watch --engine codex --interval 30
 ```
 
@@ -77,26 +82,32 @@ Without a config, or when no root scripts are selected, ralphe runs the agent wi
 
 `ralphe` only auto-detects TypeScript/Node-style roots with a `package.json`. Other stacks are only supported indirectly when the repo root exposes verification through Node package scripts such as `turbo test` or `turbo lint`.
 
-## Beads Watcher
+## Beads Watch Mode
 
-`ralphe watch` starts a background worker that continuously polls [Beads](https://github.com/terencek/beads) for ready tasks, claims one atomically, executes it through the same pipeline as `ralphe run`, and writes results back.
+`ralphe watch` now defaults to TUI mode with an in-process single worker. Use `--headless` for log-only execution.
 
 ```bash
-# Start the watcher with default settings (10s poll interval)
+# TUI mode (default)
 ralphe watch
 
-# Override engine and poll interval (seconds)
-ralphe watch --engine codex --interval 30
+# Headless mode
+ralphe watch --headless
 ```
 
-The watcher:
+Critical usage notes:
 
-- Processes one task at a time (no concurrency)
-- Claims tasks atomically via `bd update <id> --claim` to avoid duplicate execution
-- Builds execution prompts from issue fields: title, description, design, acceptance_criteria, notes
-- Writes execution metadata back to Beads under the `ralphe` namespace (engine, resume token, worker ID, timestamp)
-- Closes tasks as success or failure with appropriate reasons
-- On startup, recovers stale in-progress tasks from previous crashes
+- Run from repository root so `.ralphe/config.json` and `.beads/` resolve correctly.
+- Watch mode executes only `bd ready` tasks (not every `open` task).
+- Only one task runs at a time.
+- Metadata is written under `metadata.ralphe` (engine, resume token, worker ID, timestamp).
+
+TUI keys:
+
+- `q`: quit (current in-flight task is allowed to finish)
+- `p`: pause future task pickup
+- `r`: resume pickup
+- `j` / `k`: move selection
+- `Enter`: open task details
 
 Resume tokens (Claude `session_id` / Codex `thread_id`) are persisted in Beads metadata to support manual interactive resume:
 
