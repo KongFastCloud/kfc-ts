@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "kfc_ts",
+  "project_id": "e92231a2-fc46-4ea8-bd1b-0d8ba8888415"
+}
