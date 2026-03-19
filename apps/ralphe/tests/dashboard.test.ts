@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "bun:test"
-import { partitionTasks, formatCompletedAt, formatIdCell } from "../src/tui/DashboardView.js"
+import { partitionTasks, formatCompletedAt, formatIdCell, computeVisibleRowCounts } from "../src/tui/DashboardView.js"
 import type { WatchTask } from "../src/beadsAdapter.js"
 
 function makeTask(id: string, status: WatchTask["status"]): WatchTask {
@@ -157,5 +157,64 @@ describe("formatCompletedAt", () => {
     const noon = new Date(2026, 5, 10, 12, 30) // Jun 10, 2026 12:30 local
     const result = formatCompletedAt(noon.toISOString())
     expect(result).toContain("12:30 PM")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computeVisibleRowCounts
+// ---------------------------------------------------------------------------
+
+describe("computeVisibleRowCounts", () => {
+  it("computes correct row counts for a typical terminal height", () => {
+    // height 30: dashboard = 28, active = floor(28*2/3)=18, done = 10
+    // active rows = 18 - 4 = 14, done rows = 10 - 4 = 6
+    const { activeVisibleRows, doneVisibleRows } = computeVisibleRowCounts(30)
+    expect(activeVisibleRows).toBe(14)
+    expect(doneVisibleRows).toBe(6)
+  })
+
+  it("computes correct row counts for a tall terminal", () => {
+    // height 50: dashboard = 48, active = floor(48*2/3)=32, done = 16
+    // active rows = 32 - 4 = 28, done rows = 16 - 4 = 12
+    const { activeVisibleRows, doneVisibleRows } = computeVisibleRowCounts(50)
+    expect(activeVisibleRows).toBe(28)
+    expect(doneVisibleRows).toBe(12)
+  })
+
+  it("returns zero rows when terminal is too small for any data rows", () => {
+    // height 6: dashboard = 4, active = floor(4*2/3)=2, done = 2
+    // Both below TABLE_CHROME_LINES (4), so 0 rows each
+    const { activeVisibleRows, doneVisibleRows } = computeVisibleRowCounts(6)
+    expect(activeVisibleRows).toBe(0)
+    expect(doneVisibleRows).toBe(0)
+  })
+
+  it("never returns negative row counts", () => {
+    const { activeVisibleRows, doneVisibleRows } = computeVisibleRowCounts(0)
+    expect(activeVisibleRows).toBeGreaterThanOrEqual(0)
+    expect(doneVisibleRows).toBeGreaterThanOrEqual(0)
+  })
+
+  it("handles terminal height of 2 (only header and footer)", () => {
+    const { activeVisibleRows, doneVisibleRows } = computeVisibleRowCounts(2)
+    expect(activeVisibleRows).toBe(0)
+    expect(doneVisibleRows).toBe(0)
+  })
+
+  it("active table always gets more rows than done table for the same height", () => {
+    // For any reasonable height, the 2:1 split gives active more rows
+    const { activeVisibleRows, doneVisibleRows } = computeVisibleRowCounts(40)
+    expect(activeVisibleRows).toBeGreaterThan(doneVisibleRows)
+  })
+
+  it("total visible rows plus chrome accounts for full dashboard height", () => {
+    const h = 30
+    const { activeVisibleRows, doneVisibleRows } = computeVisibleRowCounts(h)
+    const dashboardHeight = h - 2 // header + footer
+    // Each table has 4 lines of chrome; total chrome = 8
+    // active table height = floor(dashboardHeight * 2/3) = 18
+    // done table height = dashboardHeight - 18 = 10
+    // total = activeVisibleRows + 4 + doneVisibleRows + 4 = dashboardHeight
+    expect(activeVisibleRows + 4 + doneVisibleRows + 4).toBe(dashboardHeight)
   })
 })

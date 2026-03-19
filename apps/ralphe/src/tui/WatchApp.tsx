@@ -15,7 +15,7 @@ import { getAvailableActions } from "../beadsAdapter.js"
 import { markTaskReady } from "../beads.js"
 import { Effect } from "effect"
 import type { WorkerStatus } from "../tuiWorker.js"
-import { DashboardView, partitionTasks } from "./DashboardView.js"
+import { DashboardView, partitionTasks, computeVisibleRowCounts } from "./DashboardView.js"
 import {
   initialDashboardFocusState,
   toggleFocusedTable,
@@ -448,7 +448,7 @@ export function WatchApp({
   initialError,
   workerStatus,
 }: WatchAppProps): ReactNode {
-  const { width } = useTerminalDimensions()
+  const { width, height } = useTerminalDimensions()
   const [tasks, setTasks] = useState<WatchTask[]>(initialTasks)
   const [error, setError] = useState<string | undefined>(initialError)
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(
@@ -459,10 +459,10 @@ export function WatchApp({
 
   // Dashboard focus and per-table selection state (single source of truth)
   const [focusState, setFocusState] = useState(initialDashboardFocusState)
-  const { focusedTable, activeSelectedIndex, doneSelectedIndex, viewMode } = focusState
+  const { focusedTable, activeSelectedIndex, doneSelectedIndex, activeScrollOffset, doneScrollOffset, viewMode } = focusState
 
-  // Default visible row count — later slices will derive this from terminal height.
-  const DEFAULT_VISIBLE_ROW_COUNT = 20
+  // Derive visible row capacities from terminal height
+  const { activeVisibleRows, doneVisibleRows } = computeVisibleRowCounts(height)
 
   // Partition once for use in handlers and render
   const { active: activeTasks, done: doneTasks } = partitionTasks(tasks)
@@ -485,7 +485,7 @@ export function WatchApp({
       // Clamp each table's selection independently via pure state logic
       const { active, done } = partitionTasks(updated)
       setFocusState((prev) =>
-        clampAfterRefresh(prev, active.length, done.length, DEFAULT_VISIBLE_ROW_COUNT, DEFAULT_VISIBLE_ROW_COUNT),
+        clampAfterRefresh(prev, active.length, done.length, activeVisibleRows, doneVisibleRows),
       )
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -493,7 +493,7 @@ export function WatchApp({
     } finally {
       refreshingRef.current = false
     }
-  }, [onRefresh])
+  }, [onRefresh, activeVisibleRows, doneVisibleRows])
 
   // Periodic auto-refresh
   useEffect(() => {
@@ -562,14 +562,18 @@ export function WatchApp({
 
         case "up":
         case "k":
-          setFocusState((prev) => moveSelectionUp(prev, DEFAULT_VISIBLE_ROW_COUNT))
+          setFocusState((prev) => {
+            const vis = prev.focusedTable === "active" ? activeVisibleRows : doneVisibleRows
+            return moveSelectionUp(prev, vis)
+          })
           break
 
         case "down":
         case "j":
-          setFocusState((prev) =>
-            moveSelectionDown(prev, activeTasks.length, doneTasks.length, DEFAULT_VISIBLE_ROW_COUNT),
-          )
+          setFocusState((prev) => {
+            const vis = prev.focusedTable === "active" ? activeVisibleRows : doneVisibleRows
+            return moveSelectionDown(prev, activeTasks.length, doneTasks.length, vis)
+          })
           break
 
         case "return":
@@ -585,7 +589,7 @@ export function WatchApp({
           break
       }
     },
-    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh, selectedTask],
+    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh, selectedTask, activeVisibleRows, doneVisibleRows],
   )
 
   useKeyboard(handleKeyboard)
@@ -620,7 +624,10 @@ export function WatchApp({
             focusedTable={focusedTable}
             activeSelectedIndex={activeSelectedIndex}
             doneSelectedIndex={doneSelectedIndex}
+            activeScrollOffset={activeScrollOffset}
+            doneScrollOffset={doneScrollOffset}
             terminalWidth={width}
+            terminalHeight={height}
           />
         )}
       </box>

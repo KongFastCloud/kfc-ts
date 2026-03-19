@@ -326,6 +326,8 @@ function DashboardTable({
   title,
   tasks,
   selectedIndex,
+  scrollOffset,
+  visibleRowCount,
   titleWidth,
   flexGrow,
   borderColor,
@@ -334,11 +336,16 @@ function DashboardTable({
   title: string
   tasks: WatchTask[]
   selectedIndex: number
+  scrollOffset: number
+  visibleRowCount: number
   titleWidth: number
   flexGrow: number
   borderColor: string
   variant: TableVariant
 }): ReactNode {
+  // Render only the visible window of rows
+  const visibleSlice = tasks.slice(scrollOffset, scrollOffset + visibleRowCount)
+
   return (
     <box
       style={{
@@ -354,23 +361,26 @@ function DashboardTable({
     >
       <DashboardSectionTitle title={title} />
       <DashboardTableHeader titleWidth={titleWidth} variant={variant} />
-      <scrollbox style={{ flexGrow: 1, width: "100%" }}>
+      <box style={{ flexGrow: 1, width: "100%" }}>
         {tasks.length === 0 ? (
           <box style={{ paddingLeft: 1, paddingTop: 0 }}>
             <text fg={colors.fg.muted}>No tasks</text>
           </box>
         ) : (
-          tasks.map((task, idx) => (
-            <DashboardRow
-              key={task.id}
-              task={task}
-              isSelected={idx === selectedIndex}
-              titleWidth={titleWidth}
-              variant={variant}
-            />
-          ))
+          visibleSlice.map((task, sliceIdx) => {
+            const absoluteIdx = scrollOffset + sliceIdx
+            return (
+              <DashboardRow
+                key={task.id}
+                task={task}
+                isSelected={absoluteIdx === selectedIndex}
+                titleWidth={titleWidth}
+                variant={variant}
+              />
+            )
+          })
         )}
-      </scrollbox>
+      </box>
     </box>
   )
 }
@@ -426,6 +436,39 @@ function useDurationTick(tasks: WatchTask[]): void {
 }
 
 // ---------------------------------------------------------------------------
+// Visible row count computation
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-table chrome overhead: border top (1) + border bottom (1) + section
+ * title (1) + column header (1) = 4 lines consumed before any data rows.
+ */
+const TABLE_CHROME_LINES = 4
+
+/**
+ * Compute the visible row capacity for each dashboard table given the total
+ * terminal height. The active table uses flexGrow 2 and the done table uses
+ * flexGrow 1, so the available dashboard area is split 2:1.
+ *
+ * Subtracts 2 for the application header and footer, then subtracts per-table
+ * chrome (border + section title + column header) from each table's share.
+ *
+ * Exported for testing.
+ */
+export function computeVisibleRowCounts(terminalHeight: number): {
+  activeVisibleRows: number
+  doneVisibleRows: number
+} {
+  const dashboardHeight = Math.max(0, terminalHeight - 2) // header + footer
+  const activeTableHeight = Math.floor((dashboardHeight * 2) / 3)
+  const doneTableHeight = dashboardHeight - activeTableHeight
+  return {
+    activeVisibleRows: Math.max(0, activeTableHeight - TABLE_CHROME_LINES),
+    doneVisibleRows: Math.max(0, doneTableHeight - TABLE_CHROME_LINES),
+  }
+}
+
+// ---------------------------------------------------------------------------
 // DashboardView (exported)
 // ---------------------------------------------------------------------------
 
@@ -440,7 +483,12 @@ export interface DashboardViewProps {
   activeSelectedIndex: number
   /** Selected row index within the done (bottom) table, or -1 for no selection. */
   doneSelectedIndex: number
+  /** Scroll offset (first visible row) for the active table. */
+  activeScrollOffset: number
+  /** Scroll offset (first visible row) for the done table. */
+  doneScrollOffset: number
   terminalWidth: number
+  terminalHeight: number
 }
 
 /**
@@ -453,7 +501,10 @@ export function DashboardView({
   focusedTable,
   activeSelectedIndex,
   doneSelectedIndex,
+  activeScrollOffset,
+  doneScrollOffset,
   terminalWidth,
+  terminalHeight,
 }: DashboardViewProps): ReactNode {
   // Drive a one-second re-render while any active task needs a live duration.
   useDurationTick(tasks)
@@ -464,6 +515,9 @@ export function DashboardView({
   const fixedColumnsWidth =
     COL.id + COL.idTitleSep + COL.status + COL.label + COL.priority + COL.duration + 4 // +4 for padding/border
   const titleWidth = Math.max(10, terminalWidth - fixedColumnsWidth)
+
+  // Derive visible row capacities from terminal height
+  const { activeVisibleRows, doneVisibleRows } = computeVisibleRowCounts(terminalHeight)
 
   return (
     <box
@@ -477,6 +531,8 @@ export function DashboardView({
         title="Active"
         tasks={active}
         selectedIndex={focusedTable === "active" ? activeSelectedIndex : -1}
+        scrollOffset={activeScrollOffset}
+        visibleRowCount={activeVisibleRows}
         titleWidth={titleWidth}
         flexGrow={2}
         borderColor={
@@ -490,6 +546,8 @@ export function DashboardView({
         title="Done"
         tasks={done}
         selectedIndex={focusedTable === "done" ? doneSelectedIndex : -1}
+        scrollOffset={doneScrollOffset}
+        visibleRowCount={doneVisibleRows}
         titleWidth={titleWidth}
         flexGrow={1}
         borderColor={
