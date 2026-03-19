@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "bun:test"
-import { partitionTasks, formatCompletedAt, formatIdCell, computeVisibleRowCounts } from "../src/tui/DashboardView.js"
+import { partitionTasks, sortDoneTasks, formatCompletedAt, formatIdCell, computeVisibleRowCounts } from "../src/tui/DashboardView.js"
 import type { WatchTask } from "../src/beadsAdapter.js"
 
 function makeTask(id: string, status: WatchTask["status"]): WatchTask {
@@ -85,6 +85,113 @@ describe("partitionTasks", () => {
     for (const t of done) {
       expect(t.status).toBe("done")
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// sortDoneTasks
+// ---------------------------------------------------------------------------
+
+function makeDoneTask(id: string, closedAt?: string): WatchTask {
+  return { id, title: `Task ${id}`, status: "done", closedAt }
+}
+
+describe("sortDoneTasks", () => {
+  it("sorts done tasks by closedAt descending (newest first)", () => {
+    const tasks = [
+      makeDoneTask("old", "2026-01-01T00:00:00Z"),
+      makeDoneTask("mid", "2026-02-15T00:00:00Z"),
+      makeDoneTask("new", "2026-03-19T00:00:00Z"),
+    ]
+    const sorted = sortDoneTasks(tasks)
+    expect(sorted.map((t) => t.id)).toEqual(["new", "mid", "old"])
+  })
+
+  it("places tasks with missing closedAt after valid ones", () => {
+    const tasks = [
+      makeDoneTask("no-date", undefined),
+      makeDoneTask("has-date", "2026-03-19T12:00:00Z"),
+    ]
+    const sorted = sortDoneTasks(tasks)
+    expect(sorted.map((t) => t.id)).toEqual(["has-date", "no-date"])
+  })
+
+  it("places tasks with invalid closedAt after valid ones", () => {
+    const tasks = [
+      makeDoneTask("invalid", "not-a-date"),
+      makeDoneTask("valid", "2026-03-19T12:00:00Z"),
+    ]
+    const sorted = sortDoneTasks(tasks)
+    expect(sorted.map((t) => t.id)).toEqual(["valid", "invalid"])
+  })
+
+  it("preserves original order among tasks with equally missing/invalid closedAt", () => {
+    const tasks = [
+      makeDoneTask("a", undefined),
+      makeDoneTask("b", "not-valid"),
+      makeDoneTask("c", undefined),
+    ]
+    const sorted = sortDoneTasks(tasks)
+    // All invalid — stable original order preserved
+    expect(sorted.map((t) => t.id)).toEqual(["a", "b", "c"])
+  })
+
+  it("handles empty input", () => {
+    expect(sortDoneTasks([])).toEqual([])
+  })
+
+  it("handles single task", () => {
+    const tasks = [makeDoneTask("only", "2026-03-19T00:00:00Z")]
+    const sorted = sortDoneTasks(tasks)
+    expect(sorted.map((t) => t.id)).toEqual(["only"])
+  })
+
+  it("sorts mixed valid and invalid closedAt correctly", () => {
+    const tasks = [
+      makeDoneTask("no-date-1", undefined),
+      makeDoneTask("old", "2026-01-01T00:00:00Z"),
+      makeDoneTask("no-date-2", undefined),
+      makeDoneTask("new", "2026-03-19T00:00:00Z"),
+      makeDoneTask("invalid", "garbage"),
+    ]
+    const sorted = sortDoneTasks(tasks)
+    expect(sorted.map((t) => t.id)).toEqual([
+      "new",         // newest valid
+      "old",         // oldest valid
+      "no-date-1",   // invalid, original index 0
+      "no-date-2",   // invalid, original index 2
+      "invalid",     // invalid, original index 4
+    ])
+  })
+
+  it("handles tasks with identical closedAt timestamps", () => {
+    const tasks = [
+      makeDoneTask("first", "2026-03-19T12:00:00Z"),
+      makeDoneTask("second", "2026-03-19T12:00:00Z"),
+      makeDoneTask("third", "2026-03-19T12:00:00Z"),
+    ]
+    const sorted = sortDoneTasks(tasks)
+    // Same timestamp — stable original order preserved
+    expect(sorted.map((t) => t.id)).toEqual(["first", "second", "third"])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Non-done table order preservation (regression guard)
+// ---------------------------------------------------------------------------
+
+describe("partitionTasks preserves non-done order (regression)", () => {
+  it("active bucket keeps adapter ordering regardless of done sorting", () => {
+    const tasks = [
+      makeTask("z", "actionable"),
+      { ...makeTask("d1", "done"), closedAt: "2026-03-19T00:00:00Z" },
+      makeTask("a", "active"),
+      { ...makeTask("d2", "done"), closedAt: "2026-01-01T00:00:00Z" },
+      makeTask("m", "blocked"),
+    ]
+    const { active } = partitionTasks(tasks)
+    // Active order must match input order — not affected by done sorting
+    expect(active.map((t) => t.id)).toEqual(["z", "a", "m"])
   })
 })
 

@@ -192,6 +192,31 @@ export function partitionTasks(tasks: WatchTask[]): DashboardPartition {
   return { active, done }
 }
 
+/**
+ * Sort done tasks by completion timestamp (closedAt) descending so newest
+ * completions appear first. Tasks with missing or invalid closedAt fall to
+ * the bottom, preserving their original relative order among themselves.
+ */
+export function sortDoneTasks(tasks: WatchTask[]): WatchTask[] {
+  // Tag each task with its original index for stable ordering of invalid entries
+  const tagged = tasks.map((task, index) => {
+    const ts = task.closedAt ? new Date(task.closedAt).getTime() : NaN
+    return { task, index, ts, valid: !Number.isNaN(ts) }
+  })
+
+  tagged.sort((a, b) => {
+    // Valid timestamps come before invalid ones
+    if (a.valid && !b.valid) return -1
+    if (!a.valid && b.valid) return 1
+    // Both valid: descending by timestamp
+    if (a.valid && b.valid) return b.ts - a.ts
+    // Both invalid: preserve original order
+    return a.index - b.index
+  })
+
+  return tagged.map((t) => t.task)
+}
+
 // ---------------------------------------------------------------------------
 // Section title
 // ---------------------------------------------------------------------------
@@ -509,7 +534,8 @@ export function DashboardView({
   // Drive a one-second re-render while any active task needs a live duration.
   useDurationTick(tasks)
 
-  const { active, done } = partitionTasks(tasks)
+  const { active, done: unsortedDone } = partitionTasks(tasks)
+  const done = sortDoneTasks(unsortedDone)
 
   // Compute dynamic title column width from available terminal space
   const fixedColumnsWidth =
