@@ -1,4 +1,4 @@
-import { Effect, Layer, pipe } from "effect"
+import { Console, Effect, Layer, pipe } from "effect"
 import { ClaudeEngineLayer } from "./engine/ClaudeEngine.js"
 import { CodexEngineLayer } from "./engine/CodexEngine.js"
 import { Engine, type AgentResult } from "./engine/Engine.js"
@@ -6,8 +6,8 @@ import { agent } from "./agent.js"
 import { cmd } from "./cmd.js"
 import { loop } from "./loop.js"
 import { report } from "./report.js"
-import { gitCommitAndPush } from "./git.js"
-import type { RalpheConfig } from "./config.js"
+import { gitCommit, gitPush } from "./git.js"
+import type { GitMode, RalpheConfig } from "./config.js"
 
 export interface TaskResult {
   readonly success: boolean
@@ -16,16 +16,26 @@ export interface TaskResult {
   readonly error?: string | undefined
 }
 
+export const resolveGitMode = (
+  config: RalpheConfig,
+  gitModeOverride?: GitMode,
+): GitMode =>
+  gitModeOverride ?? config.git.mode
+
 /**
  * Shared task executor used by both direct CLI runs and Beads watcher runs.
- * Runs the full pipeline: agent → checks → report → loop with retries → optional auto-commit.
+ * Runs the full pipeline: agent → checks → report → loop with retries → git mode flow.
  */
 export const runTask = (
   task: string,
   config: RalpheConfig,
-  opts?: { readonly engineOverride?: "claude" | "codex" },
+  opts?: {
+    readonly engineOverride?: "claude" | "codex"
+    readonly gitModeOverride?: GitMode
+  },
 ): Effect.Effect<TaskResult, never> => {
   const engineChoice = opts?.engineOverride ?? config.engine
+  const gitMode = resolveGitMode(config, opts?.gitModeOverride)
 
   const engineLayer: Layer.Layer<Engine> =
     engineChoice === "codex" ? CodexEngineLayer : ClaudeEngineLayer
@@ -55,8 +65,29 @@ export const runTask = (
   const fullWorkflow = Effect.gen(function* () {
     yield* Effect.provide(workflow, engineLayer)
 
-    if (config.autoCommit) {
-      yield* Effect.provide(gitCommitAndPush(), engineLayer)
+    yield* Console.log(`Git mode: ${gitMode}`)
+    switch (gitMode) {
+      case "none":
+        break
+      case "commit": {
+        const commitResult = yield* Effect.provide(gitCommit(), engineLayer)
+        if (commitResult) {
+          yield* Console.log(`Commit hash: ${commitResult.hash}`)
+        }
+        break
+      }
+      case "commit_and_push": {
+        const commitResult = yield* Effect.provide(gitCommit(), engineLayer)
+        if (!commitResult) {
+          yield* Console.log("Push skipped: no commit created.")
+          break
+        }
+
+        yield* Console.log(`Commit hash: ${commitResult.hash}`)
+        const pushResult = yield* gitPush()
+        yield* Console.log(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
+        break
+      }
     }
 
     return {

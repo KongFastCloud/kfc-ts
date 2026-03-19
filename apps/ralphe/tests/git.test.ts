@@ -3,7 +3,7 @@ import { Effect, Layer } from "effect"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
-import { gitCommitAndPush } from "../src/git.js"
+import { gitCommit, gitCommitAndPush, gitPush } from "../src/git.js"
 import { Engine } from "../src/engine/Engine.js"
 
 const mockEngine = (response: string) =>
@@ -62,5 +62,62 @@ describe("gitCommitAndPush", () => {
     const log = Bun.spawnSync(["git", "log", "--oneline"], { cwd: tmpDir })
     const output = new TextDecoder().decode(log.stdout)
     expect(output).not.toContain("should not be called")
+  })
+})
+
+describe("gitCommit", () => {
+  test("returns commit hash when commit occurs", async () => {
+    fs.writeFileSync(path.join(tmpDir, "commit-only.txt"), "hello")
+
+    const commitResult = await Effect.runPromise(
+      gitCommit().pipe(Effect.provide(mockEngine("feat: commit only test"))),
+    )
+
+    expect(commitResult).toBeDefined()
+    expect(commitResult?.hash).toMatch(/^[a-f0-9]{7,}$/)
+  })
+
+  test("returns undefined when there are no changes", async () => {
+    fs.writeFileSync(path.join(tmpDir, "init.txt"), "init")
+    Bun.spawnSync(["git", "add", "-A"], { cwd: tmpDir })
+    Bun.spawnSync(["git", "commit", "-m", "init"], { cwd: tmpDir })
+
+    const commitResult = await Effect.runPromise(
+      gitCommit().pipe(Effect.provide(mockEngine("should-not-run"))),
+    )
+
+    expect(commitResult).toBeUndefined()
+  })
+})
+
+describe("gitPush", () => {
+  test("returns pushed remote/ref when remote is configured", async () => {
+    const remoteDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphe-git-remote-"))
+    try {
+      Bun.spawnSync(["git", "init", "--bare", remoteDir], { cwd: tmpDir })
+
+      // Seed remote tracking with an initial commit.
+      fs.writeFileSync(path.join(tmpDir, "seed.txt"), "seed")
+      Bun.spawnSync(["git", "add", "-A"], { cwd: tmpDir })
+      Bun.spawnSync(["git", "commit", "-m", "seed"], { cwd: tmpDir })
+      Bun.spawnSync(["git", "remote", "add", "origin", remoteDir], { cwd: tmpDir })
+
+      const branch = new TextDecoder().decode(
+        Bun.spawnSync(["git", "rev-parse", "--abbrev-ref", "HEAD"], { cwd: tmpDir }).stdout,
+      ).trim()
+      Bun.spawnSync(["git", "push", "-u", "origin", branch], { cwd: tmpDir })
+
+      // Create a new local commit to push.
+      fs.writeFileSync(path.join(tmpDir, "delta.txt"), "delta")
+      await Effect.runPromise(
+        gitCommit().pipe(Effect.provide(mockEngine("feat: push test commit"))),
+      )
+
+      const pushResult = await Effect.runPromise(gitPush())
+      expect(pushResult.remote).toBe("origin")
+      expect(pushResult.ref).toBe(branch)
+    } finally {
+      fs.rmSync(remoteDir, { recursive: true })
+    }
   })
 })

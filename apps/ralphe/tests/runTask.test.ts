@@ -11,7 +11,7 @@ const baseConfig: RalpheConfig = {
   engine: "claude",
   maxAttempts: 2,
   checks: [],
-  autoCommit: false,
+  git: { mode: "none" },
   report: "none",
 }
 

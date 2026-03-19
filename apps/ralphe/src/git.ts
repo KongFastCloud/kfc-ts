@@ -6,6 +6,17 @@ export interface GitResult {
   readonly stdout: string
 }
 
+export interface GitCommitResult {
+  readonly message: string
+  readonly hash: string
+}
+
+export interface GitPushResult {
+  readonly remote: string
+  readonly ref: string
+  readonly output: string
+}
+
 const run = (args: string[]): Effect.Effect<GitResult, FatalError> =>
   Effect.tryPromise({
     try: async () => {
@@ -52,10 +63,20 @@ Diff:
 
 export const gitCommitAndPush = (): Effect.Effect<void, FatalError, Engine> =>
   Effect.gen(function* () {
+    const commitResult = yield* gitCommit()
+    if (!commitResult) {
+      return
+    }
+
+    yield* gitPush()
+  })
+
+export const gitCommit = (): Effect.Effect<GitCommitResult | undefined, FatalError, Engine> =>
+  Effect.gen(function* () {
     const status = yield* run(["status", "--porcelain"])
     if (!status.stdout.trim()) {
       yield* Console.log("No changes to commit.")
-      return
+      return undefined
     }
 
     yield* run(["add", "-A"])
@@ -77,9 +98,23 @@ export const gitCommitAndPush = (): Effect.Effect<void, FatalError, Engine> =>
     yield* Console.log(`Commit: ${message}`)
 
     yield* run(["commit", "-m", message])
+    const hash = (yield* run(["rev-parse", "--short", "HEAD"])).stdout.trim()
     yield* Console.log("Committed.")
 
+    return { message, hash }
+  })
+
+export const gitPush = (): Effect.Effect<GitPushResult, FatalError> =>
+  Effect.gen(function* () {
+    const ref = (yield* run(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim()
+    const remote = yield* run(["config", `branch.${ref}.remote`]).pipe(
+      Effect.map((result) => result.stdout.trim() || "origin"),
+      Effect.catchTag("FatalError", () => Effect.succeed("origin")),
+    )
+
     yield* Console.log("Pushing...")
-    yield* run(["push"])
+    const pushOutput = (yield* run(["push"])).stdout.trim()
     yield* Console.log("Pushed.")
+
+    return { remote, ref, output: pushOutput }
   })

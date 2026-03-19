@@ -52,7 +52,7 @@ Do not use this skill just because the user mentions checks, reports, codex, cla
 3. If the project has no config yet, suggest running \`ralphe config\`.
 4. Help the user choose checks that match the repo's existing scripts.
 5. Run \`ralphe run\` with either a text task or \`--file\`.
-6. If needed, explain retry behavior, reports, and auto-commit before enabling them.
+6. If needed, explain retry behavior, reports, and git.mode options before enabling them.
 
 ## Core Commands
 

@@ -2,9 +2,9 @@
 import { Args, Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Console, Effect } from "effect"
-import { checkbox, confirm, select, input } from "@inquirer/prompts"
+import { checkbox, select, input } from "@inquirer/prompts"
 import { FatalError } from "./src/errors.js"
-import { loadConfig, saveConfig, type RalpheConfig } from "./src/config.js"
+import { loadConfig, saveConfig, type GitMode, type RalpheConfig } from "./src/config.js"
 import { detectProject } from "./src/detect.js"
 import { installGlobalSkill } from "./src/skill.js"
 import { runTask } from "./src/runTask.js"
@@ -68,18 +68,22 @@ const config = Command.make("config", {}, () =>
       }),
     )
 
-    const autoCommit = yield* Effect.promise(() =>
-      confirm({
-        message: "Auto-commit and push on success?",
-        default: existing.autoCommit,
+    const gitMode = yield* Effect.promise(() =>
+      select({
+        message: "Git mode",
+        choices: [
+          { name: "none", value: "none" as const, description: "Do not run git operations" },
+          { name: "commit", value: "commit" as const, description: "Stage and commit only" },
+          { name: "commit_and_push", value: "commit_and_push" as const, description: "Stage, commit, and push" },
+        ],
+        default: existing.git.mode,
       }),
     )
-
     const newConfig: RalpheConfig = {
       engine: engineChoice,
       maxAttempts: parseInt(maxAttemptsStr, 10) || 2,
       checks,
-      autoCommit,
+      git: { mode: gitMode },
       report: reportMode,
     }
 
@@ -104,10 +108,13 @@ const file = Options.file("file").pipe(
 const engineFlag = Options.choice("engine", ["claude", "codex"]).pipe(
   Options.optional,
 )
+const gitModeFlag = Options.choice("git-mode", ["none", "commit", "commit_and_push"]).pipe(
+  Options.optional,
+)
 const run = Command.make(
   "run",
-  { task, file, engine: engineFlag },
-  ({ task: taskArg, file: fileOpt, engine: engineOverride }) =>
+  { task, file, engine: engineFlag, gitMode: gitModeFlag },
+  ({ task: taskArg, file: fileOpt, engine: engineOverride, gitMode: gitModeOverride }) =>
     Effect.gen(function* () {
       if (fileOpt._tag === "Some" && !fs.existsSync(fileOpt.value)) {
         return yield* Effect.fail(
@@ -125,6 +132,10 @@ const run = Command.make(
       const engineChoice = engineOverride.pipe(
         (opt) => opt._tag === "Some" ? opt.value : cfg.engine,
       ) as "claude" | "codex"
+      const runConfig = resolveRunConfig(
+        cfg,
+        gitModeOverride.pipe((opt) => opt._tag === "Some" ? opt.value : undefined) as GitMode | undefined,
+      )
 
       // Resolve task from file or positional arg
       let task: string = ""
@@ -143,7 +154,7 @@ const run = Command.make(
         yield* Console.log(`No root checks configured — running agent only.`)
       }
 
-      const result = yield* runTask(task, cfg, { engineOverride: engineChoice })
+      const result = yield* runTask(task, runConfig, { engineOverride: engineChoice })
 
       if (!result.success) {
         return yield* Effect.fail(
@@ -218,4 +229,20 @@ const cli = Command.run(ralphe, {
   version: "0.0.1",
 })
 
-cli(process.argv).pipe(Effect.provide(BunContext.layer), BunRuntime.runMain)
+export const resolveRunConfig = (
+  cfg: RalpheConfig,
+  gitModeOverride?: GitMode,
+): RalpheConfig => {
+  const resolvedGitMode = gitModeOverride ?? cfg.git.mode
+  return {
+    ...cfg,
+    git: { mode: resolvedGitMode },
+  }
+}
+
+export const runCli = (argv: string[]) =>
+  cli(argv).pipe(Effect.provide(BunContext.layer), BunRuntime.runMain)
+
+if (import.meta.main) {
+  runCli(process.argv)
+}
