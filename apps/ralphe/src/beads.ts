@@ -191,6 +191,25 @@ export const removeLabel = (
   )
 
 /**
+ * Mark a task as ready by replacing all existing labels with exactly `ready`.
+ * This is a label-only operation — it does not change Beads lifecycle state.
+ * Used for manual error-to-ready recovery and promoting non-done issues
+ * back into the automatic pickup queue.
+ */
+export const markTaskReady = (
+  id: string,
+  currentLabels: string[],
+): Effect.Effect<void, FatalError> =>
+  Effect.gen(function* () {
+    // Remove every existing label
+    for (const label of currentLabels) {
+      yield* removeLabel(id, label)
+    }
+    // Apply exactly the ready label
+    yield* addLabel(id, "ready")
+  })
+
+/**
  * Mark a task as having exhausted all retries.
  * Keeps the task open, removes the "ready" label so it is no longer
  * automatically eligible, and adds the "error" label for operator visibility.

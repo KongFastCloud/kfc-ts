@@ -491,45 +491,46 @@ describe("parseBdTaskList", () => {
 // ---------------------------------------------------------------------------
 
 describe("getAvailableActions", () => {
-  const makeTask = (status: WatchTask["status"], owner?: string): WatchTask => ({
+  const makeTask = (status: WatchTask["status"], overrides?: Partial<WatchTask>): WatchTask => ({
     id: "t-1",
     title: "Test task",
     status,
-    owner,
+    ...overrides,
   })
 
-  test("backlog tasks have no manual actions", () => {
+  test("backlog tasks expose mark-ready action", () => {
     const actions = getAvailableActions(makeTask("backlog"))
-    expect(actions).toEqual([])
+    expect(actions).toContain("mark-ready")
   })
 
-  test("actionable tasks have no manual actions", () => {
+  test("actionable tasks expose mark-ready action", () => {
     const actions = getAvailableActions(makeTask("actionable"))
-    expect(actions).toEqual([])
+    expect(actions).toContain("mark-ready")
   })
 
-  test("blocked tasks have no manual actions", () => {
+  test("blocked tasks expose mark-ready action", () => {
     const actions = getAvailableActions(makeTask("blocked"))
-    expect(actions).toEqual([])
+    expect(actions).toContain("mark-ready")
   })
 
-  test("active tasks have no manual actions", () => {
+  test("active tasks expose mark-ready action", () => {
     const actions = getAvailableActions(makeTask("active"))
-    expect(actions).toEqual([])
+    expect(actions).toContain("mark-ready")
   })
 
-  test("active tasks with owner still have no manual actions", () => {
-    const actions = getAvailableActions(makeTask("active", "worker-1"))
-    expect(actions).toEqual([])
+  test("active tasks with owner expose mark-ready action", () => {
+    const actions = getAvailableActions(makeTask("active", { owner: "worker-1" }))
+    expect(actions).toContain("mark-ready")
   })
 
-  test("done tasks have no manual actions", () => {
-    const actions = getAvailableActions(makeTask("done"))
-    expect(actions).toEqual([])
-  })
-
-  test("error tasks have no manual actions", () => {
+  test("error tasks expose mark-ready action", () => {
     const actions = getAvailableActions(makeTask("error"))
+    expect(actions).toContain("mark-ready")
+  })
+
+  test("done tasks do not expose mark-ready action", () => {
+    const actions = getAvailableActions(makeTask("done"))
+    expect(actions).not.toContain("mark-ready")
     expect(actions).toEqual([])
   })
 
@@ -538,6 +539,63 @@ describe("getAvailableActions", () => {
     const task = { ...makeTask("actionable"), status: "unknown" as WatchTask["status"] }
     const actions = getAvailableActions(task)
     expect(actions).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Mark Ready — status derivation after relabeling
+// ---------------------------------------------------------------------------
+
+describe("mark-ready status outcomes", () => {
+  test("error issue relabeled to ready derives to actionable (no blockers)", () => {
+    // After mark-ready: labels change from [error] to [ready]
+    const json = JSON.stringify([
+      { id: "t-1", title: "Was error", status: "open", labels: ["ready"] },
+    ])
+    const task = parseBdTaskList(json)[0]!
+    expect(task.status).toBe("actionable")
+  })
+
+  test("blocked issue relabeled to ready still derives to blocked", () => {
+    // After mark-ready: labels change to [ready], but blocker still open
+    const json = JSON.stringify([
+      {
+        id: "t-1",
+        title: "Still blocked",
+        status: "open",
+        labels: ["ready"],
+        dependencies: [
+          { id: "dep-1", status: "open", dependency_type: "blocks" },
+        ],
+      },
+    ])
+    const task = parseBdTaskList(json)[0]!
+    expect(task.status).toBe("blocked")
+  })
+
+  test("in_progress issue relabeled to ready still derives to active", () => {
+    // After mark-ready: labels change to [ready], but in_progress takes precedence
+    const json = JSON.stringify([
+      { id: "t-1", title: "Still active", status: "in_progress", labels: ["ready"] },
+    ])
+    const task = parseBdTaskList(json)[0]!
+    expect(task.status).toBe("active")
+  })
+
+  test("backlog issue relabeled to ready derives to actionable (no blockers)", () => {
+    const json = JSON.stringify([
+      { id: "t-1", title: "Now ready", status: "open", labels: ["ready"] },
+    ])
+    const task = parseBdTaskList(json)[0]!
+    expect(task.status).toBe("actionable")
+  })
+
+  test("already-ready issue remains stable after mark-ready", () => {
+    const json = JSON.stringify([
+      { id: "t-1", title: "Already ready", status: "open", labels: ["ready"] },
+    ])
+    const task = parseBdTaskList(json)[0]!
+    expect(task.status).toBe("actionable")
   })
 })
 

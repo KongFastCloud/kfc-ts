@@ -11,6 +11,9 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import type { ReactNode } from "react"
 import { useState, useCallback, useEffect, useRef } from "react"
 import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
+import { getAvailableActions } from "../beadsAdapter.js"
+import { markTaskReady } from "../beads.js"
+import { Effect } from "effect"
 import type { WorkerStatus } from "../tuiWorker.js"
 import { DashboardView, partitionTasks } from "./DashboardView.js"
 import {
@@ -140,10 +143,10 @@ function WatchHeader({
   )
 }
 
-function WatchFooter({ viewMode }: { viewMode: "dashboard" | "detail" }): ReactNode {
+function WatchFooter({ viewMode, hasMarkReady }: { viewMode: "dashboard" | "detail"; hasMarkReady?: boolean }): ReactNode {
   const navShortcuts =
     viewMode === "detail"
-      ? "Esc/Backspace:Back  q:Quit"
+      ? `Esc/Backspace:Back${hasMarkReady ? "  m:Mark Ready" : ""}  q:Quit`
       : "↑↓:Navigate  Tab:Switch Table  Enter:Detail  r:Refresh  q:Quit"
   return (
     <box
@@ -452,6 +455,7 @@ export function WatchApp({
     initialTasks.length > 0 ? new Date() : null,
   )
   const refreshingRef = useRef(false)
+  const markingReadyRef = useRef(false)
 
   // Dashboard focus and per-table selection state (single source of truth)
   const [focusState, setFocusState] = useState(initialDashboardFocusState)
@@ -509,6 +513,27 @@ export function WatchApp({
             onQuit?.()
             process.exit(0)
             return
+          case "m":
+            // Mark Ready action — only if available for the selected task
+            if (
+              selectedTask &&
+              getAvailableActions(selectedTask).includes("mark-ready") &&
+              !markingReadyRef.current
+            ) {
+              markingReadyRef.current = true
+              const taskId = selectedTask.id
+              const currentLabels = selectedTask.labels ?? []
+              Effect.runPromise(markTaskReady(taskId, currentLabels))
+                .then(() => doRefresh())
+                .catch((e) => {
+                  const msg = e instanceof Error ? e.message : String(e)
+                  setError(`Mark ready failed: ${msg}`)
+                })
+                .finally(() => {
+                  markingReadyRef.current = false
+                })
+            }
+            return
           default:
             return
         }
@@ -553,7 +578,7 @@ export function WatchApp({
           break
       }
     },
-    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh],
+    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh, selectedTask],
   )
 
   useKeyboard(handleKeyboard)
@@ -593,7 +618,14 @@ export function WatchApp({
         )}
       </box>
 
-      <WatchFooter viewMode={viewMode} />
+      <WatchFooter
+        viewMode={viewMode}
+        hasMarkReady={
+          viewMode === "detail" &&
+          selectedTask != null &&
+          getAvailableActions(selectedTask).includes("mark-ready")
+        }
+      />
     </box>
   )
 }

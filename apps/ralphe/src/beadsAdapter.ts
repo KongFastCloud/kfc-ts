@@ -355,9 +355,29 @@ export const queryTaskDetail = (
 // ---------------------------------------------------------------------------
 
 /**
- * Manual task actions are intentionally disabled in watch TUI.
+ * Manual task action identifiers.
  */
-export function getAvailableActions(_task: WatchTask): [] {
+export type TaskAction = "mark-ready"
+
+/**
+ * Non-done statuses eligible for the Mark Ready action.
+ */
+const MARK_READY_ELIGIBLE: ReadonlySet<WatchTaskStatus> = new Set([
+  "backlog",
+  "actionable",
+  "blocked",
+  "active",
+  "error",
+])
+
+/**
+ * Return available manual actions for a task.
+ * Currently only "mark-ready" is supported, and only for non-done issues.
+ */
+export function getAvailableActions(task: WatchTask): TaskAction[] {
+  if (MARK_READY_ELIGIBLE.has(task.status)) {
+    return ["mark-ready"]
+  }
   return []
 }
 
