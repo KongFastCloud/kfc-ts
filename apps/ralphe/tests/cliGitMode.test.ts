@@ -25,4 +25,9 @@ describe("resolveRunConfig", () => {
     const resolved = resolveRunConfig(baseConfig, "commit")
     expect(resolved.git.mode).toBe("commit")
   })
+
+  test("commit_and_push_and_wait_ci override is applied", () => {
+    const resolved = resolveRunConfig(baseConfig, "commit_and_push_and_wait_ci")
+    expect(resolved.git.mode).toBe("commit_and_push_and_wait_ci")
+  })
 })

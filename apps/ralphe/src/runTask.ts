@@ -6,7 +6,7 @@ import { agent } from "./agent.js"
 import { cmd } from "./cmd.js"
 import { loop } from "./loop.js"
 import { report } from "./report.js"
-import { gitCommit, gitPush } from "./git.js"
+import { gitCommit, gitPush, gitWaitForCi } from "./git.js"
 import type { GitMode, RalpheConfig } from "./config.js"
 
 export interface TaskResult {
@@ -86,6 +86,20 @@ export const runTask = (
         yield* Console.log(`Commit hash: ${commitResult.hash}`)
         const pushResult = yield* gitPush()
         yield* Console.log(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
+        break
+      }
+      case "commit_and_push_and_wait_ci": {
+        const commitResult = yield* Effect.provide(gitCommit(), engineLayer)
+        if (!commitResult) {
+          yield* Console.log("Push/CI skipped: no commit created.")
+          break
+        }
+
+        yield* Console.log(`Commit hash: ${commitResult.hash}`)
+        const pushResult = yield* gitPush()
+        yield* Console.log(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
+        const ciResult = yield* gitWaitForCi()
+        yield* Console.log(`CI passed: run ${ciResult.runId}`)
         break
       }
     }

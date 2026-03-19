@@ -75,6 +75,11 @@ const config = Command.make("config", {}, () =>
           { name: "none", value: "none" as const, description: "Do not run git operations" },
           { name: "commit", value: "commit" as const, description: "Stage and commit only" },
           { name: "commit_and_push", value: "commit_and_push" as const, description: "Stage, commit, and push" },
+          {
+            name: "commit_and_push_and_wait_ci",
+            value: "commit_and_push_and_wait_ci" as const,
+            description: "Stage, commit, push, and wait for GitHub Actions CI",
+          },
         ],
         default: existing.git.mode,
       }),
@@ -108,7 +113,12 @@ const file = Options.file("file").pipe(
 const engineFlag = Options.choice("engine", ["claude", "codex"]).pipe(
   Options.optional,
 )
-const gitModeFlag = Options.choice("git-mode", ["none", "commit", "commit_and_push"]).pipe(
+const gitModeFlag = Options.choice("git-mode", [
+  "none",
+  "commit",
+  "commit_and_push",
+  "commit_and_push_and_wait_ci",
+]).pipe(
   Options.optional,
 )
 const run = Command.make(

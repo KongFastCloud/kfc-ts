@@ -77,7 +77,7 @@ The wizard reads the root `package.json` and lets you select from the root-level
 | `engine` | `"claude"` | AI engine (`"claude"` or `"codex"`) |
 | `maxAttempts` | `2` | Max retry attempts on check failure |
 | `checks` | `[]` | Shell commands to verify agent output |
-| `git.mode` | `"none"` | Git behavior after success (`"none"`, `"commit"`, `"commit_and_push"`) |
+| `git.mode` | `"none"` | Git behavior after success (`"none"`, `"commit"`, `"commit_and_push"`, `"commit_and_push_and_wait_ci"`) |
 | `report` | `"none"` | Verification report mode (`"none"`, `"basic"`, or `"browser"`) |
 
 Without a config, or when no root scripts are selected, ralphe runs the agent with no verification checks.
@@ -129,11 +129,11 @@ flowchart TD
     E -- "Yes" --> F["Optionally run a verification report<br/>(basic or browser)"]
     F --> G{"Report passes?"}
     G -- "No, retry if attempts remain" --> C
-    G -- "Yes" --> H["Optionally run git.mode flow (none/commit/commit_and_push)"]
+    G -- "Yes" --> H["Optionally run git.mode flow (none/commit/commit_and_push/commit_and_push_and_wait_ci)"]
     H --> I["Done"]
 ```
 
-When `git.mode` is `commit` or `commit_and_push`, ralphe uses the engine to generate a conventional commit message from the staged diff, then commits. In `commit_and_push`, it also pushes.
+When `git.mode` is `commit`, `commit_and_push`, or `commit_and_push_and_wait_ci`, ralphe uses the engine to generate a conventional commit message from the staged diff, then commits. In `commit_and_push`, it also pushes. In `commit_and_push_and_wait_ci`, it pushes and waits for the GitHub Actions run for `HEAD` to finish successfully.
 
 ## Monorepos
 

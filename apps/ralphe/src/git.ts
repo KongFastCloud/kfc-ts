@@ -17,10 +17,22 @@ export interface GitPushResult {
   readonly output: string
 }
 
-const run = (args: string[]): Effect.Effect<GitResult, FatalError> =>
+export interface GitHubCiResult {
+  readonly runId: number
+  readonly status: string
+  readonly conclusion: string | null
+  readonly url: string | null
+  readonly workflowName: string | null
+}
+
+interface CliResult {
+  readonly stdout: string
+}
+
+const runCommand = (command: string, args: string[]): Effect.Effect<CliResult, FatalError> =>
   Effect.tryPromise({
     try: async () => {
-      const proc = Bun.spawn(["git", ...args], {
+      const proc = Bun.spawn([command, ...args], {
         stdout: "pipe",
         stderr: "pipe",
       })
@@ -39,16 +51,22 @@ const run = (args: string[]): Effect.Effect<GitResult, FatalError> =>
       if (error && typeof error === "object" && "stderr" in error) {
         const e = error as { stderr: string; exitCode: number }
         return new FatalError({
-          command: `git ${args.join(" ")}`,
+          command: `${command} ${args.join(" ")}`,
           message: e.stderr.trim() || `exited with code ${e.exitCode}`,
         })
       }
       return new FatalError({
-        command: `git ${args.join(" ")}`,
-        message: `Failed to run git: ${error}`,
+        command: `${command} ${args.join(" ")}`,
+        message: `Failed to run ${command}: ${error}`,
       })
     },
   })
+
+const run = (args: string[]): Effect.Effect<GitResult, FatalError> =>
+  runCommand("git", args)
+
+const runGh = (args: string[]): Effect.Effect<CliResult, FatalError> =>
+  runCommand("gh", args)
 
 const COMMIT_MSG_PROMPT = `Look at the following git diff and generate a conventional commit message.
 Use the format: type(scope): description
@@ -60,6 +78,44 @@ Output ONLY the commit message, nothing else. No markdown, no explanation.
 
 Diff:
 `
+
+const CI_RUN_DISCOVERY_ATTEMPTS = 12
+const CI_STATUS_POLL_ATTEMPTS = 180
+const CI_STATUS_POLL_DELAY_MS = 10000
+
+interface GhRun {
+  readonly databaseId: number
+  readonly status: string
+  readonly conclusion: string | null
+  readonly url: string | null
+  readonly workflowName: string | null
+}
+
+const asNullableString = (value: unknown): string | null =>
+  typeof value === "string" ? value : null
+
+const parseGhRunList = (raw: string): GhRun[] | undefined => {
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) {
+      throw new Error("Expected an array")
+    }
+    return parsed
+      .filter((item): item is Record<string, unknown> =>
+        Boolean(item && typeof item === "object"),
+      )
+      .map((item) => ({
+        databaseId: Number(item.databaseId),
+        status: String(item.status ?? ""),
+        conclusion: asNullableString(item.conclusion),
+        url: asNullableString(item.url),
+        workflowName: asNullableString(item.workflowName),
+      }))
+      .filter((item) => Number.isFinite(item.databaseId) && item.databaseId > 0)
+  } catch {
+    return undefined
+  }
+}
 
 export const gitCommitAndPush = (): Effect.Effect<void, FatalError, Engine> =>
   Effect.gen(function* () {
@@ -117,4 +173,92 @@ export const gitPush = (): Effect.Effect<GitPushResult, FatalError> =>
     yield* Console.log("Pushed.")
 
     return { remote, ref, output: pushOutput }
+  })
+
+export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError> =>
+  Effect.gen(function* () {
+    // Early check produces a clear error when GitHub CLI is missing.
+    yield* runGh(["--version"])
+
+    const sha = (yield* run(["rev-parse", "HEAD"])).stdout.trim()
+    yield* Console.log(`Waiting for GitHub Actions for commit ${sha.slice(0, 7)}...`)
+
+    const listCommand = `gh run list --commit ${sha} --limit 20 --json databaseId,status,conclusion,url,workflowName`
+
+    for (let attempt = 0; attempt < CI_STATUS_POLL_ATTEMPTS; attempt += 1) {
+      const listOutput = yield* runGh([
+        "run",
+        "list",
+        "--commit",
+        sha,
+        "--limit",
+        "20",
+        "--json",
+        "databaseId,status,conclusion,url,workflowName",
+      ])
+      const runs = parseGhRunList(listOutput.stdout)
+      if (!runs) {
+        return yield* Effect.fail(
+          new FatalError({
+            command: listCommand,
+            message: "Failed to parse GitHub Actions run metadata.",
+          }),
+        )
+      }
+
+      if (runs.length === 0) {
+        if (attempt < CI_RUN_DISCOVERY_ATTEMPTS - 1) {
+          yield* Console.log(`No CI run found yet for ${sha.slice(0, 7)}; retrying in 10s...`)
+          yield* Effect.sleep(CI_STATUS_POLL_DELAY_MS)
+          continue
+        }
+
+        return yield* Effect.fail(
+          new FatalError({
+            command: listCommand,
+            message: `No GitHub Actions run found for commit ${sha.slice(0, 7)} within ${CI_RUN_DISCOVERY_ATTEMPTS * (CI_STATUS_POLL_DELAY_MS / 1000)}s.`,
+          }),
+        )
+      }
+
+      const runningRuns = runs.filter((run) => run.status !== "completed")
+      if (runningRuns.length > 0) {
+        yield* Console.log(
+          `CI in progress (${runningRuns.length}/${runs.length} still running). Checking again in 10s...`,
+        )
+        yield* Effect.sleep(CI_STATUS_POLL_DELAY_MS)
+        continue
+      }
+
+      const failingRun = runs.find((run) =>
+        run.conclusion !== "success" &&
+        run.conclusion !== "skipped" &&
+        run.conclusion !== "neutral"
+      )
+      if (failingRun) {
+        return yield* Effect.fail(
+          new FatalError({
+            command: listCommand,
+            message: `CI failed for run ${failingRun.databaseId} (conclusion: ${failingRun.conclusion ?? "unknown"}).`,
+          }),
+        )
+      }
+
+      const latestRun = runs[0]
+      yield* Console.log(`CI succeeded across ${runs.length} run(s).`)
+      return {
+        runId: latestRun.databaseId,
+        status: latestRun.status,
+        conclusion: latestRun.conclusion,
+        url: latestRun.url,
+        workflowName: latestRun.workflowName,
+      }
+    }
+
+    return yield* Effect.fail(
+      new FatalError({
+        command: listCommand,
+        message: `Timed out waiting for CI completion for commit ${sha.slice(0, 7)} after ${CI_STATUS_POLL_ATTEMPTS * (CI_STATUS_POLL_DELAY_MS / 1000)}s.`,
+      }),
+    )
   })

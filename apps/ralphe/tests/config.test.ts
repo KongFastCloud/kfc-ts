@@ -82,6 +82,17 @@ describe("loadConfig", () => {
     expect(config.git.mode).toBe("commit")
   })
 
+  test("reads git.mode=commit_and_push_and_wait_ci", () => {
+    const configDir = path.join(tmpDir, ".ralphe")
+    fs.mkdirSync(configDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ git: { mode: "commit_and_push_and_wait_ci" } }),
+    )
+    const config = loadConfig(tmpDir)
+    expect(config.git.mode).toBe("commit_and_push_and_wait_ci")
+  })
+
   test("ignores unknown top-level fields when git.mode is absent", () => {
     const configDir = path.join(tmpDir, ".ralphe")
     fs.mkdirSync(configDir, { recursive: true })
@@ -154,6 +165,7 @@ describe("parseGitMode", () => {
     expect(parseGitMode("none")).toBe("none")
     expect(parseGitMode("commit")).toBe("commit")
     expect(parseGitMode("commit_and_push")).toBe("commit_and_push")
+    expect(parseGitMode("commit_and_push_and_wait_ci")).toBe("commit_and_push_and_wait_ci")
   })
 
   test("rejects invalid string", () => {
@@ -167,6 +179,8 @@ describe("parseGitMode", () => {
   })
 
   test("error message lists valid values", () => {
-    expect(() => parseGitMode("bad")).toThrow(/none, commit, commit_and_push/)
+    expect(() => parseGitMode("bad")).toThrow(
+      /none, commit, commit_and_push, commit_and_push_and_wait_ci/,
+    )
   })
 })

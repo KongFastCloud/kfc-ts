@@ -6,11 +6,21 @@ import path from "node:path"
  * - "none": No automatic git operations after task completion
  * - "commit": Stage and commit changes but do not push
  * - "commit_and_push": Stage, commit, and push changes
+ * - "commit_and_push_and_wait_ci": Stage, commit, push, and wait for CI
  */
-export type GitMode = "none" | "commit" | "commit_and_push"
+export type GitMode =
+  | "none"
+  | "commit"
+  | "commit_and_push"
+  | "commit_and_push_and_wait_ci"
 
 /** Valid GitMode values for runtime validation */
-const VALID_GIT_MODES: readonly string[] = ["none", "commit", "commit_and_push"]
+const VALID_GIT_MODES: readonly string[] = [
+  "none",
+  "commit",
+  "commit_and_push",
+  "commit_and_push_and_wait_ci",
+]
 
 export interface GitConfig {
   readonly mode: GitMode

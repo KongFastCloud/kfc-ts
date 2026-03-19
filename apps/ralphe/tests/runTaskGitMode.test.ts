@@ -10,6 +10,7 @@ let mockedCommitResult: { message: string; hash: string } | undefined = {
 }
 let commitShouldFail = false
 let pushShouldFail = false
+let waitCiShouldFail = false
 
 mock.module("../src/agent.js", () => ({
   agent: () => Effect.succeed({ response: "ok", resumeToken: "tok-1" }),
@@ -56,6 +57,22 @@ mock.module("../src/git.js", () => ({
       }
       return { remote: "origin", ref: "main", output: "" }
     }),
+  gitWaitForCi: () =>
+    Effect.gen(function* () {
+      gitCalls.push("wait_ci")
+      if (waitCiShouldFail) {
+        return yield* Effect.fail(
+          new FatalError({ command: "gh run watch", message: "ci failed" }),
+        )
+      }
+      return {
+        runId: 123,
+        status: "completed",
+        conclusion: "success",
+        url: "https://example.com/run/123",
+        workflowName: "ci",
+      }
+    }),
 }))
 
 const { runTask } = await import("../src/runTask.js")
@@ -73,6 +90,7 @@ beforeEach(() => {
   mockedCommitResult = { message: "feat: test commit", hash: "abc1234" }
   commitShouldFail = false
   pushShouldFail = false
+  waitCiShouldFail = false
 })
 
 describe("runTask git mode behavior", () => {
@@ -114,6 +132,26 @@ describe("runTask git mode behavior", () => {
     expect(gitCalls).toEqual(["commit"])
   })
 
+  test("commit_and_push_and_wait_ci executes commit then push then wait_ci", async () => {
+    const result = await Effect.runPromise(
+      runTask("task", { ...baseConfig, git: { mode: "commit_and_push_and_wait_ci" } }),
+    )
+
+    expect(result.success).toBe(true)
+    expect(gitCalls).toEqual(["commit", "push", "wait_ci"])
+  })
+
+  test("commit_and_push_and_wait_ci skips push and wait when no commit is created", async () => {
+    mockedCommitResult = undefined
+
+    const result = await Effect.runPromise(
+      runTask("task", { ...baseConfig, git: { mode: "commit_and_push_and_wait_ci" } }),
+    )
+
+    expect(result.success).toBe(true)
+    expect(gitCalls).toEqual(["commit"])
+  })
+
   test("push is not attempted when commit fails", async () => {
     commitShouldFail = true
 
@@ -137,5 +175,29 @@ describe("runTask git mode behavior", () => {
 
     expect(result.success).toBe(true)
     expect(gitCalls).toEqual(["commit"])
+  })
+
+  test("wait_ci is not attempted when push fails", async () => {
+    pushShouldFail = true
+
+    const result = await Effect.runPromise(
+      runTask("task", { ...baseConfig, git: { mode: "commit_and_push_and_wait_ci" } }),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain("push failed")
+    expect(gitCalls).toEqual(["commit", "push"])
+  })
+
+  test("run fails when wait_ci fails", async () => {
+    waitCiShouldFail = true
+
+    const result = await Effect.runPromise(
+      runTask("task", { ...baseConfig, git: { mode: "commit_and_push_and_wait_ci" } }),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain("ci failed")
+    expect(gitCalls).toEqual(["commit", "push", "wait_ci"])
   })
 })
