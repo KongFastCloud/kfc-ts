@@ -22,7 +22,7 @@ export type WatchTaskStatus =
   | "blocked"    // open + has unresolved blocking deps
   | "active"     // in_progress
   | "done"       // closed successfully
-  | "error"      // closed with failure / cancelled
+  | "error"      // open + error label (exhausted retries), or cancelled
 
 /**
  * Task item shaped for TUI rendering.
@@ -130,7 +130,7 @@ const runBd = (
 // Status mapping
 // ---------------------------------------------------------------------------
 
-function mapStatus(bdStatus: string, deps?: BdIssueJson["dependencies"]): WatchTaskStatus {
+function mapStatus(bdStatus: string, deps?: BdIssueJson["dependencies"], labels?: string[]): WatchTaskStatus {
   switch (bdStatus) {
     case "in_progress":
       return "active"
@@ -139,6 +139,8 @@ function mapStatus(bdStatus: string, deps?: BdIssueJson["dependencies"]): WatchT
     case "cancelled":
       return "error"
     case "open": {
+      // Error label takes priority — task exhausted all retries
+      if (labels && labels.includes("error")) return "error"
       // Check if blocked by unresolved dependencies
       if (deps && deps.length > 0) {
         const hasUnresolved = deps.some(
@@ -213,7 +215,7 @@ function bdIssueToWatchTask(item: BdIssueJson): WatchTask {
   return {
     id: item.id,
     title: item.title ?? "",
-    status: mapStatus(item.status, item.dependencies),
+    status: mapStatus(item.status, item.dependencies, item.labels),
     description: item.description,
     design: item.design,
     acceptance_criteria: item.acceptance_criteria,
