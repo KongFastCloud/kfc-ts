@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "bun:test"
-import { partitionTasks, formatCompletedAt } from "../src/tui/DashboardView.js"
+import { partitionTasks, formatCompletedAt, formatIdCell } from "../src/tui/DashboardView.js"
 import type { WatchTask } from "../src/beadsAdapter.js"
 
 function makeTask(id: string, status: WatchTask["status"]): WatchTask {
@@ -85,6 +85,44 @@ describe("partitionTasks", () => {
     for (const t of done) {
       expect(t.status).toBe("done")
     }
+  })
+})
+
+describe("formatIdCell", () => {
+  it("pads a short ID to the column width", () => {
+    const result = formatIdCell("ABC-1")
+    // Should be exactly 12 characters (COL.id width)
+    expect(result).toHaveLength(12)
+    expect(result).toBe("ABC-1       ")
+  })
+
+  it("truncates a long ID with ellipsis", () => {
+    const longId = "VERY-LONG-ID-12345"
+    const result = formatIdCell(longId)
+    expect(result).toHaveLength(12)
+    // Should end with ellipsis due to truncation
+    expect(result).toMatch(/…\s*$|…$/)
+  })
+
+  it("handles an ID exactly at column width", () => {
+    const exactId = "ABCDEFGHIJKL" // 12 chars = COL.id
+    const result = formatIdCell(exactId)
+    expect(result).toHaveLength(12)
+    // Truncated to COL.id - 1 = 11 chars (10 + ellipsis), then padded to 12
+    expect(result).toContain("…")
+  })
+
+  it("handles an empty ID", () => {
+    const result = formatIdCell("")
+    expect(result).toHaveLength(12)
+    expect(result.trim()).toBe("")
+  })
+
+  it("handles an ID one char shorter than column width", () => {
+    const id = "ABCDEFGHIJK" // 11 chars = COL.id - 1
+    const result = formatIdCell(id)
+    expect(result).toHaveLength(12)
+    expect(result.startsWith("ABCDEFGHIJK")).toBe(true)
   })
 })
 

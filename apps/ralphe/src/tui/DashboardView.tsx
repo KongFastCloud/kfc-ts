@@ -48,13 +48,18 @@ const taskStatusIndicator: Record<WatchTaskStatus, string> = {
 
 /** Fixed column widths for the dashboard table. */
 const COL = {
-  id: 10,
+  id: 12,
+  /** Visible separator gutter between ID and Title (e.g. " │ "). */
+  idTitleSep: 3,
   status: 12,
   label: 14,
   priority: 5,
   duration: 10,
   /** Title takes remaining space — computed dynamically. */
 } as const
+
+/** Separator string rendered between ID and Title columns. */
+const ID_TITLE_SEP = " │ "
 
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text
@@ -65,6 +70,14 @@ function truncate(text: string, max: number): string {
 function pad(text: string, width: number): string {
   if (text.length >= width) return text.slice(0, width)
   return text + " ".repeat(width - text.length)
+}
+
+/**
+ * Format an ID cell: right-pad the ID to the column width.
+ * Exported for testing.
+ */
+export function formatIdCell(id: string): string {
+  return pad(truncate(id, COL.id - 1), COL.id)
 }
 
 /** Table variant controls which fourth column is shown. */
@@ -222,8 +235,9 @@ function DashboardTableHeader({ titleWidth, variant }: { titleWidth: number; var
       }}
     >
       <text>
+        <span fg={colors.fg.dim}>{pad("ID", COL.id)}</span>
+        <span fg={colors.border.normal}>{ID_TITLE_SEP}</span>
         <span fg={colors.fg.muted}>
-          {pad("ID", COL.id)}
           {pad("Title", titleWidth)}
           {pad("Status", COL.status)}
           {pad(fourthCol, COL.label)}
@@ -254,7 +268,7 @@ function DashboardRow({
   const sColor = taskStatusColor[task.status]
   const isDimmed = task.status === "done" || task.status === "error"
 
-  const idStr = pad(task.id, COL.id)
+  const idStr = formatIdCell(task.id)
   const titleStr = pad(truncate(task.title, titleWidth - 1), titleWidth)
   const statusStr = pad(`${indicator} ${task.status}`, COL.status)
   const fourthColStr =
@@ -293,6 +307,7 @@ function DashboardRow({
     >
       <text>
         <span fg={idColor}>{idStr}</span>
+        <span fg={colors.border.normal}>{ID_TITLE_SEP}</span>
         <span fg={titleColor}>{titleStr}</span>
         <span fg={sColor}>{statusStr}</span>
         <span fg={colors.accent.secondary}>{fourthColStr}</span>
@@ -447,7 +462,7 @@ export function DashboardView({
 
   // Compute dynamic title column width from available terminal space
   const fixedColumnsWidth =
-    COL.id + COL.status + COL.label + COL.priority + COL.duration + 4 // +4 for padding/border
+    COL.id + COL.idTitleSep + COL.status + COL.label + COL.priority + COL.duration + 4 // +4 for padding/border
   const titleWidth = Math.max(10, terminalWidth - fixedColumnsWidth)
 
   return (
