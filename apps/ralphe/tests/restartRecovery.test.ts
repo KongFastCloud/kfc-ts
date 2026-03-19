@@ -94,18 +94,30 @@ beforeAll(async () => {
       return Effect.succeed(undefined)
     },
 
+    reopenTask: (id: string) => {
+      calls.push({ op: "reopenTask", id })
+      return Effect.succeed(undefined)
+    },
+
+    clearAssignee: (id: string) => {
+      calls.push({ op: "clearAssignee", id })
+      return Effect.succeed(undefined)
+    },
+
     /**
      * Mock recoverStaleTasks that mirrors the production implementation:
      * - Reads ALL stale in_progress issues (from `staleTasks` stub, which
      *   simulates queryAllStaleInProgress — no workerId filtering).
-     * - For each stale issue, pushes a markTaskExhaustedFailure call
-     *   (open + error state, NOT closeTaskFailure).
+     * - For each stale issue, reopens it (status → open), clears assignee,
+     *   then pushes a markTaskExhaustedFailure call (error label + metadata).
      * - Returns the count of recovered tasks.
      */
     recoverStaleTasks: (workerId: string) => {
       calls.push({ op: "recoverStaleTasks" })
       const tasks = [...staleTasks]
       for (const issue of tasks) {
+        calls.push({ op: "reopenTask", id: issue.id })
+        calls.push({ op: "clearAssignee", id: issue.id })
         const now = new Date().toISOString()
         calls.push({
           op: "markTaskExhaustedFailure",
@@ -431,6 +443,70 @@ describe("restart recovery: recovered issue state is open + error", () => {
     expect(recoverCall?.metadata?.finishedAt).toBeTruthy()
     expect(recoverCall?.metadata?.timestamp).toBeTruthy()
     expect(recoverCall?.metadata?.engine).toBe("claude")
+  })
+
+  test("recovered tasks are reopened (status set to open) before error label", async () => {
+    staleTasks = [makeIssue("reopen-1", "Task to reopen")]
+    readyQueue = []
+
+    const { callbacks } = makeCallbacks()
+    const worker = startTuiWorker(callbacks, {
+      pollIntervalMs: 30,
+      workerId: "test-reopen",
+    })
+
+    await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "reopen-1"))
+    worker.stop()
+
+    // reopenTask was called before markTaskExhaustedFailure
+    const reopenIdx = calls.findIndex((c) => c.op === "reopenTask" && c.id === "reopen-1")
+    const exhaustedIdx = calls.findIndex((c) => c.op === "markTaskExhaustedFailure" && c.id === "reopen-1")
+
+    expect(reopenIdx).toBeGreaterThanOrEqual(0)
+    expect(exhaustedIdx).toBeGreaterThan(reopenIdx)
+  })
+
+  test("recovered tasks have assignee cleared (no stale claim residue)", async () => {
+    staleTasks = [makeIssue("assignee-1", "Task with stale assignee")]
+    readyQueue = []
+
+    const { callbacks } = makeCallbacks()
+    const worker = startTuiWorker(callbacks, {
+      pollIntervalMs: 30,
+      workerId: "test-clear-assignee",
+    })
+
+    await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "assignee-1"))
+    worker.stop()
+
+    // clearAssignee was called before markTaskExhaustedFailure
+    const clearIdx = calls.findIndex((c) => c.op === "clearAssignee" && c.id === "assignee-1")
+    const exhaustedIdx = calls.findIndex((c) => c.op === "markTaskExhaustedFailure" && c.id === "assignee-1")
+
+    expect(clearIdx).toBeGreaterThanOrEqual(0)
+    expect(exhaustedIdx).toBeGreaterThan(clearIdx)
+  })
+
+  test("recovery ordering per issue: reopen → clearAssignee → markExhausted", async () => {
+    staleTasks = [makeIssue("order-1")]
+    readyQueue = []
+
+    const { callbacks } = makeCallbacks()
+    const worker = startTuiWorker(callbacks, {
+      pollIntervalMs: 30,
+      workerId: "test-per-issue-order",
+    })
+
+    await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "order-1"))
+    worker.stop()
+
+    const reopenIdx = calls.findIndex((c) => c.op === "reopenTask" && c.id === "order-1")
+    const clearIdx = calls.findIndex((c) => c.op === "clearAssignee" && c.id === "order-1")
+    const exhaustedIdx = calls.findIndex((c) => c.op === "markTaskExhaustedFailure" && c.id === "order-1")
+
+    expect(reopenIdx).toBeGreaterThanOrEqual(0)
+    expect(clearIdx).toBeGreaterThan(reopenIdx)
+    expect(exhaustedIdx).toBeGreaterThan(clearIdx)
   })
 
   test("recovered tasks do not appear as active after recovery", async () => {

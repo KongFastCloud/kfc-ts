@@ -245,6 +245,28 @@ export const writeMetadata = (
   )
 
 /**
+ * Reopen a task by setting its Beads status back to `open`.
+ * Used during startup recovery to move stale `in_progress` issues out of active state.
+ */
+export const reopenTask = (
+  id: string,
+): Effect.Effect<void, FatalError> =>
+  runBd(["update", id, "--status", "open"]).pipe(
+    Effect.map(() => undefined),
+  )
+
+/**
+ * Clear the assignee on a task so no stale claim residue remains.
+ * Used during startup recovery to remove ownership from recovered issues.
+ */
+export const clearAssignee = (
+  id: string,
+): Effect.Effect<void, FatalError> =>
+  runBd(["update", id, "--assignee", ""]).pipe(
+    Effect.map(() => undefined),
+  )
+
+/**
  * Query for stale in-progress tasks claimed by a specific worker.
  * Used for startup recovery.
  */
@@ -296,6 +318,11 @@ export const recoverStaleTasks = (
 
     for (const issue of stale) {
       yield* Console.log(`Recovering stale task: ${issue.id} (${issue.title})`)
+      // Move from in_progress back to open so the issue is no longer active
+      yield* reopenTask(issue.id)
+      // Clear stale assignee/claim residue
+      yield* clearAssignee(issue.id)
+      // Apply error state: remove ready label, add error label, persist metadata & notes
       const now = new Date().toISOString()
       yield* markTaskExhaustedFailure(
         issue.id,
