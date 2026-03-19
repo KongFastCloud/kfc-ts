@@ -15,13 +15,22 @@ import { FatalError } from "./errors.js"
 // ---------------------------------------------------------------------------
 
 /**
- * TUI-friendly task status derived from Beads statuses.
+ * Ralphe status derived from Beads status, labels, and dependency state.
+ *
+ * Mapping (see /prd/ralphe-status-alignment.md):
+ *  open + no ready + no error + no unresolved blockers → backlog
+ *  open + ready   + no error + no unresolved blockers → actionable
+ *  open + unresolved blocking dependencies            → blocked
+ *  open + error label                                 → error
+ *  in_progress                                        → active
+ *  closed                                             → done
  */
 export type WatchTaskStatus =
-  | "actionable" // open + no unresolved blocking deps
-  | "blocked"    // open + has unresolved blocking deps
+  | "backlog"    // open + no ready label + no error label + no unresolved blockers
+  | "actionable" // open + ready label + no error label + no unresolved blockers
+  | "blocked"    // open + unresolved blocking deps
   | "active"     // in_progress
-  | "done"       // closed successfully
+  | "done"       // closed
   | "error"      // open + error label (exhausted retries), or cancelled
 
 /**
@@ -151,10 +160,12 @@ function mapStatus(bdStatus: string, deps?: BdIssueJson["dependencies"], labels?
         )
         if (hasUnresolved) return "blocked"
       }
-      return "actionable"
+      // Ready label distinguishes actionable from backlog
+      if (labels && labels.includes("ready")) return "actionable"
+      return "backlog"
     }
     default:
-      return "actionable"
+      return "backlog"
   }
 }
 

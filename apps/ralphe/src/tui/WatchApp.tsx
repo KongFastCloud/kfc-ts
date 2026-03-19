@@ -24,6 +24,7 @@ const colors = {
 } as const
 
 const taskStatusColor: Record<WatchTaskStatus, string> = {
+  backlog: colors.fg.muted,
   actionable: colors.status.success,
   active: colors.status.success,
   blocked: colors.status.error,
@@ -32,6 +33,7 @@ const taskStatusColor: Record<WatchTaskStatus, string> = {
 }
 
 const taskStatusIndicator: Record<WatchTaskStatus, string> = {
+  backlog: "·",
   actionable: "○",
   active: "▶",
   blocked: "⊘",
