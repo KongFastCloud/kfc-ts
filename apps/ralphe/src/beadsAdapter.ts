@@ -89,7 +89,7 @@ interface BdIssueJson {
     ralphe?: {
       startedAt?: string
       finishedAt?: string
-    }
+    } | string
   }
   dependencies?: Array<{
     id?: string
@@ -211,6 +211,54 @@ function mapStatus(
 }
 
 // ---------------------------------------------------------------------------
+// Metadata normalization
+// ---------------------------------------------------------------------------
+
+interface RalpheTimingMeta {
+  readonly startedAt?: string | undefined
+  readonly finishedAt?: string | undefined
+}
+
+/**
+ * Normalize the ralphe metadata payload into a typed timing object.
+ * Beads may return the value as either a structured object or a
+ * serialized JSON string — this helper handles both representations.
+ * Returns undefined when the payload is missing or unparseable.
+ */
+function normalizeRalpheMeta(
+  raw: BdIssueJson["metadata"],
+): RalpheTimingMeta | undefined {
+  const ralphe = raw?.ralphe
+  if (ralphe == null) return undefined
+
+  // Already a structured object
+  if (typeof ralphe === "object") {
+    return {
+      startedAt: typeof ralphe.startedAt === "string" ? ralphe.startedAt : undefined,
+      finishedAt: typeof ralphe.finishedAt === "string" ? ralphe.finishedAt : undefined,
+    }
+  }
+
+  // Serialized JSON string — attempt to parse
+  if (typeof ralphe === "string") {
+    try {
+      const parsed: unknown = JSON.parse(ralphe)
+      if (parsed && typeof parsed === "object") {
+        const obj = parsed as Record<string, unknown>
+        return {
+          startedAt: typeof obj.startedAt === "string" ? obj.startedAt : undefined,
+          finishedAt: typeof obj.finishedAt === "string" ? obj.finishedAt : undefined,
+        }
+      }
+    } catch {
+      // Unparseable string — fall through
+    }
+  }
+
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
 
@@ -271,6 +319,8 @@ function bdIssueToWatchTask(
     parentId = item.id.substring(0, lastDot)
   }
 
+  const timing = normalizeRalpheMeta(item.metadata)
+
   return {
     id: item.id,
     title: item.title ?? "",
@@ -290,8 +340,8 @@ function bdIssueToWatchTask(
     updatedAt: item.updated_at,
     closedAt: item.closed_at,
     closeReason: item.close_reason,
-    startedAt: item.metadata?.ralphe?.startedAt,
-    finishedAt: item.metadata?.ralphe?.finishedAt,
+    startedAt: timing?.startedAt,
+    finishedAt: timing?.finishedAt,
   }
 }
 

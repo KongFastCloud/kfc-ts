@@ -3,8 +3,9 @@
  * ABOUTME: Dashboard landing view for the watch TUI.
  * Renders two stacked tables: a top table for non-done tasks
  * (backlog, actionable, blocked, active, error) and a bottom
- * table for done tasks. Both tables share the same column set:
- * ID, Title (clipped), Status, Label, Priority, Duration.
+ * table for done tasks. The active table shows Label while the
+ * done table shows a compact Completed datetime instead.
+ * Shared columns: ID, Title (clipped), Status, Priority, Duration.
  */
 
 import type { ReactNode } from "react"
@@ -63,6 +64,29 @@ function truncate(text: string, max: number): string {
 function pad(text: string, width: number): string {
   if (text.length >= width) return text.slice(0, width)
   return text + " ".repeat(width - text.length)
+}
+
+/** Table variant controls which fourth column is shown. */
+type TableVariant = "active" | "done"
+
+/**
+ * Format an ISO-8601 timestamp into a compact local datetime string.
+ * Example: "Mar 19 7:41 PM". Returns "—" when the input is missing or invalid.
+ */
+export function formatCompletedAt(iso: string | undefined): string {
+  if (!iso) return "—"
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return "—"
+
+  const month = d.toLocaleString("en-US", { month: "short" })
+  const day = d.getDate()
+  // 12-hour time without leading zero
+  let hours = d.getHours()
+  const ampm = hours >= 12 ? "PM" : "AM"
+  hours = hours % 12 || 12
+  const minutes = d.getMinutes().toString().padStart(2, "0")
+
+  return `${month} ${day} ${hours}:${minutes} ${ampm}`
 }
 
 /**
@@ -182,7 +206,8 @@ function DashboardSectionTitle({ title }: { title: string }): ReactNode {
 // Table header
 // ---------------------------------------------------------------------------
 
-function DashboardTableHeader({ titleWidth }: { titleWidth: number }): ReactNode {
+function DashboardTableHeader({ titleWidth, variant }: { titleWidth: number; variant: TableVariant }): ReactNode {
+  const fourthCol = variant === "done" ? "Completed" : "Label"
   return (
     <box
       style={{
@@ -200,7 +225,7 @@ function DashboardTableHeader({ titleWidth }: { titleWidth: number }): ReactNode
           {pad("ID", COL.id)}
           {pad("Title", titleWidth)}
           {pad("Status", COL.status)}
-          {pad("Label", COL.label)}
+          {pad(fourthCol, COL.label)}
           {pad("Pri", COL.priority)}
           {pad("Duration", COL.duration)}
         </span>
@@ -217,10 +242,12 @@ function DashboardRow({
   task,
   isSelected,
   titleWidth,
+  variant,
 }: {
   task: WatchTask
   isSelected: boolean
   titleWidth: number
+  variant: TableVariant
 }): ReactNode {
   const indicator = taskStatusIndicator[task.status]
   const sColor = taskStatusColor[task.status]
@@ -229,12 +256,15 @@ function DashboardRow({
   const idStr = pad(task.id, COL.id)
   const titleStr = pad(truncate(task.title, titleWidth - 1), titleWidth)
   const statusStr = pad(`${indicator} ${task.status}`, COL.status)
-  const labelStr = pad(
-    task.labels && task.labels.length > 0
-      ? truncate(task.labels.join(", "), COL.label - 1)
-      : "—",
-    COL.label,
-  )
+  const fourthColStr =
+    variant === "done"
+      ? pad(truncate(formatCompletedAt(task.closedAt), COL.label - 1), COL.label)
+      : pad(
+          task.labels && task.labels.length > 0
+            ? truncate(task.labels.join(", "), COL.label - 1)
+            : "—",
+          COL.label,
+        )
   const priorityStr = pad(
     task.priority !== undefined ? `P${task.priority}` : "—",
     COL.priority,
@@ -264,7 +294,7 @@ function DashboardRow({
         <span fg={idColor}>{idStr}</span>
         <span fg={titleColor}>{titleStr}</span>
         <span fg={sColor}>{statusStr}</span>
-        <span fg={colors.accent.secondary}>{labelStr}</span>
+        <span fg={colors.accent.secondary}>{fourthColStr}</span>
         <span fg={colors.fg.secondary}>{priorityStr}</span>
         <span fg={task.status === "active" ? colors.status.info : colors.fg.dim}>{durationStr}</span>
       </text>
@@ -283,6 +313,7 @@ function DashboardTable({
   titleWidth,
   flexGrow,
   borderColor,
+  variant,
 }: {
   title: string
   tasks: WatchTask[]
@@ -290,6 +321,7 @@ function DashboardTable({
   titleWidth: number
   flexGrow: number
   borderColor: string
+  variant: TableVariant
 }): ReactNode {
   return (
     <box
@@ -305,7 +337,7 @@ function DashboardTable({
       }}
     >
       <DashboardSectionTitle title={title} />
-      <DashboardTableHeader titleWidth={titleWidth} />
+      <DashboardTableHeader titleWidth={titleWidth} variant={variant} />
       <scrollbox style={{ flexGrow: 1, width: "100%" }}>
         {tasks.length === 0 ? (
           <box style={{ paddingLeft: 1, paddingTop: 0 }}>
@@ -318,6 +350,7 @@ function DashboardTable({
               task={task}
               isSelected={idx === selectedIndex}
               titleWidth={titleWidth}
+              variant={variant}
             />
           ))
         )}
@@ -382,6 +415,7 @@ export function DashboardView({
             ? colors.accent.primary
             : colors.border.normal
         }
+        variant="active"
       />
       <DashboardTable
         title="Done"
@@ -394,6 +428,7 @@ export function DashboardView({
             ? colors.accent.primary
             : colors.border.normal
         }
+        variant="done"
       />
     </box>
   )

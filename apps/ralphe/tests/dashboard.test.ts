@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "bun:test"
-import { partitionTasks } from "../src/tui/DashboardView.js"
+import { partitionTasks, formatCompletedAt } from "../src/tui/DashboardView.js"
 import type { WatchTask } from "../src/beadsAdapter.js"
 
 function makeTask(id: string, status: WatchTask["status"]): WatchTask {
@@ -85,5 +85,39 @@ describe("partitionTasks", () => {
     for (const t of done) {
       expect(t.status).toBe("done")
     }
+  })
+})
+
+describe("formatCompletedAt", () => {
+  it("formats a valid ISO timestamp into compact local datetime", () => {
+    // Use a fixed date and check parts are present
+    const result = formatCompletedAt("2026-03-19T19:41:00Z")
+    // Should contain month, day, time, and AM/PM
+    expect(result).toMatch(/^[A-Z][a-z]{2} \d{1,2} \d{1,2}:\d{2} [AP]M$/)
+  })
+
+  it("returns — for undefined input", () => {
+    expect(formatCompletedAt(undefined)).toBe("—")
+  })
+
+  it("returns — for empty string", () => {
+    expect(formatCompletedAt("")).toBe("—")
+  })
+
+  it("returns — for invalid date string", () => {
+    expect(formatCompletedAt("not-a-date")).toBe("—")
+  })
+
+  it("formats midnight correctly with 12-hour clock", () => {
+    // Create a date at midnight local time
+    const midnight = new Date(2026, 0, 15, 0, 5) // Jan 15, 2026 00:05 local
+    const result = formatCompletedAt(midnight.toISOString())
+    expect(result).toContain("12:05 AM")
+  })
+
+  it("formats noon correctly with 12-hour clock", () => {
+    const noon = new Date(2026, 5, 10, 12, 30) // Jun 10, 2026 12:30 local
+    const result = formatCompletedAt(noon.toISOString())
+    expect(result).toContain("12:30 PM")
   })
 })
