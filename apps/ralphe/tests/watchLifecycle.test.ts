@@ -4,7 +4,7 @@
  * externally observable behavior without touching the filesystem or bd CLI.
  */
 
-import { describe, test, expect, beforeEach, mock } from "bun:test"
+import { describe, test, expect, beforeAll, beforeEach, afterAll, mock } from "bun:test"
 import { Effect } from "effect"
 import type { BeadsIssue, BeadsMetadata } from "../src/beads.js"
 import type { TaskResult } from "../src/runTask.js"
@@ -42,75 +42,84 @@ let runTaskCalls: Array<{ prompt: string }> = []
 let readyOneShot = true
 
 // ---------------------------------------------------------------------------
-// Module mocks — intercept the beads and runTask boundaries
+// Module setup — install mocks lazily so they do not leak into other files
 // ---------------------------------------------------------------------------
 
-mock.module("../src/beads.js", () => ({
-  queryReady: () =>
-    Effect.succeed((() => {
-      calls.push({ op: "queryReady" })
-      const result = [...readyQueue]
-      if (readyOneShot) readyQueue = []
-      return result
-    })()),
+let startTuiWorker: typeof import("../src/tuiWorker.js").startTuiWorker
 
-  claimTask: (id: string) =>
-    Effect.succeed((() => {
-      calls.push({ op: "claimTask", id })
-      return claimResults.get(id) ?? true
-    })()),
+beforeAll(async () => {
+  mock.module("../src/beads.js", () => ({
+    queryReady: () =>
+      Effect.succeed((() => {
+        calls.push({ op: "queryReady" })
+        const result = [...readyQueue]
+        if (readyOneShot) readyQueue = []
+        return result
+      })()),
 
-  closeTaskSuccess: (id: string, reason?: string) => {
-    calls.push({ op: "closeTaskSuccess", id, reason })
-    return Effect.succeed(undefined)
-  },
+    claimTask: (id: string) =>
+      Effect.succeed((() => {
+        calls.push({ op: "claimTask", id })
+        return claimResults.get(id) ?? true
+      })()),
 
-  closeTaskFailure: (id: string, reason: string) => {
-    calls.push({ op: "closeTaskFailure", id, reason })
-    return Effect.succeed(undefined)
-  },
+    closeTaskSuccess: (id: string, reason?: string) => {
+      calls.push({ op: "closeTaskSuccess", id, reason })
+      return Effect.succeed(undefined)
+    },
 
-  writeMetadata: (id: string, metadata: BeadsMetadata) => {
-    calls.push({ op: "writeMetadata", id, metadata })
-    return Effect.succeed(undefined)
-  },
+    closeTaskFailure: (id: string, reason: string) => {
+      calls.push({ op: "closeTaskFailure", id, reason })
+      return Effect.succeed(undefined)
+    },
 
-  recoverStaleTasks: (_workerId: string) => {
-    calls.push({ op: "recoverStaleTasks" })
-    return Effect.succeed(0)
-  },
+    markTaskExhaustedFailure: (id: string, reason: string, metadata: BeadsMetadata) => {
+      calls.push({ op: "markTaskExhaustedFailure", id, reason, metadata })
+      return Effect.succeed(undefined)
+    },
 
-  buildPromptFromIssue: (issue: BeadsIssue) => {
-    const sections: string[] = [issue.title]
-    if (issue.description) sections.push(`\n## Description\n${issue.description}`)
-    return sections.join("\n")
-  },
-}))
+    writeMetadata: (id: string, metadata: BeadsMetadata) => {
+      calls.push({ op: "writeMetadata", id, metadata })
+      return Effect.succeed(undefined)
+    },
 
-mock.module("../src/runTask.js", () => ({
-  runTask: (prompt: string, _config: unknown, _opts?: unknown) => {
-    runTaskCalls.push({ prompt })
-    if (taskExecutionDelay > 0) {
-      return Effect.promise(
-        () => new Promise<TaskResult>((resolve) => setTimeout(() => resolve(taskResult), taskExecutionDelay)),
-      )
-    }
-    return Effect.succeed(taskResult)
-  },
-}))
+    recoverStaleTasks: (_workerId: string) => {
+      calls.push({ op: "recoverStaleTasks" })
+      return Effect.succeed(0)
+    },
 
-mock.module("../src/config.js", () => ({
-  loadConfig: () => ({
-    engine: "claude" as const,
-    checks: [],
-    report: "none",
-    maxAttempts: 1,
-    git: { mode: "none" as const },
-  }),
-}))
+    buildPromptFromIssue: (issue: BeadsIssue) => {
+      const sections: string[] = [issue.title]
+      if (issue.description) sections.push(`\n## Description\n${issue.description}`)
+      return sections.join("\n")
+    },
+  }))
 
-// Re-import after mocking
-const { startTuiWorker } = await import("../src/tuiWorker.js")
+  mock.module("../src/runTask.js", () => ({
+    runTask: (prompt: string, _config: unknown, _opts?: unknown) => {
+      runTaskCalls.push({ prompt })
+      if (taskExecutionDelay > 0) {
+        return Effect.promise(
+          () => new Promise<TaskResult>((resolve) => setTimeout(() => resolve(taskResult), taskExecutionDelay)),
+        )
+      }
+      return Effect.succeed(taskResult)
+    },
+  }))
+
+  mock.module("../src/config.js", () => ({
+    loadConfig: () => ({
+      engine: "claude" as const,
+      checks: [],
+      report: "none",
+      maxAttempts: 1,
+      git: { mode: "none" as const },
+    }),
+  }))
+
+  // @ts-expect-error Bun test isolation import suffix is runtime-only.
+  ;({ startTuiWorker } = await import("../src/tuiWorker.js?watchLifecycle") as typeof import("../src/tuiWorker.js"))
+})
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -172,6 +181,10 @@ beforeEach(() => {
   runTaskCalls = []
 })
 
+afterAll(() => {
+  mock.restore()
+})
+
 // ===========================================================================
 // Test suites
 // ===========================================================================
@@ -221,7 +234,7 @@ describe("watch lifecycle: ready → claim → execute → close", () => {
     expect(metaCalls.length).toBe(2)
   })
 
-  test("failed task is closed with failure reason", async () => {
+  test("failed task is marked as error and remains open", async () => {
     readyQueue = [makeIssue("task-2")]
     claimResults.set("task-2", true)
     taskResult = { success: false, engine: "claude", error: "checks failed" }
@@ -232,15 +245,16 @@ describe("watch lifecycle: ready → claim → execute → close", () => {
       workerId: "test-failure",
     })
 
-    await waitFor(() => calls.some((c) => c.op === "closeTaskFailure"))
+    await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure"))
     worker.stop()
 
-    const closeCall = calls.find((c) => c.op === "closeTaskFailure")
-    expect(closeCall?.id).toBe("task-2")
-    expect(closeCall?.reason).toContain("checks failed")
+    const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
+    expect(exhaustedCall?.id).toBe("task-2")
+    expect(exhaustedCall?.reason).toContain("checks failed")
 
-    // Should NOT have a success close
+    // Should NOT have a success close or a failure close (task stays open)
     expect(calls.some((c) => c.op === "closeTaskSuccess")).toBe(false)
+    expect(calls.some((c) => c.op === "closeTaskFailure")).toBe(false)
   })
 
   test("multiple tasks are processed sequentially", async () => {
@@ -413,10 +427,10 @@ describe("watch lifecycle: completed tasks are not re-run", () => {
   })
 })
 
-describe("watch lifecycle: failed tasks remain failed", () => {
+describe("watch lifecycle: exhausted failures remain open with error label", () => {
   test("failed task is not re-polled if Beads excludes it from ready", async () => {
     readyQueue = [makeIssue("fail-1")]
-    readyOneShot = true // After first poll, queue is empty (Beads hides failed tasks)
+    readyOneShot = true // After first poll, queue is empty (error label excludes from ready)
     claimResults.set("fail-1", true)
     taskResult = { success: false, engine: "claude", error: "syntax error in generated code" }
 
@@ -426,19 +440,20 @@ describe("watch lifecycle: failed tasks remain failed", () => {
       workerId: "test-fail-stays",
     })
 
-    await waitFor(() => calls.some((c) => c.op === "closeTaskFailure" && c.id === "fail-1"))
+    await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "fail-1"))
 
     // Let it poll a few more times
     await new Promise((r) => setTimeout(r, 150))
     worker.stop()
 
-    // Failure close called exactly once
-    const failCalls = calls.filter((c) => c.op === "closeTaskFailure" && c.id === "fail-1")
+    // markTaskExhaustedFailure called exactly once
+    const failCalls = calls.filter((c) => c.op === "markTaskExhaustedFailure" && c.id === "fail-1")
     expect(failCalls.length).toBe(1)
     expect(failCalls[0]!.reason).toContain("syntax error")
 
-    // No success close
+    // Task was NOT closed — it remains open
     expect(calls.some((c) => c.op === "closeTaskSuccess" && c.id === "fail-1")).toBe(false)
+    expect(calls.some((c) => c.op === "closeTaskFailure" && c.id === "fail-1")).toBe(false)
 
     // runTask called exactly once
     expect(runTaskCalls.length).toBe(1)
@@ -455,14 +470,14 @@ describe("watch lifecycle: failed tasks remain failed", () => {
       workerId: "test-fail-reason",
     })
 
-    await waitFor(() => calls.some((c) => c.op === "closeTaskFailure"))
+    await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure"))
     worker.stop()
 
-    const closeCall = calls.find((c) => c.op === "closeTaskFailure")
-    expect(closeCall?.reason).toContain("insufficient payload")
+    const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
+    expect(exhaustedCall?.reason).toContain("insufficient payload")
 
-    // Log should contain failure info
-    expect(logs.some((l) => l.message.includes("failed"))).toBe(true)
+    // Log should contain error/failure info
+    expect(logs.some((l) => l.message.includes("error") || l.message.includes("retries"))).toBe(true)
   })
 
   test("task with no error message uses default failure reason", async () => {
@@ -476,11 +491,11 @@ describe("watch lifecycle: failed tasks remain failed", () => {
       workerId: "test-fail-default",
     })
 
-    await waitFor(() => calls.some((c) => c.op === "closeTaskFailure"))
+    await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure"))
     worker.stop()
 
-    const closeCall = calls.find((c) => c.op === "closeTaskFailure")
-    expect(closeCall?.reason).toContain("execution failed")
+    const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
+    expect(exhaustedCall?.reason).toContain("execution failed")
   })
 })
 

@@ -165,6 +165,52 @@ export const closeTaskFailure = (
   )
 
 /**
+ * Add a label to a task.
+ */
+export const addLabel = (
+  id: string,
+  label: string,
+): Effect.Effect<void, FatalError> =>
+  runBd(["update", id, "--add-label", label]).pipe(
+    Effect.map(() => undefined),
+  )
+
+/**
+ * Remove a label from a task.
+ */
+export const removeLabel = (
+  id: string,
+  label: string,
+): Effect.Effect<void, FatalError> =>
+  runBd(["update", id, "--remove-label", label]).pipe(
+    Effect.map(() => undefined),
+  )
+
+/**
+ * Mark a task as having exhausted all retries.
+ * Keeps the task open, removes the "ready" label so it is no longer
+ * automatically eligible, and adds the "error" label for operator visibility.
+ * The failure reason is preserved in metadata for later investigation.
+ */
+export const markTaskExhaustedFailure = (
+  id: string,
+  reason: string,
+  metadata: BeadsMetadata,
+): Effect.Effect<void, FatalError> =>
+  Effect.gen(function* () {
+    // Persist failure context in metadata (includes resume token for manual retry)
+    yield* writeMetadata(id, metadata)
+    // Remove automatic eligibility
+    yield* removeLabel(id, "ready")
+    // Apply the error label so operators and TUI can identify the failure
+    yield* addLabel(id, "error")
+    // Preserve the failure reason in the task notes for human investigation
+    yield* runBd(["update", id, "--append-note", `Exhausted failure: ${reason}`]).pipe(
+      Effect.map(() => undefined),
+    )
+  })
+
+/**
  * Write execution metadata to a task under the `ralphe` namespace.
  */
 export const writeMetadata = (

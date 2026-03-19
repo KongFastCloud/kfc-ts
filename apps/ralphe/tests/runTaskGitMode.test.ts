@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { RalpheConfig } from "../src/config.js"
 import { FatalError } from "../src/errors.js"
@@ -12,70 +12,7 @@ let commitShouldFail = false
 let pushShouldFail = false
 let waitCiShouldFail = false
 
-mock.module("../src/agent.js", () => ({
-  agent: () => Effect.succeed({ response: "ok", resumeToken: "tok-1" }),
-}))
-
-mock.module("../src/cmd.js", () => ({
-  cmd: () => Effect.succeed({ stdout: "ok" }),
-}))
-
-mock.module("../src/loop.js", () => ({
-  loop: (fn: (feedback?: string) => Effect.Effect<unknown, never>) => fn(undefined),
-}))
-
-mock.module("../src/report.js", () => ({
-  report: () => Effect.succeed({ success: true, report: "ok" }),
-}))
-
-mock.module("../src/engine/ClaudeEngine.js", () => ({
-  ClaudeEngineLayer: Layer.empty,
-}))
-
-mock.module("../src/engine/CodexEngine.js", () => ({
-  CodexEngineLayer: Layer.empty,
-}))
-
-mock.module("../src/git.js", () => ({
-  gitCommit: () =>
-    Effect.gen(function* () {
-      gitCalls.push("commit")
-      if (commitShouldFail) {
-        return yield* Effect.fail(
-          new FatalError({ command: "git commit", message: "commit failed" }),
-        )
-      }
-      return mockedCommitResult
-    }),
-  gitPush: () =>
-    Effect.gen(function* () {
-      gitCalls.push("push")
-      if (pushShouldFail) {
-        return yield* Effect.fail(
-          new FatalError({ command: "git push", message: "push failed" }),
-        )
-      }
-      return { remote: "origin", ref: "main", output: "" }
-    }),
-  gitWaitForCi: () =>
-    Effect.gen(function* () {
-      gitCalls.push("wait_ci")
-      if (waitCiShouldFail) {
-        return yield* Effect.fail(
-          new FatalError({ command: "gh run watch", message: "ci failed" }),
-        )
-      }
-      return {
-        runId: 123,
-        status: "completed",
-        conclusion: "success",
-        url: "https://example.com/run/123",
-        workflowName: "ci",
-      }
-    }),
-}))
-
-const { runTask } = await import("../src/runTask.js")
+let runTask: typeof import("../src/runTask.js").runTask
 
 const baseConfig: RalpheConfig = {
   engine: "claude",
@@ -91,6 +28,78 @@ beforeEach(() => {
   commitShouldFail = false
   pushShouldFail = false
   waitCiShouldFail = false
+})
+
+beforeAll(async () => {
+  mock.module("../src/agent.js", () => ({
+    agent: () => Effect.succeed({ response: "ok", resumeToken: "tok-1" }),
+  }))
+
+  mock.module("../src/cmd.js", () => ({
+    cmd: () => Effect.succeed({ stdout: "ok" }),
+  }))
+
+  mock.module("../src/loop.js", () => ({
+    loop: (fn: (feedback?: string) => Effect.Effect<unknown, never>) => fn(undefined),
+  }))
+
+  mock.module("../src/report.js", () => ({
+    report: () => Effect.succeed({ success: true, report: "ok" }),
+  }))
+
+  mock.module("../src/engine/ClaudeEngine.js", () => ({
+    ClaudeEngineLayer: Layer.empty,
+  }))
+
+  mock.module("../src/engine/CodexEngine.js", () => ({
+    CodexEngineLayer: Layer.empty,
+  }))
+
+  mock.module("../src/git.js", () => ({
+    gitCommit: () =>
+      Effect.gen(function* () {
+        gitCalls.push("commit")
+        if (commitShouldFail) {
+          return yield* Effect.fail(
+            new FatalError({ command: "git commit", message: "commit failed" }),
+          )
+        }
+        return mockedCommitResult
+      }),
+    gitPush: () =>
+      Effect.gen(function* () {
+        gitCalls.push("push")
+        if (pushShouldFail) {
+          return yield* Effect.fail(
+            new FatalError({ command: "git push", message: "push failed" }),
+          )
+        }
+        return { remote: "origin", ref: "main", output: "" }
+      }),
+    gitWaitForCi: () =>
+      Effect.gen(function* () {
+        gitCalls.push("wait_ci")
+        if (waitCiShouldFail) {
+          return yield* Effect.fail(
+            new FatalError({ command: "gh run watch", message: "ci failed" }),
+          )
+        }
+        return {
+          runId: 123,
+          status: "completed",
+          conclusion: "success",
+          url: "https://example.com/run/123",
+          workflowName: "ci",
+        }
+      }),
+  }))
+
+  // @ts-expect-error Bun test isolation import suffix is runtime-only.
+  ;({ runTask } = await import("../src/runTask.js?runTaskGitMode") as typeof import("../src/runTask.js"))
+})
+
+afterAll(() => {
+  mock.restore()
 })
 
 describe("runTask git mode behavior", () => {

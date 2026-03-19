@@ -1,8 +1,10 @@
 import { describe, test, expect } from "bun:test"
 import { Effect, Layer } from "effect"
-import { report } from "../src/report.js"
 import { Engine, type AgentResult } from "../src/engine/Engine.js"
 import type { CheckFailure, FatalError } from "../src/errors.js"
+
+// @ts-expect-error Bun test isolation import suffix is runtime-only.
+const { report } = await import("../src/report.js?reportTest") as typeof import("../src/report.js")
 
 const mockEngine = (response: string): Layer.Layer<Engine> =>
   Layer.succeed(

@@ -2,12 +2,15 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
-import {
+
+// @ts-expect-error Bun test isolation import suffix is runtime-only.
+const configModule = await import("../src/config.js?configTest") as typeof import("../src/config.js")
+const {
   loadConfig,
   saveConfig,
   getConfigPath,
   parseGitMode,
-} from "../src/config.js"
+} = configModule
 
 let tmpDir: string
 

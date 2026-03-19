@@ -12,10 +12,10 @@ import {
   queryReady,
   claimTask,
   closeTaskSuccess,
-  closeTaskFailure,
   writeMetadata,
   buildPromptFromIssue,
   recoverStaleTasks,
+  markTaskExhaustedFailure,
   type BeadsMetadata,
 } from "./beads.js"
 
@@ -168,35 +168,35 @@ export function startTuiWorker(
           }
         }
 
-        // Write final metadata
+        // Write final metadata and finalize
         const finalMetadata: BeadsMetadata = {
           engine: result.engine,
           resumeToken: result.resumeToken,
           workerId,
           timestamp: new Date().toISOString(),
         }
-        try {
-          await Effect.runPromise(writeMetadata(issue.id, finalMetadata))
-        } catch (e) {
-          log(`Failed to write final metadata for ${issue.id}: ${e instanceof Error ? e.message : String(e)}`, issue.id)
-        }
 
-        // Close with appropriate outcome
         if (result.success) {
           try {
+            await Effect.runPromise(writeMetadata(issue.id, finalMetadata))
             await Effect.runPromise(closeTaskSuccess(issue.id))
             log(`Task ${issue.id} completed successfully`, issue.id)
           } catch (e) {
             log(`Failed to close task ${issue.id} as success: ${e instanceof Error ? e.message : String(e)}`, issue.id)
           }
         } else {
+          // Exhausted failure: keep task open, remove eligibility, mark error
           try {
             await Effect.runPromise(
-              closeTaskFailure(issue.id, result.error ?? "execution failed"),
+              markTaskExhaustedFailure(
+                issue.id,
+                result.error ?? "execution failed",
+                finalMetadata,
+              ),
             )
-            log(`Task ${issue.id} failed: ${result.error ?? "unknown error"}`, issue.id)
+            log(`Task ${issue.id} exhausted all retries — marked as error (task remains open)`, issue.id)
           } catch (e) {
-            log(`Failed to close task ${issue.id} as failure: ${e instanceof Error ? e.message : String(e)}`, issue.id)
+            log(`Failed to mark task ${issue.id} as error: ${e instanceof Error ? e.message : String(e)}`, issue.id)
           }
         }
 

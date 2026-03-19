@@ -7,10 +7,10 @@ import {
   queryReady,
   claimTask,
   closeTaskSuccess,
-  closeTaskFailure,
   writeMetadata,
   buildPromptFromIssue,
   recoverStaleTasks,
+  markTaskExhaustedFailure,
   type BeadsMetadata,
 } from "./beads.js"
 
@@ -108,15 +108,20 @@ export const watch = (
             workerId,
             timestamp: new Date().toISOString(),
           }
-          yield* writeMetadata(issue.id, finalMetadata)
 
           // Close with appropriate outcome
           if (result.success) {
+            yield* writeMetadata(issue.id, finalMetadata)
             yield* closeTaskSuccess(issue.id)
             yield* Console.log(`Task ${issue.id} completed successfully.`)
           } else {
-            yield* closeTaskFailure(issue.id, result.error ?? "execution failed")
-            yield* Console.log(`Task ${issue.id} failed: ${result.error ?? "unknown error"}`)
+            // Exhausted failure: keep task open, remove eligibility, mark error
+            yield* markTaskExhaustedFailure(
+              issue.id,
+              result.error ?? "execution failed",
+              finalMetadata,
+            )
+            yield* Console.log(`Task ${issue.id} exhausted all retries — marked as error (task remains open).`)
           }
 
           tasksProcessed++

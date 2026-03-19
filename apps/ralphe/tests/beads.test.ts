@@ -1,5 +1,8 @@
 import { describe, test, expect } from "bun:test"
-import { buildPromptFromIssue, type BeadsIssue } from "../src/beads.js"
+import type { BeadsIssue } from "../src/beads.js"
+
+// @ts-expect-error Bun test isolation import suffix is runtime-only.
+const { buildPromptFromIssue } = await import("../src/beads.js?beadsTest") as typeof import("../src/beads.js")
 
 describe("buildPromptFromIssue", () => {
   test("builds prompt with all fields", () => {
