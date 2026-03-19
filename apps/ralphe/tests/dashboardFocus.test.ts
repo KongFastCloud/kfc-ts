@@ -762,3 +762,460 @@ describe("end-to-end focus scenarios", () => {
     expect(s.activeScrollOffset).toBe(0)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Viewport regression coverage
+// ---------------------------------------------------------------------------
+
+describe("viewport regression: per-table state transitions", () => {
+  const VIS = 5
+
+  it("done table scrolls down when selection moves below viewport", () => {
+    let s = stateWith({
+      focusedTable: "done",
+      doneSelectedIndex: 4,
+      doneScrollOffset: 0,
+    })
+    s = moveSelectionDown(s, 10, 20, VIS)
+    expect(s.doneSelectedIndex).toBe(5)
+    expect(s.doneScrollOffset).toBe(1) // just enough to reveal row 5
+  })
+
+  it("done table scrolls up when selection moves above viewport", () => {
+    let s = stateWith({
+      focusedTable: "done",
+      doneSelectedIndex: 5,
+      doneScrollOffset: 5,
+    })
+    s = moveSelectionUp(s, VIS)
+    expect(s.doneSelectedIndex).toBe(4)
+    expect(s.doneScrollOffset).toBe(4) // scrolled up to reveal row 4
+  })
+
+  it("done table does not scroll when selection stays within viewport", () => {
+    let s = stateWith({
+      focusedTable: "done",
+      doneSelectedIndex: 2,
+      doneScrollOffset: 0,
+    })
+    s = moveSelectionDown(s, 5, 20, VIS)
+    expect(s.doneSelectedIndex).toBe(3)
+    expect(s.doneScrollOffset).toBe(0)
+  })
+
+  it("navigating a long done table scrolls viewport correctly", () => {
+    let s = stateWith({ focusedTable: "done" })
+    const ROWS = 20
+
+    // Move down past viewport
+    for (let i = 0; i < 7; i++) {
+      s = moveSelectionDown(s, 5, ROWS, VIS)
+    }
+    expect(s.doneSelectedIndex).toBe(7)
+    expect(s.doneScrollOffset).toBe(3) // 7 - 5 + 1
+
+    // Move back up through viewport
+    for (let i = 0; i < 4; i++) {
+      s = moveSelectionUp(s, VIS)
+    }
+    expect(s.doneSelectedIndex).toBe(3)
+    expect(s.doneScrollOffset).toBe(3) // row 3 is at top of viewport
+
+    // Move one more up — selection goes above viewport
+    s = moveSelectionUp(s, VIS)
+    expect(s.doneSelectedIndex).toBe(2)
+    expect(s.doneScrollOffset).toBe(2) // scrolled up to reveal row 2
+  })
+
+  it("active and done tables maintain independent viewport state through navigation", () => {
+    let s = initialDashboardFocusState()
+
+    // Scroll active table down
+    for (let i = 0; i < 8; i++) {
+      s = moveSelectionDown(s, 20, 20, VIS)
+    }
+    expect(s.activeSelectedIndex).toBe(8)
+    expect(s.activeScrollOffset).toBe(4) // 8 - 5 + 1
+    expect(s.doneSelectedIndex).toBe(0)
+    expect(s.doneScrollOffset).toBe(0)
+
+    // Tab to done, scroll it independently
+    s = toggleFocusedTable(s)
+    for (let i = 0; i < 6; i++) {
+      s = moveSelectionDown(s, 20, 20, VIS)
+    }
+    expect(s.doneSelectedIndex).toBe(6)
+    expect(s.doneScrollOffset).toBe(2) // 6 - 5 + 1
+
+    // Active table state is unchanged
+    expect(s.activeSelectedIndex).toBe(8)
+    expect(s.activeScrollOffset).toBe(4)
+
+    // Tab back to active, navigate up — done table still unchanged
+    s = toggleFocusedTable(s)
+    s = moveSelectionUp(s, VIS)
+    expect(s.activeSelectedIndex).toBe(7)
+    expect(s.activeScrollOffset).toBe(4) // row 7 still visible in [4..8]
+    expect(s.doneSelectedIndex).toBe(6)
+    expect(s.doneScrollOffset).toBe(2)
+  })
+})
+
+describe("viewport regression: selection-to-viewport synchronization", () => {
+  const VIS = 5
+
+  it("selection at exact bottom boundary does not scroll", () => {
+    // viewport [3..7], selection at 7 → no scroll needed
+    const s = moveSelectionDown(
+      stateWith({ focusedTable: "active", activeSelectedIndex: 6, activeScrollOffset: 3 }),
+      20,
+      5,
+      VIS,
+    )
+    expect(s.activeSelectedIndex).toBe(7)
+    expect(s.activeScrollOffset).toBe(3) // row 7 = offset 3 + 5 - 1
+  })
+
+  it("selection one past bottom boundary triggers minimal scroll", () => {
+    // viewport [3..7], selection at 7, move down → 8, needs scroll
+    const s = moveSelectionDown(
+      stateWith({ focusedTable: "active", activeSelectedIndex: 7, activeScrollOffset: 3 }),
+      20,
+      5,
+      VIS,
+    )
+    expect(s.activeSelectedIndex).toBe(8)
+    expect(s.activeScrollOffset).toBe(4) // scrolled by exactly 1
+  })
+
+  it("selection at exact top boundary does not scroll", () => {
+    // viewport [3..7], selection at 3 → no scroll
+    const s = moveSelectionUp(
+      stateWith({ focusedTable: "active", activeSelectedIndex: 4, activeScrollOffset: 3 }),
+      VIS,
+    )
+    expect(s.activeSelectedIndex).toBe(3)
+    expect(s.activeScrollOffset).toBe(3)
+  })
+
+  it("selection one past top boundary triggers minimal scroll", () => {
+    // viewport [3..7], selection at 3, move up → 2, needs scroll
+    const s = moveSelectionUp(
+      stateWith({ focusedTable: "active", activeSelectedIndex: 3, activeScrollOffset: 3 }),
+      VIS,
+    )
+    expect(s.activeSelectedIndex).toBe(2)
+    expect(s.activeScrollOffset).toBe(2) // scrolled by exactly 1
+  })
+
+  it("viewport never centers the selection after boundary crossing", () => {
+    // After crossing bottom boundary, selection should be at the bottom of viewport, not centered
+    const s = moveSelectionDown(
+      stateWith({ focusedTable: "active", activeSelectedIndex: 4, activeScrollOffset: 0 }),
+      20,
+      5,
+      VIS,
+    )
+    expect(s.activeSelectedIndex).toBe(5)
+    expect(s.activeScrollOffset).toBe(1) // selection at bottom, not centered at offset 3
+  })
+
+  it("rapid sequential down movements produce consistent minimal scrolling", () => {
+    let s = stateWith({ focusedTable: "active", activeScrollOffset: 0 })
+
+    // Move from row 0 through row 9
+    for (let i = 0; i < 10; i++) {
+      s = moveSelectionDown(s, 20, 5, VIS)
+    }
+
+    expect(s.activeSelectedIndex).toBe(10)
+    // offset should be 10 - 5 + 1 = 6 (selection at bottom of viewport)
+    expect(s.activeScrollOffset).toBe(6)
+
+    // Verify the viewport window: rows [6..10] are visible
+    expect(s.activeSelectedIndex).toBeGreaterThanOrEqual(s.activeScrollOffset)
+    expect(s.activeSelectedIndex).toBeLessThan(s.activeScrollOffset + VIS)
+  })
+})
+
+describe("viewport regression: refresh clamping", () => {
+  const VIS = 5
+
+  it("refresh clamps done table scroll offset when done table shrinks", () => {
+    // Done table scrolled to offset 15, shrinks to 3 rows (fits in viewport)
+    const s = clampAfterRefresh(
+      stateWith({
+        focusedTable: "done",
+        doneSelectedIndex: 2,
+        doneScrollOffset: 15,
+      }),
+      5,
+      3,
+      VIS,
+      VIS,
+    )
+    expect(s.doneScrollOffset).toBe(0) // table fits, offset must be 0
+    expect(s.doneSelectedIndex).toBe(2) // still valid
+  })
+
+  it("refresh clamps done table selection and ensures visibility", () => {
+    const s = clampAfterRefresh(
+      stateWith({
+        focusedTable: "done",
+        doneSelectedIndex: 12,
+        doneScrollOffset: 10,
+      }),
+      10,
+      8, // done table shrinks
+      VIS,
+      VIS,
+    )
+    expect(s.doneSelectedIndex).toBe(7) // clamped to 8-1
+    expect(s.doneScrollOffset).toBe(3) // max offset = 8-5 = 3, ensureVisible(3,7,5) = 3
+  })
+
+  it("refresh preserves both tables' independent scroll positions when sizes unchanged", () => {
+    const s = clampAfterRefresh(
+      stateWith({
+        activeSelectedIndex: 7,
+        activeScrollOffset: 5,
+        doneSelectedIndex: 3,
+        doneScrollOffset: 2,
+      }),
+      20,
+      10,
+      VIS,
+      VIS,
+    )
+    expect(s.activeSelectedIndex).toBe(7)
+    expect(s.activeScrollOffset).toBe(5)
+    expect(s.doneSelectedIndex).toBe(3)
+    expect(s.doneScrollOffset).toBe(2)
+  })
+
+  it("refresh clamps both tables independently when both shrink", () => {
+    const s = clampAfterRefresh(
+      stateWith({
+        activeSelectedIndex: 15,
+        activeScrollOffset: 12,
+        doneSelectedIndex: 10,
+        doneScrollOffset: 8,
+      }),
+      6, // active shrinks
+      4, // done shrinks
+      VIS,
+      VIS,
+    )
+    // active: selection clamped to 5, offset clamped to max(0, 6-5)=1, ensureVisible(1,5,5)=1
+    expect(s.activeSelectedIndex).toBe(5)
+    expect(s.activeScrollOffset).toBe(1)
+    // done: selection clamped to 3, 4 rows <= 5 visible → offset 0
+    expect(s.doneSelectedIndex).toBe(3)
+    expect(s.doneScrollOffset).toBe(0)
+  })
+
+  it("refresh after scrolling done table preserves visible context", () => {
+    let s = stateWith({
+      focusedTable: "done",
+      doneSelectedIndex: 7,
+      doneScrollOffset: 5,
+    })
+
+    // Refresh with same count — nothing changes
+    s = clampAfterRefresh(s, 10, 20, VIS, VIS)
+    expect(s.doneSelectedIndex).toBe(7)
+    expect(s.doneScrollOffset).toBe(5)
+
+    // Refresh with done table shrink to 8 rows
+    s = clampAfterRefresh(s, 10, 8, VIS, VIS)
+    expect(s.doneSelectedIndex).toBe(7) // still valid (8-1)
+    expect(s.doneScrollOffset).toBe(3) // max offset = 8-5 = 3
+  })
+})
+
+describe("viewport regression: empty and short tables", () => {
+  const VIS = 5
+
+  it("moveSelectionUp on empty active table keeps index and offset at 0", () => {
+    const s = moveSelectionUp(
+      stateWith({ focusedTable: "active", activeSelectedIndex: 0, activeScrollOffset: 0 }),
+      VIS,
+    )
+    expect(s.activeSelectedIndex).toBe(0)
+    expect(s.activeScrollOffset).toBe(0)
+  })
+
+  it("moveSelectionUp on empty done table keeps index and offset at 0", () => {
+    const s = moveSelectionUp(
+      stateWith({ focusedTable: "done", doneSelectedIndex: 0, doneScrollOffset: 0 }),
+      VIS,
+    )
+    expect(s.doneSelectedIndex).toBe(0)
+    expect(s.doneScrollOffset).toBe(0)
+  })
+
+  it("moveSelectionDown on empty active table keeps index and offset at 0", () => {
+    const s = moveSelectionDown(
+      stateWith({ focusedTable: "active", activeSelectedIndex: 0, activeScrollOffset: 0 }),
+      0,
+      5,
+      VIS,
+    )
+    expect(s.activeSelectedIndex).toBe(0)
+    expect(s.activeScrollOffset).toBe(0)
+  })
+
+  it("moveSelectionDown on empty done table keeps index and offset at 0", () => {
+    const s = moveSelectionDown(
+      stateWith({ focusedTable: "done", doneSelectedIndex: 0, doneScrollOffset: 0 }),
+      5,
+      0,
+      VIS,
+    )
+    expect(s.doneSelectedIndex).toBe(0)
+    expect(s.doneScrollOffset).toBe(0)
+  })
+
+  it("short done table keeps scroll offset at zero throughout navigation", () => {
+    let s = stateWith({ focusedTable: "done" })
+
+    // Done table has only 3 rows (fits in viewport of 5)
+    s = moveSelectionDown(s, 10, 3, VIS)
+    expect(s.doneSelectedIndex).toBe(1)
+    expect(s.doneScrollOffset).toBe(0)
+
+    s = moveSelectionDown(s, 10, 3, VIS)
+    expect(s.doneSelectedIndex).toBe(2) // last row
+    expect(s.doneScrollOffset).toBe(0)
+
+    // Move up — still no scroll
+    s = moveSelectionUp(s, VIS)
+    expect(s.doneSelectedIndex).toBe(1)
+    expect(s.doneScrollOffset).toBe(0)
+  })
+
+  it("refresh preserves zero offset when tables remain short", () => {
+    const s = clampAfterRefresh(
+      stateWith({
+        activeSelectedIndex: 2,
+        activeScrollOffset: 0,
+        doneSelectedIndex: 1,
+        doneScrollOffset: 0,
+      }),
+      3,
+      2,
+      VIS,
+      VIS,
+    )
+    expect(s.activeScrollOffset).toBe(0)
+    expect(s.doneScrollOffset).toBe(0)
+  })
+
+  it("table growing from empty to populated keeps selection at 0", () => {
+    // Start with empty tables, selection at 0
+    let s = stateWith({
+      activeSelectedIndex: 0,
+      activeScrollOffset: 0,
+      doneSelectedIndex: 0,
+      doneScrollOffset: 0,
+    })
+
+    // Refresh: tables now have data
+    s = clampAfterRefresh(s, 10, 5, VIS, VIS)
+    expect(s.activeSelectedIndex).toBe(0)
+    expect(s.activeScrollOffset).toBe(0)
+    expect(s.doneSelectedIndex).toBe(0)
+    expect(s.doneScrollOffset).toBe(0)
+  })
+
+  it("single-row table keeps scroll offset at zero", () => {
+    let s = stateWith({ focusedTable: "active" })
+
+    // Can't move down past the single row
+    s = moveSelectionDown(s, 1, 5, VIS)
+    expect(s.activeSelectedIndex).toBe(0)
+    expect(s.activeScrollOffset).toBe(0)
+
+    // Can't move up from first row
+    s = moveSelectionUp(s, VIS)
+    expect(s.activeSelectedIndex).toBe(0)
+    expect(s.activeScrollOffset).toBe(0)
+  })
+})
+
+describe("viewport regression: visible-slice contract", () => {
+  const VIS = 5
+
+  it("visible slice contains exactly the expected rows after scrolling", () => {
+    let s = initialDashboardFocusState()
+    const allRows = Array.from({ length: 20 }, (_, i) => `row-${i}`)
+
+    // Move down to row 7
+    for (let i = 0; i < 7; i++) {
+      s = moveSelectionDown(s, allRows.length, 5, VIS)
+    }
+
+    const visibleSlice = allRows.slice(s.activeScrollOffset, s.activeScrollOffset + VIS)
+    expect(visibleSlice).toEqual(["row-3", "row-4", "row-5", "row-6", "row-7"])
+    expect(visibleSlice).toContain(`row-${s.activeSelectedIndex}`)
+  })
+
+  it("visible slice of a short table equals the full table", () => {
+    const s = initialDashboardFocusState()
+    const allRows = ["row-0", "row-1", "row-2"]
+
+    const visibleSlice = allRows.slice(s.activeScrollOffset, s.activeScrollOffset + VIS)
+    expect(visibleSlice).toEqual(allRows)
+  })
+
+  it("visible slice is empty for an empty table", () => {
+    const s = initialDashboardFocusState()
+    const allRows: string[] = []
+
+    const visibleSlice = allRows.slice(s.activeScrollOffset, s.activeScrollOffset + VIS)
+    expect(visibleSlice).toEqual([])
+  })
+
+  it("selected row is always within the visible slice after any navigation", () => {
+    let s = initialDashboardFocusState()
+    const ROWS = 30
+
+    // Navigate down through the entire table
+    for (let i = 0; i < ROWS - 1; i++) {
+      s = moveSelectionDown(s, ROWS, 10, VIS)
+      expect(s.activeSelectedIndex).toBeGreaterThanOrEqual(s.activeScrollOffset)
+      expect(s.activeSelectedIndex).toBeLessThan(s.activeScrollOffset + VIS)
+    }
+
+    // Navigate back up through the entire table
+    for (let i = 0; i < ROWS - 1; i++) {
+      s = moveSelectionUp(s, VIS)
+      expect(s.activeSelectedIndex).toBeGreaterThanOrEqual(s.activeScrollOffset)
+      expect(s.activeSelectedIndex).toBeLessThan(s.activeScrollOffset + VIS)
+    }
+  })
+
+  it("selected row is within visible slice after refresh clamping", () => {
+    // Scrolled deep into a large table
+    const s = clampAfterRefresh(
+      stateWith({
+        activeSelectedIndex: 18,
+        activeScrollOffset: 15,
+        doneSelectedIndex: 12,
+        doneScrollOffset: 10,
+      }),
+      10, // active shrinks from 20+ to 10
+      8,  // done shrinks from 15+ to 8
+      VIS,
+      VIS,
+    )
+
+    // Active: selection clamped to 9, must be visible
+    expect(s.activeSelectedIndex).toBeGreaterThanOrEqual(s.activeScrollOffset)
+    expect(s.activeSelectedIndex).toBeLessThan(s.activeScrollOffset + VIS)
+
+    // Done: selection clamped to 7, must be visible
+    expect(s.doneSelectedIndex).toBeGreaterThanOrEqual(s.doneScrollOffset)
+    expect(s.doneSelectedIndex).toBeLessThan(s.doneScrollOffset + VIS)
+  })
+})
