@@ -82,16 +82,22 @@ interface BdIssueJson {
   closed_at?: string
   close_reason?: string
   dependencies?: Array<{
-    id: string
+    id?: string
+    depends_on_id?: string
+    issue_id?: string
     title?: string
     status?: string
     dependency_type?: string
+    type?: string
   }>
   dependents?: Array<{
-    id: string
+    id?: string
+    depends_on_id?: string
+    issue_id?: string
     title?: string
     status?: string
     dependency_type?: string
+    type?: string
   }>
 }
 
@@ -140,7 +146,24 @@ const runBd = (
 // Status mapping
 // ---------------------------------------------------------------------------
 
-function mapStatus(bdStatus: string, deps?: BdIssueJson["dependencies"], labels?: string[]): WatchTaskStatus {
+function getDependencyId(
+  dep: NonNullable<BdIssueJson["dependencies"]>[number],
+): string | undefined {
+  return dep.id ?? dep.depends_on_id
+}
+
+function getDependencyType(
+  dep: NonNullable<BdIssueJson["dependencies"]>[number],
+): string | undefined {
+  return dep.dependency_type ?? dep.type
+}
+
+function mapStatus(
+  bdStatus: string,
+  deps?: BdIssueJson["dependencies"],
+  labels?: string[],
+  statusById?: Map<string, string>,
+): WatchTaskStatus {
   switch (bdStatus) {
     case "in_progress":
       return "active"
@@ -154,10 +177,17 @@ function mapStatus(bdStatus: string, deps?: BdIssueJson["dependencies"], labels?
       // Check if blocked by unresolved dependencies
       if (deps && deps.length > 0) {
         const hasUnresolved = deps.some(
-          (d) =>
-            d.dependency_type === "blocks" &&
-            d.status !== "closed" &&
-            d.status !== "cancelled",
+          (d) => {
+            if (getDependencyType(d) !== "blocks") return false
+
+            const dependencyStatus = d.status ?? (
+              getDependencyId(d)
+                ? statusById?.get(getDependencyId(d)!)
+                : undefined
+            )
+
+            return dependencyStatus !== "closed" && dependencyStatus !== "cancelled"
+          },
         )
         if (hasUnresolved) return "blocked"
       }
@@ -181,14 +211,16 @@ function mapStatus(bdStatus: string, deps?: BdIssueJson["dependencies"], labels?
 export const parseBdTaskList = (json: string): WatchTask[] => {
   try {
     const parsed = JSON.parse(json)
-    const items: BdIssueJson[] = Array.isArray(parsed) ? parsed : [parsed]
+    const items = (Array.isArray(parsed) ? parsed : [parsed]).filter(
+      (item): item is BdIssueJson =>
+        item && typeof item === "object" && typeof item.id === "string",
+    )
 
-    return items
-      .filter(
-        (item) =>
-          item && typeof item === "object" && typeof item.id === "string",
-      )
-      .map((item) => bdIssueToWatchTask(item))
+    const statusById = new Map(
+      items.map((item) => [item.id, item.status]),
+    )
+
+    return items.map((item) => bdIssueToWatchTask(item, statusById))
   } catch {
     return []
   }
@@ -197,22 +229,27 @@ export const parseBdTaskList = (json: string): WatchTask[] => {
 /**
  * Convert a single bd issue JSON to a WatchTask.
  */
-function bdIssueToWatchTask(item: BdIssueJson): WatchTask {
+function bdIssueToWatchTask(
+  item: BdIssueJson,
+  statusById?: Map<string, string>,
+): WatchTask {
   const dependsOn: string[] = []
   const blocks: string[] = []
 
   if (item.dependencies) {
     for (const dep of item.dependencies) {
-      if (dep.dependency_type === "blocks") {
-        dependsOn.push(dep.id)
+      const depId = getDependencyId(dep)
+      if (getDependencyType(dep) === "blocks" && depId) {
+        dependsOn.push(depId)
       }
     }
   }
 
   if (item.dependents) {
     for (const dep of item.dependents) {
-      if (dep.dependency_type === "blocks") {
-        blocks.push(dep.id)
+      const depId = getDependencyId(dep)
+      if (getDependencyType(dep) === "blocks" && depId) {
+        blocks.push(depId)
       }
     }
   }
@@ -227,7 +264,7 @@ function bdIssueToWatchTask(item: BdIssueJson): WatchTask {
   return {
     id: item.id,
     title: item.title ?? "",
-    status: mapStatus(item.status, item.dependencies, item.labels),
+    status: mapStatus(item.status, item.dependencies, item.labels, statusById),
     description: item.description,
     design: item.design,
     acceptance_criteria: item.acceptance_criteria,

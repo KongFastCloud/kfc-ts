@@ -78,6 +78,26 @@ describe("parseBdTaskList", () => {
     expect(tasks[0]!.dependsOn).toEqual(["dep-1"])
   })
 
+  test("maps flat bd list dependencies to blocked using related issue status lookup", () => {
+    const json = JSON.stringify([
+      { id: "dep-1", title: "Open blocker", status: "open" },
+      {
+        id: "t-1",
+        title: "Blocked task",
+        status: "open",
+        labels: ["ready"],
+        dependencies: [
+          { issue_id: "t-1", depends_on_id: "dep-1", type: "blocks" },
+        ],
+      },
+    ])
+
+    const tasks = parseBdTaskList(json)
+    const task = tasks.find((item) => item.id === "t-1")
+    expect(task?.status).toBe("blocked")
+    expect(task?.dependsOn).toEqual(["dep-1"])
+  })
+
   test("maps open with resolved blocking deps and no ready label to backlog", () => {
     const json = JSON.stringify([
       {
@@ -643,6 +663,24 @@ describe("actionable filtering (queryActionable semantics)", () => {
     const tasks = parseBdTaskList(json)
     const actionable = tasks.filter((t) => t.status === "actionable")
     expect(actionable).toHaveLength(0)
+  })
+
+  test("flat bd list dependencies with open blocker are excluded from actionable", () => {
+    const json = JSON.stringify([
+      { id: "dep-1", title: "Navigation slice", status: "open", labels: ["ready"] },
+      {
+        id: "t-1",
+        title: "Focus rules",
+        status: "open",
+        labels: ["ready"],
+        dependencies: [{ issue_id: "t-1", depends_on_id: "dep-1", type: "blocks" }],
+      },
+    ])
+
+    const tasks = parseBdTaskList(json)
+    const actionable = tasks.filter((t) => t.status === "actionable")
+    expect(actionable.map((t) => t.id)).toEqual(["dep-1"])
+    expect(tasks.find((t) => t.id === "t-1")?.status).toBe("blocked")
   })
 })
 
