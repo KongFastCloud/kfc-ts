@@ -4,7 +4,7 @@
  * Initializes the OpenTUI renderer, loads Beads tasks,
  * bootstraps the .beads database if missing, starts an
  * in-process worker loop, and renders the WatchApp component
- * with periodic refresh and live worker logs.
+ * with periodic refresh.
  */
 
 import { createCliRenderer } from "@opentui/core"
@@ -20,7 +20,6 @@ import { WatchApp } from "./tui/WatchApp.js"
 import {
   startTuiWorker,
   type WorkerStatus,
-  type WorkerLogEntry,
 } from "./tuiWorker.js"
 
 export interface WatchTuiOptions {
@@ -31,9 +30,6 @@ export interface WatchTuiOptions {
   /** Engine override for the in-TUI worker. */
   readonly engineOverride?: "claude" | "codex"
 }
-
-/** Maximum number of log entries to retain in the UI. */
-const MAX_LOG_ENTRIES = 200
 
 /**
  * Launch the watch-mode TUI.
@@ -75,7 +71,6 @@ export const launchWatchTui = (
     // Worker state — held outside React so callbacks can mutate and re-render
     // -----------------------------------------------------------------------
     let currentWorkerStatus: WorkerStatus = { state: "idle" }
-    let currentWorkerLogs: WorkerLogEntry[] = []
 
     // Re-render helper — captures latest state each time
     const rerender = () => {
@@ -86,7 +81,6 @@ export const launchWatchTui = (
           refreshIntervalMs={refreshIntervalMs}
           initialError={initialError}
           workerStatus={currentWorkerStatus}
-          workerLogs={currentWorkerLogs}
         />,
       )
     }
@@ -110,13 +104,8 @@ export const launchWatchTui = (
           currentWorkerStatus = status
           rerender()
         },
-        onLog: (entry) => {
-          currentWorkerLogs = [...currentWorkerLogs, entry]
-          // Cap log buffer
-          if (currentWorkerLogs.length > MAX_LOG_ENTRIES) {
-            currentWorkerLogs = currentWorkerLogs.slice(-MAX_LOG_ENTRIES)
-          }
-          rerender()
+        onLog: () => {
+          // Worker logs are no longer displayed in the TUI.
         },
         onTaskComplete: () => {
           // Trigger a refresh so the task list updates after execution

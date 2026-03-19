@@ -1,17 +1,17 @@
 /** @jsxImportSource @opentui/react */
 /**
  * ABOUTME: Watch-mode TUI application component.
- * Renders a dashboard with two stacked tables (active / done) from
- * Beads data, with periodic refresh, keyboard navigation, and
- * loading/error states. The detail-view pane is retained for future
- * drill-down but is not rendered on the dashboard landing screen.
+ * Renders a two-view flow: a dashboard landing screen with two stacked
+ * tables (active / done) and a detail drill-down view for inspecting a
+ * single task. Enter navigates from dashboard to detail; Esc/Backspace
+ * returns to dashboard. No worker log panel is rendered.
  */
 
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import type { ReactNode } from "react"
 import { useState, useCallback, useEffect, useRef } from "react"
 import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
-import type { WorkerStatus, WorkerLogEntry } from "../tuiWorker.js"
+import type { WorkerStatus } from "../tuiWorker.js"
 import { DashboardView, partitionTasks } from "./DashboardView.js"
 import type { FocusedTable } from "./DashboardView.js"
 
@@ -27,7 +27,7 @@ const colors = {
   border: { normal: "#3d4259", active: "#7aa2f7", muted: "#2f3449" },
 } as const
 
-// Status theme used by DetailPane (retained for future detail-view slice)
+// Status theme used by DetailPane
 const taskStatusColor: Record<WatchTaskStatus, string> = {
   backlog: colors.fg.muted,
   actionable: colors.status.success,
@@ -63,8 +63,6 @@ export interface WatchAppProps {
   initialError?: string | undefined
   /** Current worker status (idle/running). */
   workerStatus?: WorkerStatus | undefined
-  /** Worker log entries to display in the log panel. */
-  workerLogs?: WorkerLogEntry[] | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -134,8 +132,11 @@ function WatchHeader({
   )
 }
 
-function WatchFooter(): ReactNode {
-  const navShortcuts = "↑↓:Navigate  Tab:Switch Table  Enter:Detail  r:Refresh  q:Quit"
+function WatchFooter({ viewMode }: { viewMode: "dashboard" | "detail" }): ReactNode {
+  const navShortcuts =
+    viewMode === "detail"
+      ? "Esc/Backspace:Back  q:Quit"
+      : "↑↓:Navigate  Tab:Switch Table  Enter:Detail  r:Refresh  q:Quit"
   return (
     <box
       style={{
@@ -424,60 +425,6 @@ function DetailPane({ task }: { task: WatchTask | null }): ReactNode {
   )
 }
 
-function LogPanel({
-  logs,
-  maxHeight,
-}: {
-  logs: WorkerLogEntry[]
-  maxHeight: number
-}): ReactNode {
-  // Show newest entries last (tail behavior)
-  const visibleCount = Math.max(1, maxHeight - 2) // account for border
-  const visibleLogs = logs.slice(-visibleCount)
-
-  return (
-    <box
-      title="Worker Logs"
-      style={{
-        width: "100%",
-        height: Math.min(maxHeight, Math.max(5, logs.length + 2)),
-        flexDirection: "column",
-        backgroundColor: colors.bg.primary,
-        border: true,
-        borderColor: colors.border.normal,
-      }}
-    >
-      <scrollbox style={{ flexGrow: 1, width: "100%" }}>
-        {visibleLogs.length === 0 ? (
-          <box style={{ paddingLeft: 1 }}>
-            <text fg={colors.fg.muted}>No worker logs yet</text>
-          </box>
-        ) : (
-          visibleLogs.map((entry, idx) => {
-            const timeStr = entry.timestamp.toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-            })
-            const taskTag = entry.taskId
-              ? ` [${entry.taskId}]`
-              : ""
-            return (
-              <box key={idx} style={{ paddingLeft: 1, paddingRight: 1 }}>
-                <text>
-                  <span fg={colors.fg.dim}>{timeStr}</span>
-                  {taskTag && <span fg={colors.accent.secondary}>{taskTag}</span>}
-                  <span fg={colors.fg.secondary}> {entry.message}</span>
-                </text>
-              </box>
-            )
-          })
-        )}
-      </scrollbox>
-    </box>
-  )
-}
-
 // ---------------------------------------------------------------------------
 // Main WatchApp
 // ---------------------------------------------------------------------------
@@ -489,9 +436,8 @@ export function WatchApp({
   onQuit,
   initialError,
   workerStatus,
-  workerLogs,
 }: WatchAppProps): ReactNode {
-  const { width, height } = useTerminalDimensions()
+  const { width } = useTerminalDimensions()
   const [tasks, setTasks] = useState<WatchTask[]>(initialTasks)
   const [error, setError] = useState<string | undefined>(initialError)
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(
@@ -509,7 +455,7 @@ export function WatchApp({
   // Partition once for use in handlers and render
   const { active: activeTasks, done: doneTasks } = partitionTasks(tasks)
 
-  // Derive the currently selected task (for future detail view consumption)
+  // Derive the currently selected task for detail view
   const selectedTask =
     focusedTable === "active"
       ? activeTasks[activeSelectedIndex] ?? null
@@ -660,22 +606,20 @@ export function WatchApp({
           flexDirection: "column",
         }}
       >
-        <DashboardView
-          tasks={tasks}
-          focusedTable={focusedTable}
-          activeSelectedIndex={activeSelectedIndex}
-          doneSelectedIndex={doneSelectedIndex}
-          terminalWidth={width}
-        />
-        {workerLogs !== undefined && (
-          <LogPanel
-            logs={workerLogs}
-            maxHeight={Math.max(5, Math.floor(height * 0.25))}
+        {viewMode === "detail" ? (
+          <DetailPane task={selectedTask} />
+        ) : (
+          <DashboardView
+            tasks={tasks}
+            focusedTable={focusedTable}
+            activeSelectedIndex={activeSelectedIndex}
+            doneSelectedIndex={doneSelectedIndex}
+            terminalWidth={width}
           />
         )}
       </box>
 
-      <WatchFooter />
+      <WatchFooter viewMode={viewMode} />
     </box>
   )
 }
