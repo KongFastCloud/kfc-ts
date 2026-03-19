@@ -137,10 +137,12 @@ export function startTuiWorker(
         setState("running", issue.id)
 
         // Write initial metadata
+        const startedAt = new Date().toISOString()
         const startMetadata: BeadsMetadata = {
           engine: engineOverride ?? config.engine,
           workerId,
-          timestamp: new Date().toISOString(),
+          timestamp: startedAt,
+          startedAt,
         }
         try {
           await Effect.runPromise(writeMetadata(issue.id, startMetadata))
@@ -169,11 +171,14 @@ export function startTuiWorker(
         }
 
         // Write final metadata and finalize
+        const finishedAt = new Date().toISOString()
         const finalMetadata: BeadsMetadata = {
           engine: result.engine,
           resumeToken: result.resumeToken,
           workerId,
-          timestamp: new Date().toISOString(),
+          timestamp: finishedAt,
+          startedAt,
+          finishedAt,
         }
 
         if (result.success) {

@@ -58,6 +58,10 @@ export interface WatchTask {
   readonly closedAt?: string | undefined
   readonly closeReason?: string | undefined
   readonly issueType?: string | undefined
+  /** ISO-8601 timestamp when the latest run started (from ralphe metadata). */
+  readonly startedAt?: string | undefined
+  /** ISO-8601 timestamp when the latest run finished (from ralphe metadata). */
+  readonly finishedAt?: string | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +85,12 @@ interface BdIssueJson {
   updated_at?: string
   closed_at?: string
   close_reason?: string
+  metadata?: {
+    ralphe?: {
+      startedAt?: string
+      finishedAt?: string
+    }
+  }
   dependencies?: Array<{
     id?: string
     depends_on_id?: string
@@ -280,6 +290,8 @@ function bdIssueToWatchTask(
     updatedAt: item.updated_at,
     closedAt: item.closed_at,
     closeReason: item.close_reason,
+    startedAt: item.metadata?.ralphe?.startedAt,
+    finishedAt: item.metadata?.ralphe?.finishedAt,
   }
 }
 

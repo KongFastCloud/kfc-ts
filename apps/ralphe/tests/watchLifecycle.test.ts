@@ -520,15 +520,25 @@ describe("watch lifecycle: metadata and operation ordering", () => {
     const metaCalls = calls.filter((c) => c.op === "writeMetadata" && c.id === "meta-1")
     expect(metaCalls.length).toBe(2)
 
-    // First metadata (start): has workerId, no resumeToken
+    // First metadata (start): has workerId, startedAt, no resumeToken
     const startMeta = metaCalls[0]!.metadata!
     expect(startMeta.workerId).toBe("test-metadata-order")
     expect(startMeta.engine).toBe("claude")
+    expect(startMeta.startedAt).toBeTruthy()
+    expect(startMeta.finishedAt).toBeUndefined()
 
-    // Final metadata: has resumeToken
+    // Final metadata: has resumeToken, startedAt, finishedAt
     const finalMeta = metaCalls[1]!.metadata!
     expect(finalMeta.resumeToken).toBe("tok-final")
     expect(finalMeta.workerId).toBe("test-metadata-order")
+    expect(finalMeta.startedAt).toBeTruthy()
+    expect(finalMeta.finishedAt).toBeTruthy()
+    // startedAt must be the same across both writes
+    expect(finalMeta.startedAt).toBe(startMeta.startedAt)
+    // finishedAt must be at or after startedAt
+    expect(new Date(finalMeta.finishedAt!).getTime()).toBeGreaterThanOrEqual(
+      new Date(finalMeta.startedAt!).getTime(),
+    )
 
     // Ordering: claim → startMeta → finalMeta → close
     const claimIdx = calls.findIndex((c) => c.op === "claimTask" && c.id === "meta-1")
@@ -690,6 +700,9 @@ describe("watch lifecycle: exhausted failure metadata", () => {
     expect(exhaustedCall?.metadata?.workerId).toBe("meta-worker-42")
     expect(exhaustedCall?.metadata?.engine).toBe("codex")
     expect(exhaustedCall?.metadata?.timestamp).toBeTruthy()
+    // Exhausted failure metadata must carry both timing fields
+    expect(exhaustedCall?.metadata?.startedAt).toBeTruthy()
+    expect(exhaustedCall?.metadata?.finishedAt).toBeTruthy()
   })
 
   test("exhausted failure does not produce any close calls", async () => {

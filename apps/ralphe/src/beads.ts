@@ -19,6 +19,10 @@ export interface BeadsMetadata {
   readonly resumeToken?: string | undefined
   readonly workerId: string
   readonly timestamp: string
+  /** ISO-8601 timestamp captured when the latest run begins. */
+  readonly startedAt?: string | undefined
+  /** ISO-8601 timestamp captured when the latest run finishes (done or error). */
+  readonly finishedAt?: string | undefined
 }
 
 // ---------------------------------------------------------------------------

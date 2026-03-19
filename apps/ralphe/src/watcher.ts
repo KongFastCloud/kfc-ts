@@ -88,10 +88,12 @@ export const watch = (
           yield* Console.log(`Claimed task: ${issue.id}`)
 
           // Write initial metadata
+          const startedAt = new Date().toISOString()
           const startMetadata: BeadsMetadata = {
             engine: opts?.engineOverride ?? config.engine,
             workerId,
-            timestamp: new Date().toISOString(),
+            timestamp: startedAt,
+            startedAt,
           }
           yield* writeMetadata(issue.id, startMetadata)
 
@@ -102,11 +104,14 @@ export const watch = (
           })
 
           // Write final metadata with resume token
+          const finishedAt = new Date().toISOString()
           const finalMetadata: BeadsMetadata = {
             engine: result.engine,
             resumeToken: result.resumeToken,
             workerId,
-            timestamp: new Date().toISOString(),
+            timestamp: finishedAt,
+            startedAt,
+            finishedAt,
           }
 
           // Close with appropriate outcome

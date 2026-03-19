@@ -65,6 +65,58 @@ function pad(text: string, width: number): string {
   return text + " ".repeat(width - text.length)
 }
 
+/**
+ * Format a duration in milliseconds to a human-readable string.
+ * Examples: "12s", "3m 45s", "1h 23m", "2h 0m".
+ */
+export function formatDuration(ms: number): string {
+  if (ms < 0) return "—"
+  const totalSeconds = Math.floor(ms / 1000)
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes < 60) return `${minutes}m ${seconds}s`
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return `${hours}h ${remainingMinutes}m`
+}
+
+/**
+ * Compute the duration string for a dashboard row based on task status
+ * and timing metadata.
+ *
+ * - active: live elapsed time from now - startedAt
+ * - done / error: finishedAt - startedAt
+ * - backlog / actionable / blocked / incomplete metadata: "—"
+ */
+export function computeDuration(task: WatchTask): string {
+  const { status, startedAt, finishedAt } = task
+
+  // Statuses that never show duration
+  if (status === "backlog" || status === "actionable" || status === "blocked") {
+    return "—"
+  }
+
+  // Need at least startedAt for any duration calculation
+  if (!startedAt) return "—"
+
+  const startMs = new Date(startedAt).getTime()
+  if (Number.isNaN(startMs)) return "—"
+
+  if (status === "active") {
+    // Live elapsed time
+    const elapsed = Date.now() - startMs
+    return formatDuration(elapsed)
+  }
+
+  // done or error: need finishedAt
+  if (!finishedAt) return "—"
+  const endMs = new Date(finishedAt).getTime()
+  if (Number.isNaN(endMs)) return "—"
+
+  return formatDuration(endMs - startMs)
+}
+
 // ---------------------------------------------------------------------------
 // Partitioning
 // ---------------------------------------------------------------------------
@@ -161,7 +213,7 @@ function DashboardRow({
     task.priority !== undefined ? `P${task.priority}` : "—",
     COL.priority,
   )
-  const durationStr = pad("—", COL.duration) // placeholder until timing metadata
+  const durationStr = pad(computeDuration(task), COL.duration)
 
   const idColor = isDimmed ? colors.fg.dim : colors.fg.muted
   const titleColor = isDimmed
@@ -186,7 +238,7 @@ function DashboardRow({
         <span fg={sColor}>{statusStr}</span>
         <span fg={colors.accent.secondary}>{labelStr}</span>
         <span fg={colors.fg.secondary}>{priorityStr}</span>
-        <span fg={colors.fg.dim}>{durationStr}</span>
+        <span fg={task.status === "active" ? colors.status.info : colors.fg.dim}>{durationStr}</span>
       </text>
     </box>
   )
