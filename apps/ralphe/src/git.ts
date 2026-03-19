@@ -244,7 +244,7 @@ export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError> =>
         )
       }
 
-      const latestRun = runs[0]
+      const latestRun = runs[0]!
       yield* Console.log(`CI succeeded across ${runs.length} run(s).`)
       return {
         runId: latestRun.databaseId,
