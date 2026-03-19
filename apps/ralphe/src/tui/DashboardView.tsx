@@ -250,19 +250,30 @@ function DashboardTable({
 // DashboardView (exported)
 // ---------------------------------------------------------------------------
 
+/** Which dashboard table currently holds focus. */
+export type FocusedTable = "active" | "done"
+
 export interface DashboardViewProps {
   tasks: WatchTask[]
-  selectedIndex: number
+  /** Which table is focused. */
+  focusedTable: FocusedTable
+  /** Selected row index within the active (top) table, or -1 for no selection. */
+  activeSelectedIndex: number
+  /** Selected row index within the done (bottom) table, or -1 for no selection. */
+  doneSelectedIndex: number
   terminalWidth: number
 }
 
 /**
  * Dashboard landing view: two vertically stacked tables.
  * Top table = non-done tasks. Bottom table = done tasks.
+ * Only the focused table shows its selection highlight and active border.
  */
 export function DashboardView({
   tasks,
-  selectedIndex,
+  focusedTable,
+  activeSelectedIndex,
+  doneSelectedIndex,
   terminalWidth,
 }: DashboardViewProps): ReactNode {
   const { active, done } = partitionTasks(tasks)
@@ -271,14 +282,6 @@ export function DashboardView({
   const fixedColumnsWidth =
     COL.id + COL.status + COL.label + COL.priority + COL.duration + 4 // +4 for padding/border
   const titleWidth = Math.max(10, terminalWidth - fixedColumnsWidth)
-
-  // Determine which table the selection falls into and the local index
-  const activeSelected =
-    selectedIndex < active.length ? selectedIndex : -1
-  const doneSelected =
-    selectedIndex >= active.length
-      ? selectedIndex - active.length
-      : -1
 
   return (
     <box
@@ -291,18 +294,26 @@ export function DashboardView({
       <DashboardTable
         title="Active"
         tasks={active}
-        selectedIndex={activeSelected}
+        selectedIndex={focusedTable === "active" ? activeSelectedIndex : -1}
         titleWidth={titleWidth}
         flexGrow={2}
-        borderColor={colors.accent.primary}
+        borderColor={
+          focusedTable === "active"
+            ? colors.accent.primary
+            : colors.border.normal
+        }
       />
       <DashboardTable
         title="Done"
         tasks={done}
-        selectedIndex={doneSelected}
+        selectedIndex={focusedTable === "done" ? doneSelectedIndex : -1}
         titleWidth={titleWidth}
         flexGrow={1}
-        borderColor={colors.border.normal}
+        borderColor={
+          focusedTable === "done"
+            ? colors.accent.primary
+            : colors.border.normal
+        }
       />
     </box>
   )

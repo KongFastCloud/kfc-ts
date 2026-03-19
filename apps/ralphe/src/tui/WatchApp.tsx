@@ -13,6 +13,7 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
 import type { WorkerStatus, WorkerLogEntry } from "../tuiWorker.js"
 import { DashboardView, partitionTasks } from "./DashboardView.js"
+import type { FocusedTable } from "./DashboardView.js"
 
 // ---------------------------------------------------------------------------
 // Theme (inline subset — avoids coupling to ralph-tui's theme package)
@@ -134,7 +135,7 @@ function WatchHeader({
 }
 
 function WatchFooter(): ReactNode {
-  const navShortcuts = "↑↓:Navigate  r:Refresh  q:Quit"
+  const navShortcuts = "↑↓:Navigate  Tab:Switch Table  Enter:Detail  r:Refresh  q:Quit"
   return (
     <box
       style={{
@@ -492,14 +493,29 @@ export function WatchApp({
 }: WatchAppProps): ReactNode {
   const { width, height } = useTerminalDimensions()
   const [tasks, setTasks] = useState<WatchTask[]>(initialTasks)
-  const [selectedIndex, setSelectedIndex] = useState(0)
   const [error, setError] = useState<string | undefined>(initialError)
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(
     initialTasks.length > 0 ? new Date() : null,
   )
   const refreshingRef = useRef(false)
 
-  // Refresh callback
+  // Dashboard focus and per-table selection state
+  const [focusedTable, setFocusedTable] = useState<FocusedTable>("active")
+  const [activeSelectedIndex, setActiveSelectedIndex] = useState(0)
+  const [doneSelectedIndex, setDoneSelectedIndex] = useState(0)
+  /** View mode: dashboard (tables) or detail (single task drill-down). */
+  const [viewMode, setViewMode] = useState<"dashboard" | "detail">("dashboard")
+
+  // Partition once for use in handlers and render
+  const { active: activeTasks, done: doneTasks } = partitionTasks(tasks)
+
+  // Derive the currently selected task (for future detail view consumption)
+  const selectedTask =
+    focusedTable === "active"
+      ? activeTasks[activeSelectedIndex] ?? null
+      : doneTasks[doneSelectedIndex] ?? null
+
+  // Refresh callback — preserves focus, clamps per-table indices
   const doRefresh = useCallback(async () => {
     if (refreshingRef.current) return
     refreshingRef.current = true
@@ -508,10 +524,14 @@ export function WatchApp({
       setTasks(updated)
       setError(undefined)
       setLastRefreshed(new Date())
-      // Clamp selection if list shrank
+      // Clamp each table's selection independently
       const { active, done } = partitionTasks(updated)
-      const newTotal = active.length + done.length
-      setSelectedIndex((prev) => Math.min(prev, Math.max(0, newTotal - 1)))
+      setActiveSelectedIndex((prev) =>
+        active.length === 0 ? 0 : Math.min(prev, active.length - 1),
+      )
+      setDoneSelectedIndex((prev) =>
+        done.length === 0 ? 0 : Math.min(prev, done.length - 1),
+      )
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setError(`Refresh failed: ${msg}`)
@@ -529,33 +549,81 @@ export function WatchApp({
     return () => clearInterval(timer)
   }, [refreshIntervalMs, doRefresh])
 
-  // Derive selected task — selection spans both dashboard tables
-  const { active: activeTasks, done: doneTasks } = partitionTasks(tasks)
-  const totalNavigable = activeTasks.length + doneTasks.length
-  const selectedTask =
-    selectedIndex < activeTasks.length
-      ? activeTasks[selectedIndex] ?? null
-      : doneTasks[selectedIndex - activeTasks.length] ?? null
+  /** Reset focus to top table and first row (used when returning from detail). */
+  const resetFocusToTop = useCallback(() => {
+    setFocusedTable("active")
+    setActiveSelectedIndex(0)
+    setDoneSelectedIndex(0)
+    setViewMode("dashboard")
+  }, [])
 
   // Keyboard handler
   const handleKeyboard = useCallback(
-    (key: { name: string }) => {
+    (key: { name: string; shift?: boolean }) => {
+      // --- Detail-mode keys ---
+      if (viewMode === "detail") {
+        switch (key.name) {
+          case "escape":
+          case "backspace":
+            resetFocusToTop()
+            return
+          case "q":
+            onQuit?.()
+            process.exit(0)
+            return
+          default:
+            return
+        }
+      }
+
+      // --- Dashboard-mode keys ---
       switch (key.name) {
         case "q":
+          onQuit?.()
+          process.exit(0)
+          break
+
         case "escape":
           onQuit?.()
           process.exit(0)
           break
 
+        case "tab": {
+          // Toggle focused table (works even when a table is empty)
+          setFocusedTable((prev) => (prev === "active" ? "done" : "active"))
+          break
+        }
+
         case "up":
         case "k":
-          setSelectedIndex((prev) => Math.max(0, prev - 1))
+          if (focusedTable === "active") {
+            setActiveSelectedIndex((prev) => Math.max(0, prev - 1))
+          } else {
+            setDoneSelectedIndex((prev) => Math.max(0, prev - 1))
+          }
           break
 
         case "down":
         case "j":
-          setSelectedIndex((prev) => Math.min(totalNavigable - 1, prev + 1))
+          if (focusedTable === "active") {
+            setActiveSelectedIndex((prev) =>
+              activeTasks.length === 0 ? 0 : Math.min(activeTasks.length - 1, prev + 1),
+            )
+          } else {
+            setDoneSelectedIndex((prev) =>
+              doneTasks.length === 0 ? 0 : Math.min(doneTasks.length - 1, prev + 1),
+            )
+          }
           break
+
+        case "return":
+        case "enter": {
+          // Enter on empty table does nothing
+          const tableLen = focusedTable === "active" ? activeTasks.length : doneTasks.length
+          if (tableLen === 0) break
+          setViewMode("detail")
+          break
+        }
 
         case "r":
           void doRefresh()
@@ -565,7 +633,7 @@ export function WatchApp({
           break
       }
     },
-    [totalNavigable, onQuit, doRefresh],
+    [viewMode, focusedTable, activeTasks.length, doneTasks.length, onQuit, doRefresh, resetFocusToTop],
   )
 
   useKeyboard(handleKeyboard)
@@ -594,7 +662,9 @@ export function WatchApp({
       >
         <DashboardView
           tasks={tasks}
-          selectedIndex={selectedIndex}
+          focusedTable={focusedTable}
+          activeSelectedIndex={activeSelectedIndex}
+          doneSelectedIndex={doneSelectedIndex}
           terminalWidth={width}
         />
         {workerLogs !== undefined && (
