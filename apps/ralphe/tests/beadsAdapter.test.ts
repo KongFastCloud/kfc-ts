@@ -345,6 +345,125 @@ describe("parseBdTaskList", () => {
     ])
     expect(parseBdTaskList(json)[0]!.status).toBe("blocked")
   })
+
+  // -------------------------------------------------------------------------
+  // Dependency blocking regression — PRD §Dependency Behavior
+  // -------------------------------------------------------------------------
+
+  test("mixed deps: one closed, one open → still blocked", () => {
+    const json = JSON.stringify([
+      {
+        id: "t-1",
+        title: "Mixed deps",
+        status: "open",
+        labels: ["ready"],
+        dependencies: [
+          { id: "dep-1", status: "closed", dependency_type: "blocks" },
+          { id: "dep-2", status: "open", dependency_type: "blocks" },
+        ],
+      },
+    ])
+    expect(parseBdTaskList(json)[0]!.status).toBe("blocked")
+  })
+
+  test("parent-child dependencies do not cause blocking", () => {
+    const json = JSON.stringify([
+      {
+        id: "t-1",
+        title: "Child task",
+        status: "open",
+        labels: ["ready"],
+        dependencies: [
+          { id: "parent-1", status: "open", dependency_type: "parent-child" },
+        ],
+      },
+    ])
+    expect(parseBdTaskList(json)[0]!.status).toBe("actionable")
+  })
+
+  test("closed dependency unblocks regardless of its labels", () => {
+    // A dependency that was closed (even if it had error labels before closing)
+    // should count as resolved and not block the dependent.
+    const json = JSON.stringify([
+      {
+        id: "t-1",
+        title: "Unblocked",
+        status: "open",
+        labels: ["ready"],
+        dependencies: [
+          { id: "dep-1", status: "closed", dependency_type: "blocks" },
+        ],
+      },
+    ])
+    expect(parseBdTaskList(json)[0]!.status).toBe("actionable")
+  })
+
+  test("all deps closed → actionable when ready label present", () => {
+    const json = JSON.stringify([
+      {
+        id: "t-1",
+        title: "Fully unblocked",
+        status: "open",
+        labels: ["ready"],
+        dependencies: [
+          { id: "dep-1", status: "closed", dependency_type: "blocks" },
+          { id: "dep-2", status: "closed", dependency_type: "blocks" },
+          { id: "dep-3", status: "cancelled", dependency_type: "blocks" },
+        ],
+      },
+    ])
+    expect(parseBdTaskList(json)[0]!.status).toBe("actionable")
+  })
+
+  test("all deps closed but no ready label → backlog, not actionable", () => {
+    const json = JSON.stringify([
+      {
+        id: "t-1",
+        title: "Resolved but not ready",
+        status: "open",
+        dependencies: [
+          { id: "dep-1", status: "closed", dependency_type: "blocks" },
+        ],
+      },
+    ])
+    expect(parseBdTaskList(json)[0]!.status).toBe("backlog")
+  })
+
+  test("cancelled task maps to error (not done)", () => {
+    // cancelled is a terminal failure — distinct from closed-success
+    const json = JSON.stringify([
+      { id: "t-1", title: "Cancelled", status: "cancelled" },
+    ])
+    expect(parseBdTaskList(json)[0]!.status).toBe("error")
+  })
+
+  // -------------------------------------------------------------------------
+  // Label precedence regression — PRD §Label Behavior
+  // -------------------------------------------------------------------------
+
+  test("error label on open task with ready label and no deps → error (not actionable)", () => {
+    const json = JSON.stringify([
+      { id: "t-1", title: "Errored+Ready", status: "open", labels: ["ready", "error"] },
+    ])
+    const task = parseBdTaskList(json)[0]!
+    expect(task.status).toBe("error")
+  })
+
+  test("error label on open task with blockers → error (not blocked)", () => {
+    // Error label takes highest priority among open-task derivations
+    const json = JSON.stringify([
+      {
+        id: "t-1",
+        title: "Errored+Blocked",
+        status: "open",
+        labels: ["error"],
+        dependencies: [
+          { id: "dep-1", status: "open", dependency_type: "blocks" },
+        ],
+      },
+    ])
+    expect(parseBdTaskList(json)[0]!.status).toBe("error")
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -487,6 +606,43 @@ describe("actionable filtering (queryActionable semantics)", () => {
     const actionable = tasks.filter((t) => t.status === "actionable")
     expect(actionable).toHaveLength(1)
     expect(actionable[0]!.id).toBe("t-1")
+  })
+
+  test("cancelled deps resolve but cancelled tasks themselves are errors", () => {
+    // dep-1 is cancelled (resolved dependency), t-1 should be actionable.
+    // But t-2 itself is cancelled → error status, not actionable.
+    const json = JSON.stringify([
+      { id: "t-1", title: "Depends on cancelled", status: "open", labels: ["ready"],
+        dependencies: [{ id: "dep-1", status: "cancelled", dependency_type: "blocks" }] },
+      { id: "t-2", title: "Cancelled task", status: "cancelled" },
+    ])
+    const tasks = parseBdTaskList(json)
+    const actionable = tasks.filter((t) => t.status === "actionable")
+    expect(actionable).toHaveLength(1)
+    expect(actionable[0]!.id).toBe("t-1")
+    expect(tasks.find((t) => t.id === "t-2")!.status).toBe("error")
+  })
+
+  test("active and done statuses are excluded from actionable", () => {
+    const json = JSON.stringify([
+      { id: "t-1", title: "Active", status: "in_progress" },
+      { id: "t-2", title: "Done", status: "closed" },
+      { id: "t-3", title: "Actionable", status: "open", labels: ["ready"] },
+    ])
+    const tasks = parseBdTaskList(json)
+    const actionable = tasks.filter((t) => t.status === "actionable")
+    expect(actionable).toHaveLength(1)
+    expect(actionable[0]!.id).toBe("t-3")
+  })
+
+  test("dependency with in_progress status keeps dependent out of actionable", () => {
+    const json = JSON.stringify([
+      { id: "t-1", title: "Waiting on WIP", status: "open", labels: ["ready"],
+        dependencies: [{ id: "dep-1", status: "in_progress", dependency_type: "blocks" }] },
+    ])
+    const tasks = parseBdTaskList(json)
+    const actionable = tasks.filter((t) => t.status === "actionable")
+    expect(actionable).toHaveLength(0)
   })
 })
 

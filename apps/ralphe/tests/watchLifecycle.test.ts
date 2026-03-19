@@ -631,6 +631,111 @@ describe("watch lifecycle: only actionable issues are picked up", () => {
   })
 })
 
+describe("watch lifecycle: failure then recovery", () => {
+  test("system processes a successful task after a prior failure", async () => {
+    // First task fails, second task succeeds — proves the worker recovers
+    readyQueue = [makeIssue("recover-fail")]
+    readyOneShot = true
+    claimResults.set("recover-fail", true)
+    claimResults.set("recover-ok", true)
+    taskResult = { success: false, engine: "claude", error: "type error" }
+
+    const { callbacks } = makeCallbacks()
+    const worker = startTuiWorker(callbacks, {
+      pollIntervalMs: 30,
+      workerId: "test-recovery",
+    })
+
+    // Wait for the failure to be recorded
+    await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "recover-fail"))
+
+    // Now enqueue a successful task
+    readyQueue = [makeIssue("recover-ok")]
+    taskResult = { success: true, engine: "claude" }
+
+    await waitFor(() => calls.some((c) => c.op === "closeTaskSuccess" && c.id === "recover-ok"))
+    worker.stop()
+
+    // First task: failed, remains open
+    expect(calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "recover-fail")).toBe(true)
+    expect(calls.some((c) => c.op === "closeTaskSuccess" && c.id === "recover-fail")).toBe(false)
+
+    // Second task: succeeded, closed normally
+    expect(calls.some((c) => c.op === "closeTaskSuccess" && c.id === "recover-ok")).toBe(true)
+
+    // Failure must come before the second claim
+    const failIdx = calls.findIndex((c) => c.op === "markTaskExhaustedFailure" && c.id === "recover-fail")
+    const secondClaimIdx = calls.findIndex((c) => c.op === "claimTask" && c.id === "recover-ok")
+    expect(failIdx).toBeLessThan(secondClaimIdx)
+  })
+})
+
+describe("watch lifecycle: exhausted failure metadata", () => {
+  test("exhausted failure carries correct engine and workerId in metadata", async () => {
+    readyQueue = [makeIssue("meta-fail-1")]
+    claimResults.set("meta-fail-1", true)
+    taskResult = { success: false, engine: "codex", error: "lint failed" }
+
+    const { callbacks } = makeCallbacks()
+    const worker = startTuiWorker(callbacks, {
+      pollIntervalMs: 30,
+      workerId: "meta-worker-42",
+    })
+
+    await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure"))
+    worker.stop()
+
+    const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
+    expect(exhaustedCall?.id).toBe("meta-fail-1")
+    expect(exhaustedCall?.metadata?.workerId).toBe("meta-worker-42")
+    expect(exhaustedCall?.metadata?.engine).toBe("codex")
+    expect(exhaustedCall?.metadata?.timestamp).toBeTruthy()
+  })
+
+  test("exhausted failure does not produce any close calls", async () => {
+    readyQueue = [makeIssue("no-close-1")]
+    claimResults.set("no-close-1", true)
+    taskResult = { success: false, engine: "claude", error: "tests failed" }
+
+    const { callbacks } = makeCallbacks()
+    const worker = startTuiWorker(callbacks, {
+      pollIntervalMs: 30,
+      workerId: "test-no-close",
+    })
+
+    await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure"))
+    // Let it poll a few more times to ensure no delayed close
+    await new Promise((r) => setTimeout(r, 150))
+    worker.stop()
+
+    const closeCalls = calls.filter(
+      (c) => c.op === "closeTaskSuccess" || c.op === "closeTaskFailure",
+    )
+    expect(closeCalls).toHaveLength(0)
+  })
+})
+
+describe("watch lifecycle: onTaskComplete fires for failures too", () => {
+  test("onTaskComplete fires after exhausted failure", async () => {
+    readyQueue = [makeIssue("cb-fail-1")]
+    claimResults.set("cb-fail-1", true)
+    taskResult = { success: false, engine: "claude", error: "build broke" }
+
+    const helpers = makeCallbacks()
+    const worker = startTuiWorker(helpers.callbacks, {
+      pollIntervalMs: 30,
+      workerId: "test-cb-fail",
+    })
+
+    await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure"))
+    // Give callback time to fire
+    await new Promise((r) => setTimeout(r, 50))
+    worker.stop()
+
+    expect(helpers.taskCompleteCount).toBeGreaterThanOrEqual(1)
+  })
+})
+
 describe("watch lifecycle: prompt building", () => {
   test("prompt includes issue title and description", async () => {
     readyQueue = [{
