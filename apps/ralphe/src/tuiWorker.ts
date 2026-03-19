@@ -8,8 +8,8 @@ import os from "node:os"
 import { Effect } from "effect"
 import { loadConfig } from "./config.js"
 import { runTask, type TaskResult } from "./runTask.js"
+import { queryActionable } from "./beadsAdapter.js"
 import {
-  queryReady,
   claimTask,
   closeTaskSuccess,
   writeMetadata,
@@ -108,8 +108,8 @@ export function startTuiWorker(
 
     while (!stopped) {
       try {
-        // Poll for ready tasks
-        const ready = await Effect.runPromise(queryReady())
+        // Poll for actionable tasks (open + ready + no error + not blocked)
+        const ready = await Effect.runPromise(queryActionable(workDir))
 
         if (ready.length === 0) {
           await sleep(pollIntervalMs)

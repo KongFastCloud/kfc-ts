@@ -38,7 +38,7 @@ let calls: Array<{
 // Track runTask invocations
 let runTaskCalls: Array<{ prompt: string }> = []
 
-// Control whether queryReady is one-shot (returns queue then empty)
+// Control whether queryActionable is one-shot (returns queue then empty)
 let readyOneShot = true
 
 // ---------------------------------------------------------------------------
@@ -48,15 +48,17 @@ let readyOneShot = true
 let startTuiWorker: typeof import("../src/tuiWorker.js").startTuiWorker
 
 beforeAll(async () => {
-  mock.module("../src/beads.js", () => ({
-    queryReady: () =>
+  mock.module("../src/beadsAdapter.js", () => ({
+    queryActionable: () =>
       Effect.succeed((() => {
-        calls.push({ op: "queryReady" })
+        calls.push({ op: "queryActionable" })
         const result = [...readyQueue]
         if (readyOneShot) readyQueue = []
         return result
       })()),
+  }))
 
+  mock.module("../src/beads.js", () => ({
     claimTask: (id: string) =>
       Effect.succeed((() => {
         calls.push({ op: "claimTask", id })
@@ -208,7 +210,7 @@ describe("watch lifecycle: ready → claim → execute → close", () => {
     // Verify operation ordering
     const ops = calls.map((c) => c.op)
     expect(ops).toContain("recoverStaleTasks")
-    expect(ops).toContain("queryReady")
+    expect(ops).toContain("queryActionable")
     expect(ops).toContain("claimTask")
     expect(ops).toContain("writeMetadata")
     expect(ops).toContain("closeTaskSuccess")
@@ -549,12 +551,12 @@ describe("watch lifecycle: metadata and operation ordering", () => {
     })
 
     // Wait for at least one poll
-    await waitFor(() => calls.filter((c) => c.op === "queryReady").length >= 1)
+    await waitFor(() => calls.filter((c) => c.op === "queryActionable").length >= 1)
     worker.stop()
 
-    // recoverStaleTasks should come before any queryReady
+    // recoverStaleTasks should come before any queryActionable
     const recoveryIdx = calls.findIndex((c) => c.op === "recoverStaleTasks")
-    const firstPollIdx = calls.findIndex((c) => c.op === "queryReady")
+    const firstPollIdx = calls.findIndex((c) => c.op === "queryActionable")
 
     expect(recoveryIdx).toBeGreaterThanOrEqual(0)
     expect(firstPollIdx).toBeGreaterThan(recoveryIdx)
@@ -580,6 +582,52 @@ describe("watch lifecycle: callback behavior", () => {
     worker.stop()
 
     expect(helpers.taskCompleteCount).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe("watch lifecycle: only actionable issues are picked up", () => {
+  // These tests verify the executor's contract: queryActionable is the
+  // authoritative gate. Since we mock queryActionable directly, these tests
+  // prove the executor correctly processes only what queryActionable returns
+  // and never bypasses the actionable filter.
+
+  test("empty ready queue means no claims are made", async () => {
+    readyQueue = [] // queryActionable returns nothing
+
+    const { callbacks } = makeCallbacks()
+    const worker = startTuiWorker(callbacks, {
+      pollIntervalMs: 30,
+      workerId: "test-empty-queue",
+    })
+
+    // Let it poll a few times
+    await waitFor(() => calls.filter((c) => c.op === "queryActionable").length >= 2)
+    worker.stop()
+
+    // No claims should have been made
+    expect(calls.some((c) => c.op === "claimTask")).toBe(false)
+    expect(runTaskCalls.length).toBe(0)
+  })
+
+  test("executor does not independently query for non-actionable work", async () => {
+    // Even when queryActionable returns nothing, the executor should not
+    // fall back to a different query that might return backlog/blocked/error tasks.
+    readyQueue = []
+
+    const { callbacks } = makeCallbacks()
+    const worker = startTuiWorker(callbacks, {
+      pollIntervalMs: 30,
+      workerId: "test-no-fallback",
+    })
+
+    await waitFor(() => calls.filter((c) => c.op === "queryActionable").length >= 3)
+    worker.stop()
+
+    // Only queryActionable and recoverStaleTasks should appear — no other query ops
+    const queryOps = calls.filter(
+      (c) => c.op !== "queryActionable" && c.op !== "recoverStaleTasks",
+    )
+    expect(queryOps).toHaveLength(0)
   })
 })
 

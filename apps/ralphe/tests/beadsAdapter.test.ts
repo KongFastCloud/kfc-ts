@@ -403,6 +403,94 @@ describe("getAvailableActions", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Actionable filtering — only actionable tasks are eligible for automatic pickup
+// ---------------------------------------------------------------------------
+
+describe("actionable filtering (queryActionable semantics)", () => {
+  // These tests verify the filtering behavior that queryActionable applies:
+  // only tasks with derived status "actionable" pass through.
+
+  test("only actionable tasks survive filtering from a mixed list", () => {
+    const json = JSON.stringify([
+      { id: "backlog-1", title: "Backlog", status: "open" },
+      { id: "ready-1", title: "Ready", status: "open", labels: ["ready"] },
+      { id: "blocked-1", title: "Blocked", status: "open", labels: ["ready"],
+        dependencies: [{ id: "dep-1", status: "open", dependency_type: "blocks" }] },
+      { id: "error-1", title: "Errored", status: "open", labels: ["error"] },
+      { id: "active-1", title: "Active", status: "in_progress" },
+      { id: "done-1", title: "Done", status: "closed" },
+    ])
+
+    const tasks = parseBdTaskList(json)
+    const actionable = tasks.filter((t) => t.status === "actionable")
+
+    expect(actionable).toHaveLength(1)
+    expect(actionable[0]!.id).toBe("ready-1")
+  })
+
+  test("backlog issues are excluded from automatic pickup", () => {
+    const json = JSON.stringify([
+      { id: "t-1", title: "No ready label", status: "open" },
+    ])
+    const tasks = parseBdTaskList(json)
+    const actionable = tasks.filter((t) => t.status === "actionable")
+    expect(actionable).toHaveLength(0)
+  })
+
+  test("blocked issues are excluded from automatic pickup even with ready label", () => {
+    const json = JSON.stringify([
+      { id: "t-1", title: "Blocked", status: "open", labels: ["ready"],
+        dependencies: [{ id: "dep-1", status: "open", dependency_type: "blocks" }] },
+    ])
+    const tasks = parseBdTaskList(json)
+    const actionable = tasks.filter((t) => t.status === "actionable")
+    expect(actionable).toHaveLength(0)
+  })
+
+  test("error issues are excluded from automatic pickup", () => {
+    const json = JSON.stringify([
+      { id: "t-1", title: "Errored", status: "open", labels: ["error"] },
+    ])
+    const tasks = parseBdTaskList(json)
+    const actionable = tasks.filter((t) => t.status === "actionable")
+    expect(actionable).toHaveLength(0)
+  })
+
+  test("error issues with ready label are still excluded", () => {
+    const json = JSON.stringify([
+      { id: "t-1", title: "Error+Ready", status: "open", labels: ["ready", "error"] },
+    ])
+    const tasks = parseBdTaskList(json)
+    const actionable = tasks.filter((t) => t.status === "actionable")
+    expect(actionable).toHaveLength(0)
+  })
+
+  test("open errored dependency keeps dependent out of actionable set", () => {
+    const json = JSON.stringify([
+      // dep-1 is open+error: an unresolved dependency
+      { id: "dep-1", title: "Failed dep", status: "open", labels: ["error"] },
+      // t-1 depends on dep-1 (which is open, not closed), so t-1 is blocked
+      { id: "t-1", title: "Waiting", status: "open", labels: ["ready"],
+        dependencies: [{ id: "dep-1", status: "open", dependency_type: "blocks" }] },
+    ])
+    const tasks = parseBdTaskList(json)
+    const actionable = tasks.filter((t) => t.status === "actionable")
+    expect(actionable).toHaveLength(0)
+  })
+
+  test("only genuinely resolved (closed) dependencies unblock into actionable", () => {
+    const json = JSON.stringify([
+      { id: "t-1", title: "Unblocked", status: "open", labels: ["ready"],
+        dependencies: [{ id: "dep-1", status: "closed", dependency_type: "blocks" }] },
+    ])
+    const tasks = parseBdTaskList(json)
+    const actionable = tasks.filter((t) => t.status === "actionable")
+    expect(actionable).toHaveLength(1)
+    expect(actionable[0]!.id).toBe("t-1")
+  })
+})
+
+// ---------------------------------------------------------------------------
 // beadsDatabaseExists
 // ---------------------------------------------------------------------------
 

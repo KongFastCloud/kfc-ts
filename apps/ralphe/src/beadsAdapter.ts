@@ -9,6 +9,7 @@ import path from "node:path"
 import fs from "node:fs"
 import { Console, Effect } from "effect"
 import { FatalError } from "./errors.js"
+import type { BeadsIssue } from "./beads.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -256,6 +257,34 @@ export const queryAllTasks = (
   cwd?: string,
 ): Effect.Effect<WatchTask[], FatalError> =>
   runBd(["list", "--json", "--all", "--limit", "0"], cwd).pipe(Effect.map(parseBdTaskList))
+
+/**
+ * Query only actionable tasks for the executor.
+ * Uses the full task list with derived status to ensure only issues that are
+ * open, ready-labeled, not errored, and not blocked by unresolved dependencies
+ * are returned. This is the authoritative gate for automatic pickup.
+ *
+ * Note: this fetches all issues and filters client-side, which is heavier
+ * than `bd ready --json` but guarantees correctness against the Ralphe
+ * actionable definition (see /prd/ralphe-status-alignment.md).
+ */
+export const queryActionable = (
+  cwd?: string,
+): Effect.Effect<BeadsIssue[], FatalError> =>
+  queryAllTasks(cwd).pipe(
+    Effect.map((tasks) =>
+      tasks
+        .filter((t) => t.status === "actionable")
+        .map((t): BeadsIssue => ({
+          id: t.id,
+          title: t.title,
+          description: t.description,
+          design: t.design,
+          acceptance_criteria: t.acceptance_criteria,
+          notes: t.notes,
+        })),
+    ),
+  )
 
 /**
  * Query a single task by ID for the detail pane.

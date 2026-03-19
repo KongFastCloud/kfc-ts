@@ -35,6 +35,7 @@ export {
   recoverStaleTasks,
 } from "./beads.js"
 export type { BeadsIssue, BeadsMetadata } from "./beads.js"
+export { queryActionable } from "./beadsAdapter.js"
 export { watch, defaultWorkerId } from "./watcher.js"
 export type { WatcherOptions } from "./watcher.js"
 export { startTuiWorker } from "./tuiWorker.js"
