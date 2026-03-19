@@ -103,6 +103,30 @@ Critical usage notes:
 - Only one task runs at a time.
 - Metadata is written under `metadata.ralphe` (engine, resume token, worker ID, timestamp).
 
+### Watch TUI Status Mapping
+
+The watch TUI derives a `Ralphe status` from the raw Beads task state. The detail view should show the Ralphe status. In the dashboard model, labels are only used where they add meaning beyond the status itself.
+
+| Ralphe status | Beads status | Label | Notes |
+|-------|---------|-------------|-------------|
+| `backlog` | `open` |  | Open task that is not currently ready. |
+| `actionable` | `open` | `ready` | Open task that is ready to run and has no unresolved blocking dependencies. |
+| `blocked` | `open` |  | Open task with unresolved blocking dependencies. |
+| `active` | `in_progress` |  | Task currently being worked. |
+| `done` | `closed` |  | Task closed successfully. |
+| `error` | `open` | `error` | Open task that failed and should remain visible as an error instead of finalizing to `closed`. |
+
+Notes:
+
+- `Ralphe status` is the TUI-friendly status that `ralphe` computes for display.
+- `Beads status` is the raw task status from `bd`.
+- `backlog`, `actionable`, `blocked`, and `error` all come from Beads `open`; the difference is whether the task is ready, blocked by dependencies, or marked with an error.
+- The detail view should show the Ralphe status (`backlog`, `actionable`, `blocked`, `active`, `done`, `error`).
+- `ready` is the label that distinguishes actionable work from backlog work.
+- `blocked` is a status, not a label.
+- `error` is the failure label for work that remains open.
+- Exhausted failures use `markTaskExhaustedFailure` in [`beads.ts`](src/beads.ts): task stays open, `ready` label is removed, `error` label is applied, and the failure reason is preserved in metadata and notes.
+
 TUI keys:
 
 - `q`: quit (current in-flight task is allowed to finish)
