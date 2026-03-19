@@ -1,8 +1,10 @@
 /** @jsxImportSource @opentui/react */
 /**
  * ABOUTME: Watch-mode TUI application component.
- * Renders a task list and synchronized detail pane from Beads data
- * with periodic refresh, keyboard navigation, and loading/error states.
+ * Renders a dashboard with two stacked tables (active / done) from
+ * Beads data, with periodic refresh, keyboard navigation, and
+ * loading/error states. The detail-view pane is retained for future
+ * drill-down but is not rendered on the dashboard landing screen.
  */
 
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
@@ -10,6 +12,7 @@ import type { ReactNode } from "react"
 import { useState, useCallback, useEffect, useRef } from "react"
 import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
 import type { WorkerStatus, WorkerLogEntry } from "../tuiWorker.js"
+import { DashboardView, partitionTasks } from "./DashboardView.js"
 
 // ---------------------------------------------------------------------------
 // Theme (inline subset — avoids coupling to ralph-tui's theme package)
@@ -23,6 +26,7 @@ const colors = {
   border: { normal: "#3d4259", active: "#7aa2f7", muted: "#2f3449" },
 } as const
 
+// Status theme used by DetailPane (retained for future detail-view slice)
 const taskStatusColor: Record<WatchTaskStatus, string> = {
   backlog: colors.fg.muted,
   actionable: colors.status.success,
@@ -153,89 +157,6 @@ function truncate(text: string, max: number): string {
   if (text.length <= max) return text
   if (max <= 3) return text.slice(0, max)
   return text.slice(0, max - 1) + "…"
-}
-
-function TaskRow({
-  task,
-  isSelected,
-  maxWidth,
-}: {
-  task: WatchTask
-  isSelected: boolean
-  maxWidth: number
-}): ReactNode {
-  const indicator = taskStatusIndicator[task.status]
-  const sColor = taskStatusColor[task.status]
-  const isDimmed = task.status === "done" || task.status === "error"
-  const idColor = isDimmed ? colors.fg.dim : colors.fg.muted
-  const titleColor = isDimmed
-    ? colors.fg.dim
-    : isSelected
-      ? colors.fg.primary
-      : colors.fg.secondary
-
-  const idStr = task.id
-  const availableForTitle = Math.max(5, maxWidth - 3 - idStr.length)
-  const title = truncate(task.title, availableForTitle)
-
-  return (
-    <box
-      style={{
-        width: "100%",
-        flexDirection: "row",
-        paddingLeft: 1,
-        paddingRight: 1,
-        backgroundColor: isSelected ? colors.bg.highlight : "transparent",
-      }}
-    >
-      <text>
-        <span fg={sColor}>{indicator}</span>
-        <span fg={idColor}> {idStr}</span>
-        <span fg={titleColor}> {title}</span>
-      </text>
-    </box>
-  )
-}
-
-function TaskListPanel({
-  tasks,
-  selectedIndex,
-}: {
-  tasks: WatchTask[]
-  selectedIndex: number
-}): ReactNode {
-  return (
-    <box
-      title="Tasks"
-      style={{
-        flexGrow: 1,
-        flexShrink: 1,
-        minWidth: 30,
-        maxWidth: 50,
-        flexDirection: "column",
-        backgroundColor: colors.bg.primary,
-        border: true,
-        borderColor: colors.accent.primary,
-      }}
-    >
-      <scrollbox style={{ flexGrow: 1, width: "100%" }}>
-        {tasks.length === 0 ? (
-          <box style={{ padding: 1 }}>
-            <text fg={colors.fg.muted}>No tasks found</text>
-          </box>
-        ) : (
-          tasks.map((task, idx) => (
-            <TaskRow
-              key={task.id}
-              task={task}
-              isSelected={idx === selectedIndex}
-              maxWidth={46}
-            />
-          ))
-        )}
-      </scrollbox>
-    </box>
-  )
 }
 
 function DetailPane({ task }: { task: WatchTask | null }): ReactNode {
@@ -588,7 +509,9 @@ export function WatchApp({
       setError(undefined)
       setLastRefreshed(new Date())
       // Clamp selection if list shrank
-      setSelectedIndex((prev) => Math.min(prev, Math.max(0, updated.length - 1)))
+      const { active, done } = partitionTasks(updated)
+      const newTotal = active.length + done.length
+      setSelectedIndex((prev) => Math.min(prev, Math.max(0, newTotal - 1)))
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setError(`Refresh failed: ${msg}`)
@@ -606,8 +529,13 @@ export function WatchApp({
     return () => clearInterval(timer)
   }, [refreshIntervalMs, doRefresh])
 
-  // Derive selected task
-  const selectedTask = tasks[selectedIndex] ?? null
+  // Derive selected task — selection spans both dashboard tables
+  const { active: activeTasks, done: doneTasks } = partitionTasks(tasks)
+  const totalNavigable = activeTasks.length + doneTasks.length
+  const selectedTask =
+    selectedIndex < activeTasks.length
+      ? activeTasks[selectedIndex] ?? null
+      : doneTasks[selectedIndex - activeTasks.length] ?? null
 
   // Keyboard handler
   const handleKeyboard = useCallback(
@@ -626,7 +554,7 @@ export function WatchApp({
 
         case "down":
         case "j":
-          setSelectedIndex((prev) => Math.min(tasks.length - 1, prev + 1))
+          setSelectedIndex((prev) => Math.min(totalNavigable - 1, prev + 1))
           break
 
         case "r":
@@ -637,13 +565,10 @@ export function WatchApp({
           break
       }
     },
-    [tasks.length, onQuit, doRefresh],
+    [totalNavigable, onQuit, doRefresh],
   )
 
   useKeyboard(handleKeyboard)
-
-  // Layout
-  const isCompact = width < 80
 
   return (
     <box
@@ -667,15 +592,11 @@ export function WatchApp({
           flexDirection: "column",
         }}
       >
-        <box
-          style={{
-            flexGrow: 1,
-            flexDirection: isCompact ? "column" : "row",
-          }}
-        >
-          <TaskListPanel tasks={tasks} selectedIndex={selectedIndex} />
-          <DetailPane task={selectedTask} />
-        </box>
+        <DashboardView
+          tasks={tasks}
+          selectedIndex={selectedIndex}
+          terminalWidth={width}
+        />
         {workerLogs !== undefined && (
           <LogPanel
             logs={workerLogs}
