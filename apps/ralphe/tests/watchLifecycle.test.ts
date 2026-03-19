@@ -183,7 +183,7 @@ describe("watch lifecycle: ready → claim → execute → close", () => {
     claimResults.set("task-1", true)
     taskResult = { success: true, engine: "claude", resumeToken: "tok-abc" }
 
-    const { callbacks, logs, states } = makeCallbacks()
+    const { callbacks, states } = makeCallbacks()
     const worker = startTuiWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-lifecycle",

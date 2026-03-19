@@ -642,8 +642,6 @@ export function WatchApp({
 
   // Layout
   const isCompact = width < 80
-  const footerHeight = 1
-  const contentHeight = Math.max(1, height - 1 - footerHeight) // header + footer
 
   return (
     <box
