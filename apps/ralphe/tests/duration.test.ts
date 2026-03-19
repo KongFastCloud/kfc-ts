@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "bun:test"
-import { formatDuration, computeDuration } from "../src/tui/DashboardView.js"
+import { formatDuration, computeDuration, hasActiveTimedTask } from "../src/tui/DashboardView.js"
 import type { WatchTask } from "../src/beadsAdapter.js"
 
 function makeTask(
@@ -124,5 +124,48 @@ describe("computeDuration", () => {
       startedAt: "2025-01-01T00:00:00.000Z",
       finishedAt: "not-a-date",
     }))).toBe("—")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// hasActiveTimedTask (tick activation rules)
+// ---------------------------------------------------------------------------
+
+describe("hasActiveTimedTask", () => {
+  it("returns true when an active task has valid startedAt", () => {
+    const tasks = [makeTask("active", { startedAt: new Date().toISOString() })]
+    expect(hasActiveTimedTask(tasks)).toBe(true)
+  })
+
+  it("returns false when no tasks are present", () => {
+    expect(hasActiveTimedTask([])).toBe(false)
+  })
+
+  it("returns false when active task has no startedAt", () => {
+    expect(hasActiveTimedTask([makeTask("active")])).toBe(false)
+  })
+
+  it("returns false when active task has invalid startedAt", () => {
+    expect(hasActiveTimedTask([makeTask("active", { startedAt: "not-a-date" })])).toBe(false)
+  })
+
+  it("returns false when only non-active statuses have startedAt", () => {
+    const tasks = [
+      makeTask("done", { startedAt: "2025-01-01T00:00:00Z", finishedAt: "2025-01-01T00:01:00Z" }),
+      makeTask("error", { startedAt: "2025-01-01T00:00:00Z", finishedAt: "2025-01-01T00:01:00Z" }),
+      makeTask("backlog"),
+      makeTask("actionable"),
+      makeTask("blocked"),
+    ]
+    expect(hasActiveTimedTask(tasks)).toBe(false)
+  })
+
+  it("returns true when at least one active task among many has valid startedAt", () => {
+    const tasks = [
+      makeTask("backlog"),
+      makeTask("done", { startedAt: "2025-01-01T00:00:00Z", finishedAt: "2025-01-01T00:01:00Z" }),
+      makeTask("active", { startedAt: new Date().toISOString() }),
+    ]
+    expect(hasActiveTimedTask(tasks)).toBe(true)
   })
 })

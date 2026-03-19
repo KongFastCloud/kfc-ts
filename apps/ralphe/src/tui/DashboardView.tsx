@@ -9,6 +9,7 @@
  */
 
 import type { ReactNode } from "react"
+import { useState, useEffect, useRef } from "react"
 import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
 
 // ---------------------------------------------------------------------------
@@ -360,6 +361,56 @@ function DashboardTable({
 }
 
 // ---------------------------------------------------------------------------
+// Live duration tick
+// ---------------------------------------------------------------------------
+
+/**
+ * Return true when at least one task is active and has a valid startedAt
+ * timestamp, meaning the dashboard should run a local duration tick.
+ */
+export function hasActiveTimedTask(tasks: WatchTask[]): boolean {
+  for (const t of tasks) {
+    if (t.status === "active" && t.startedAt) {
+      const ms = new Date(t.startedAt).getTime()
+      if (!Number.isNaN(ms)) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Hook that maintains a one-second render tick while at least one dashboard
+ * task needs a live elapsed-duration update. The tick value is unused — its
+ * only purpose is to trigger a React re-render so that `computeDuration`
+ * recalculates from `Date.now()`.
+ *
+ * The interval is created / destroyed reactively:
+ * - starts when `needsTick` transitions to true
+ * - stops when `needsTick` transitions to false (or on unmount)
+ */
+function useDurationTick(tasks: WatchTask[]): void {
+  const [, setTick] = useState(0)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const needsTick = hasActiveTimedTask(tasks)
+
+  useEffect(() => {
+    if (needsTick) {
+      intervalRef.current = setInterval(() => {
+        setTick((n) => n + 1)
+      }, 1_000)
+    }
+
+    return () => {
+      if (intervalRef.current !== null) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
+  }, [needsTick])
+}
+
+// ---------------------------------------------------------------------------
 // DashboardView (exported)
 // ---------------------------------------------------------------------------
 
@@ -389,6 +440,9 @@ export function DashboardView({
   doneSelectedIndex,
   terminalWidth,
 }: DashboardViewProps): ReactNode {
+  // Drive a one-second re-render while any active task needs a live duration.
+  useDurationTick(tasks)
+
   const { active, done } = partitionTasks(tasks)
 
   // Compute dynamic title column width from available terminal space
