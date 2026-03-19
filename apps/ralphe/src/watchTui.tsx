@@ -93,19 +93,7 @@ export const launchWatchTui = (
 
     // Refresh callback for the TUI (runs outside Effect)
     const onRefresh = async (): Promise<WatchTask[]> => {
-      const proc = Bun.spawn(["bd", "list", "--json"], {
-        stdout: "pipe",
-        stderr: "pipe",
-        cwd: workDir,
-      })
-      const stdout = await new Response(proc.stdout).text()
-      const exitCode = await proc.exited
-      if (exitCode !== 0) {
-        throw new Error("bd list failed")
-      }
-      // Re-use the parser from the adapter
-      const { parseBdTaskList } = await import("./beadsAdapter.js")
-      const tasks = parseBdTaskList(stdout)
+      const tasks = await Effect.runPromise(queryAllTasks(workDir))
       latestTasks = tasks
       return tasks
     }

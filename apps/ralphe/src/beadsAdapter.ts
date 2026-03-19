@@ -242,7 +242,7 @@ function bdIssueToWatchTask(item: BdIssueJson): WatchTask {
 export const queryAllTasks = (
   cwd?: string,
 ): Effect.Effect<WatchTask[], FatalError> =>
-  runBd(["list", "--json"], cwd).pipe(Effect.map(parseBdTaskList))
+  runBd(["list", "--json", "--all", "--limit", "0"], cwd).pipe(Effect.map(parseBdTaskList))
 
 /**
  * Query a single task by ID for the detail pane.
