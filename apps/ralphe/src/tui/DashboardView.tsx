@@ -155,6 +155,30 @@ export function partitionTasks(tasks: WatchTask[]): DashboardPartition {
 }
 
 // ---------------------------------------------------------------------------
+// Section title
+// ---------------------------------------------------------------------------
+
+function DashboardSectionTitle({ title }: { title: string }): ReactNode {
+  return (
+    <box
+      style={{
+        width: "100%",
+        height: 1,
+        flexShrink: 0,
+        flexDirection: "row",
+        paddingLeft: 1,
+        paddingRight: 1,
+        backgroundColor: colors.bg.primary,
+      }}
+    >
+      <text>
+        <span fg={colors.accent.primary}>{title}</span>
+      </text>
+    </box>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Table header
 // ---------------------------------------------------------------------------
 
@@ -163,6 +187,8 @@ function DashboardTableHeader({ titleWidth }: { titleWidth: number }): ReactNode
     <box
       style={{
         width: "100%",
+        height: 1,
+        flexShrink: 0,
         flexDirection: "row",
         paddingLeft: 1,
         paddingRight: 1,
@@ -226,6 +252,8 @@ function DashboardRow({
     <box
       style={{
         width: "100%",
+        height: 1,
+        flexShrink: 0,
         flexDirection: "row",
         paddingLeft: 1,
         paddingRight: 1,
@@ -265,18 +293,18 @@ function DashboardTable({
 }): ReactNode {
   return (
     <box
-      title={title}
       style={{
         width: "100%",
         flexGrow,
         flexShrink: 1,
-        minHeight: 4,
+        minHeight: 5,
         flexDirection: "column",
         backgroundColor: colors.bg.primary,
         border: true,
         borderColor,
       }}
     >
+      <DashboardSectionTitle title={title} />
       <DashboardTableHeader titleWidth={titleWidth} />
       <scrollbox style={{ flexGrow: 1, width: "100%" }}>
         {tasks.length === 0 ? (
