@@ -13,7 +13,15 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
 import type { WorkerStatus } from "../tuiWorker.js"
 import { DashboardView, partitionTasks } from "./DashboardView.js"
-import type { FocusedTable } from "./DashboardView.js"
+import {
+  initialDashboardFocusState,
+  toggleFocusedTable,
+  moveSelectionUp,
+  moveSelectionDown,
+  enterDetail,
+  returnFromDetail,
+  clampAfterRefresh,
+} from "./dashboardFocus.js"
 
 // ---------------------------------------------------------------------------
 // Theme (inline subset — avoids coupling to ralph-tui's theme package)
@@ -445,12 +453,9 @@ export function WatchApp({
   )
   const refreshingRef = useRef(false)
 
-  // Dashboard focus and per-table selection state
-  const [focusedTable, setFocusedTable] = useState<FocusedTable>("active")
-  const [activeSelectedIndex, setActiveSelectedIndex] = useState(0)
-  const [doneSelectedIndex, setDoneSelectedIndex] = useState(0)
-  /** View mode: dashboard (tables) or detail (single task drill-down). */
-  const [viewMode, setViewMode] = useState<"dashboard" | "detail">("dashboard")
+  // Dashboard focus and per-table selection state (single source of truth)
+  const [focusState, setFocusState] = useState(initialDashboardFocusState)
+  const { focusedTable, activeSelectedIndex, doneSelectedIndex, viewMode } = focusState
 
   // Partition once for use in handlers and render
   const { active: activeTasks, done: doneTasks } = partitionTasks(tasks)
@@ -470,14 +475,9 @@ export function WatchApp({
       setTasks(updated)
       setError(undefined)
       setLastRefreshed(new Date())
-      // Clamp each table's selection independently
+      // Clamp each table's selection independently via pure state logic
       const { active, done } = partitionTasks(updated)
-      setActiveSelectedIndex((prev) =>
-        active.length === 0 ? 0 : Math.min(prev, active.length - 1),
-      )
-      setDoneSelectedIndex((prev) =>
-        done.length === 0 ? 0 : Math.min(prev, done.length - 1),
-      )
+      setFocusState((prev) => clampAfterRefresh(prev, active.length, done.length))
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setError(`Refresh failed: ${msg}`)
@@ -495,15 +495,7 @@ export function WatchApp({
     return () => clearInterval(timer)
   }, [refreshIntervalMs, doRefresh])
 
-  /** Reset focus to top table and first row (used when returning from detail). */
-  const resetFocusToTop = useCallback(() => {
-    setFocusedTable("active")
-    setActiveSelectedIndex(0)
-    setDoneSelectedIndex(0)
-    setViewMode("dashboard")
-  }, [])
-
-  // Keyboard handler
+  // Keyboard handler — delegates to pure state transitions from dashboardFocus.ts
   const handleKeyboard = useCallback(
     (key: { name: string; shift?: boolean }) => {
       // --- Detail-mode keys ---
@@ -511,7 +503,7 @@ export function WatchApp({
         switch (key.name) {
           case "escape":
           case "backspace":
-            resetFocusToTop()
+            setFocusState(returnFromDetail())
             return
           case "q":
             onQuit?.()
@@ -534,42 +526,24 @@ export function WatchApp({
           process.exit(0)
           break
 
-        case "tab": {
-          // Toggle focused table (works even when a table is empty)
-          setFocusedTable((prev) => (prev === "active" ? "done" : "active"))
+        case "tab":
+          setFocusState((prev) => toggleFocusedTable(prev))
           break
-        }
 
         case "up":
         case "k":
-          if (focusedTable === "active") {
-            setActiveSelectedIndex((prev) => Math.max(0, prev - 1))
-          } else {
-            setDoneSelectedIndex((prev) => Math.max(0, prev - 1))
-          }
+          setFocusState((prev) => moveSelectionUp(prev))
           break
 
         case "down":
         case "j":
-          if (focusedTable === "active") {
-            setActiveSelectedIndex((prev) =>
-              activeTasks.length === 0 ? 0 : Math.min(activeTasks.length - 1, prev + 1),
-            )
-          } else {
-            setDoneSelectedIndex((prev) =>
-              doneTasks.length === 0 ? 0 : Math.min(doneTasks.length - 1, prev + 1),
-            )
-          }
+          setFocusState((prev) => moveSelectionDown(prev, activeTasks.length, doneTasks.length))
           break
 
         case "return":
-        case "enter": {
-          // Enter on empty table does nothing
-          const tableLen = focusedTable === "active" ? activeTasks.length : doneTasks.length
-          if (tableLen === 0) break
-          setViewMode("detail")
+        case "enter":
+          setFocusState((prev) => enterDetail(prev, activeTasks.length, doneTasks.length))
           break
-        }
 
         case "r":
           void doRefresh()
@@ -579,7 +553,7 @@ export function WatchApp({
           break
       }
     },
-    [viewMode, focusedTable, activeTasks.length, doneTasks.length, onQuit, doRefresh, resetFocusToTop],
+    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh],
   )
 
   useKeyboard(handleKeyboard)
