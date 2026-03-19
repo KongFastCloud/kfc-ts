@@ -461,6 +461,9 @@ export function WatchApp({
   const [focusState, setFocusState] = useState(initialDashboardFocusState)
   const { focusedTable, activeSelectedIndex, doneSelectedIndex, viewMode } = focusState
 
+  // Default visible row count — later slices will derive this from terminal height.
+  const DEFAULT_VISIBLE_ROW_COUNT = 20
+
   // Partition once for use in handlers and render
   const { active: activeTasks, done: doneTasks } = partitionTasks(tasks)
 
@@ -481,7 +484,9 @@ export function WatchApp({
       setLastRefreshed(new Date())
       // Clamp each table's selection independently via pure state logic
       const { active, done } = partitionTasks(updated)
-      setFocusState((prev) => clampAfterRefresh(prev, active.length, done.length))
+      setFocusState((prev) =>
+        clampAfterRefresh(prev, active.length, done.length, DEFAULT_VISIBLE_ROW_COUNT, DEFAULT_VISIBLE_ROW_COUNT),
+      )
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setError(`Refresh failed: ${msg}`)
@@ -557,12 +562,14 @@ export function WatchApp({
 
         case "up":
         case "k":
-          setFocusState((prev) => moveSelectionUp(prev))
+          setFocusState((prev) => moveSelectionUp(prev, DEFAULT_VISIBLE_ROW_COUNT))
           break
 
         case "down":
         case "j":
-          setFocusState((prev) => moveSelectionDown(prev, activeTasks.length, doneTasks.length))
+          setFocusState((prev) =>
+            moveSelectionDown(prev, activeTasks.length, doneTasks.length, DEFAULT_VISIBLE_ROW_COUNT),
+          )
           break
 
         case "return":
