@@ -8,13 +8,7 @@
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import type { ReactNode } from "react"
 import { useState, useCallback, useEffect, useRef } from "react"
-import type { WatchTask, WatchTaskStatus, TaskAction, TaskActionResult } from "../beadsAdapter.js"
-import {
-  getAvailableActions,
-  taskActionLabel,
-  taskActionKey,
-  keyToTaskAction,
-} from "../beadsAdapter.js"
+import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
 import type { WorkerStatus, WorkerLogEntry } from "../tuiWorker.js"
 
 // ---------------------------------------------------------------------------
@@ -60,14 +54,10 @@ export interface WatchAppProps {
   onQuit?: () => void
   /** Optional error message to display. */
   initialError?: string | undefined
-  /** Async callback to execute a task action (write-through). */
-  onTaskAction?: (task: WatchTask, action: TaskAction) => Promise<TaskActionResult>
   /** Current worker status (idle/running). */
   workerStatus?: WorkerStatus | undefined
   /** Worker log entries to display in the log panel. */
   workerLogs?: WorkerLogEntry[] | undefined
-  /** Callback to toggle pause/resume of the worker pickup loop. */
-  onPauseToggle?: () => void
 }
 
 // ---------------------------------------------------------------------------
@@ -117,19 +107,13 @@ function WatchHeader({
         {workerStatus && (
           <text>
             <span fg={
-              workerStatus.paused
-                ? colors.status.warning
-                : workerStatus.state === "running"
-                  ? colors.status.success
-                  : colors.fg.muted
+              workerStatus.state === "running"
+                ? colors.status.success
+                : colors.fg.muted
             }>
-              {workerStatus.paused
-                ? workerStatus.state === "running"
-                  ? "⏸ paused (finishing task)"
-                  : "⏸ paused"
-                : workerStatus.state === "running"
-                  ? "⚡ running"
-                  : "● idle"}
+              {workerStatus.state === "running"
+                ? "⚡ running"
+                : "● idle"}
             </span>
             {workerStatus.currentTaskId && (
               <span fg={colors.accent.secondary}> [{workerStatus.currentTaskId}]</span>
@@ -143,62 +127,22 @@ function WatchHeader({
   )
 }
 
-function WatchFooter({
-  actions,
-  statusMessage,
-  isPaused,
-}: {
-  actions: TaskAction[]
-  statusMessage: { text: string; isError: boolean } | null
-  isPaused: boolean
-}): ReactNode {
-  const pauseHint = isPaused ? "p:Resume" : "p:Pause"
-  const navShortcuts = `↑↓:Navigate  r:Refresh  ${pauseHint}  q:Quit`
-  const actionHints = actions
-    .map((a) => `${taskActionKey[a]}:${taskActionLabel[a]}`)
-    .join("  ")
-  const shortcuts = actionHints
-    ? `${navShortcuts}  │  ${actionHints}`
-    : navShortcuts
-
+function WatchFooter(): ReactNode {
+  const navShortcuts = "↑↓:Navigate  r:Refresh  q:Quit"
   return (
     <box
       style={{
         width: "100%",
-        height: statusMessage ? 2 : 1,
-        flexDirection: "column",
+        height: 1,
+        flexDirection: "row",
         backgroundColor: colors.bg.secondary,
+        justifyContent: "flex-start",
+        alignItems: "center",
+        paddingLeft: 1,
+        paddingRight: 1,
       }}
     >
-      {statusMessage && (
-        <box
-          style={{
-            width: "100%",
-            height: 1,
-            paddingLeft: 1,
-            paddingRight: 1,
-            flexDirection: "row",
-            alignItems: "center",
-          }}
-        >
-          <text fg={statusMessage.isError ? colors.status.error : colors.status.success}>
-            {statusMessage.isError ? "✗ " : "✓ "}{statusMessage.text}
-          </text>
-        </box>
-      )}
-      <box
-        style={{
-          width: "100%",
-          height: 1,
-          flexDirection: "row",
-          justifyContent: "flex-start",
-          alignItems: "center",
-          paddingLeft: 1,
-          paddingRight: 1,
-        }}
-      >
-        <text fg={colors.fg.muted}>{shortcuts}</text>
-      </box>
+      <text fg={colors.fg.muted}>{navShortcuts}</text>
     </box>
   )
 }
@@ -620,10 +564,8 @@ export function WatchApp({
   refreshIntervalMs = 10_000,
   onQuit,
   initialError,
-  onTaskAction,
   workerStatus,
   workerLogs,
-  onPauseToggle,
 }: WatchAppProps): ReactNode {
   const { width, height } = useTerminalDimensions()
   const [tasks, setTasks] = useState<WatchTask[]>(initialTasks)
@@ -633,22 +575,6 @@ export function WatchApp({
     initialTasks.length > 0 ? new Date() : null,
   )
   const refreshingRef = useRef(false)
-  const actionInFlightRef = useRef(false)
-  const [statusMessage, setStatusMessage] = useState<{
-    text: string
-    isError: boolean
-  } | null>(null)
-  const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // Show a status message that auto-clears after a delay
-  const showStatus = useCallback((text: string, isError: boolean) => {
-    setStatusMessage({ text, isError })
-    if (statusTimerRef.current) clearTimeout(statusTimerRef.current)
-    statusTimerRef.current = setTimeout(() => {
-      setStatusMessage(null)
-      statusTimerRef.current = null
-    }, 5_000)
-  }, [])
 
   // Refresh callback
   const doRefresh = useCallback(async () => {
@@ -669,36 +595,6 @@ export function WatchApp({
     }
   }, [onRefresh])
 
-  // Task action callback
-  const doAction = useCallback(
-    async (action: TaskAction) => {
-      if (!onTaskAction || actionInFlightRef.current) return
-      const task = tasks[selectedIndex]
-      if (!task) return
-
-      actionInFlightRef.current = true
-      try {
-        const result = await onTaskAction(task, action)
-        if (result.success) {
-          showStatus(result.message, false)
-          if (result.tasks) {
-            setTasks(result.tasks)
-            setLastRefreshed(new Date())
-            setSelectedIndex((prev) => Math.min(prev, Math.max(0, result.tasks!.length - 1)))
-          }
-        } else {
-          showStatus(result.message, true)
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        showStatus(`Action failed: ${msg}`, true)
-      } finally {
-        actionInFlightRef.current = false
-      }
-    },
-    [tasks, selectedIndex, onTaskAction, showStatus],
-  )
-
   // Periodic auto-refresh
   useEffect(() => {
     if (refreshIntervalMs <= 0) return
@@ -708,9 +604,8 @@ export function WatchApp({
     return () => clearInterval(timer)
   }, [refreshIntervalMs, doRefresh])
 
-  // Derive selected task and available actions
+  // Derive selected task
   const selectedTask = tasks[selectedIndex] ?? null
-  const availableActions = selectedTask ? getAvailableActions(selectedTask) : []
 
   // Keyboard handler
   const handleKeyboard = useCallback(
@@ -736,28 +631,18 @@ export function WatchApp({
           void doRefresh()
           break
 
-        case "p":
-          onPauseToggle?.()
+        default:
           break
-
-        default: {
-          // Check if the key maps to a task action
-          const action = keyToTaskAction[key.name]
-          if (action && availableActions.includes(action)) {
-            void doAction(action)
-          }
-          break
-        }
       }
     },
-    [tasks.length, onQuit, doRefresh, availableActions, doAction, onPauseToggle],
+    [tasks.length, onQuit, doRefresh],
   )
 
   useKeyboard(handleKeyboard)
 
   // Layout
   const isCompact = width < 80
-  const footerHeight = statusMessage ? 2 : 1
+  const footerHeight = 1
   const contentHeight = Math.max(1, height - 1 - footerHeight) // header + footer
 
   return (
@@ -799,7 +684,7 @@ export function WatchApp({
         )}
       </box>
 
-      <WatchFooter actions={availableActions} statusMessage={statusMessage} isPaused={workerStatus?.paused ?? false} />
+      <WatchFooter />
     </box>
   )
 }

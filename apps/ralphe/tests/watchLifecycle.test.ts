@@ -105,7 +105,7 @@ mock.module("../src/config.js", () => ({
     checks: [],
     report: "none",
     maxAttempts: 1,
-    autoCommit: false,
+    git: { mode: "none" as const },
   }),
 }))
 
@@ -546,41 +546,7 @@ describe("watch lifecycle: metadata and operation ordering", () => {
   })
 })
 
-describe("watch lifecycle: pause and resume around task execution", () => {
-  test("pausing during idle prevents next task pickup", async () => {
-    readyQueue = []
-
-    const { callbacks, logs } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
-      pollIntervalMs: 30,
-      workerId: "test-pause-idle",
-    })
-
-    // Wait for worker to start polling
-    await waitFor(() => calls.some((c) => c.op === "queryReady"))
-
-    // Pause the worker
-    worker.pause()
-    expect(worker.isPaused()).toBe(true)
-
-    // Now enqueue a task — it should NOT be picked up while paused
-    readyQueue = [makeIssue("paused-task")]
-    claimResults.set("paused-task", true)
-    readyOneShot = true
-
-    await new Promise((r) => setTimeout(r, 150))
-
-    // Should not have claimed the task
-    expect(calls.some((c) => c.op === "claimTask" && c.id === "paused-task")).toBe(false)
-
-    // Resume and verify pickup
-    worker.resume()
-    await waitFor(() => calls.some((c) => c.op === "claimTask" && c.id === "paused-task"))
-    await waitFor(() => calls.some((c) => c.op === "closeTaskSuccess" && c.id === "paused-task"))
-
-    worker.stop()
-  })
-
+describe("watch lifecycle: callback behavior", () => {
   test("onTaskComplete callback fires for each completed task", async () => {
     readyQueue = [makeIssue("cb-1")]
     claimResults.set("cb-1", true)

@@ -29,8 +29,6 @@ export interface WorkerStatus {
   readonly state: WorkerState
   /** ID of the task currently executing, if any. */
   readonly currentTaskId?: string | undefined
-  /** Whether the worker is paused (won't pick up new tasks). */
-  readonly paused: boolean
 }
 
 export interface WorkerLogEntry {
@@ -74,25 +72,19 @@ export interface TuiWorkerOptions {
 export function startTuiWorker(
   callbacks: TuiWorkerCallbacks,
   opts?: TuiWorkerOptions,
-): { stop: () => void; pause: () => void; resume: () => void; isPaused: () => boolean } {
+): { stop: () => void } {
   const pollIntervalMs = opts?.pollIntervalMs ?? 10_000
   const workerId = opts?.workerId ?? `ralphe-${os.hostname()}`
   const workDir = opts?.workDir ?? process.cwd()
   const engineOverride = opts?.engineOverride
 
   let stopped = false
-  let paused = false
-  let currentState: WorkerState = "idle"
-  let currentTaskId: string | undefined
-
   const log = (message: string, taskId?: string) => {
     callbacks.onLog({ timestamp: new Date(), message, taskId })
   }
 
   const setState = (state: WorkerState, taskId?: string) => {
-    currentState = state
-    currentTaskId = taskId
-    callbacks.onStateChange({ state, currentTaskId: taskId, paused })
+    callbacks.onStateChange({ state, currentTaskId: taskId })
   }
 
   const workerLoop = async () => {
@@ -116,12 +108,6 @@ export function startTuiWorker(
 
     while (!stopped) {
       try {
-        // Check pickup gate — skip claiming when paused
-        if (paused) {
-          await sleep(pollIntervalMs)
-          continue
-        }
-
         // Poll for ready tasks
         const ready = await Effect.runPromise(queryReady())
 
@@ -234,21 +220,6 @@ export function startTuiWorker(
     stop: () => {
       stopped = true
     },
-    pause: () => {
-      if (!paused) {
-        paused = true
-        log("Worker paused — no new tasks will be picked up")
-        setState(currentState, currentTaskId)
-      }
-    },
-    resume: () => {
-      if (paused) {
-        paused = false
-        log("Worker resumed — task pickup active")
-        setState(currentState, currentTaskId)
-      }
-    },
-    isPaused: () => paused,
   }
 }
 

@@ -14,10 +14,7 @@ import { FatalError } from "./errors.js"
 import {
   ensureBeadsDatabase,
   queryAllTasks,
-  executeTaskAction,
   type WatchTask,
-  type TaskAction,
-  type TaskActionResult,
 } from "./beadsAdapter.js"
 import { WatchApp } from "./tui/WatchApp.js"
 import {
@@ -77,11 +74,8 @@ export const launchWatchTui = (
     // -----------------------------------------------------------------------
     // Worker state — held outside React so callbacks can mutate and re-render
     // -----------------------------------------------------------------------
-    let currentWorkerStatus: WorkerStatus = { state: "idle", paused: false }
+    let currentWorkerStatus: WorkerStatus = { state: "idle" }
     let currentWorkerLogs: WorkerLogEntry[] = []
-
-    // Pause toggle callback — set after worker is created
-    let workerPauseToggle: (() => void) | undefined
 
     // Re-render helper — captures latest state each time
     const rerender = () => {
@@ -91,10 +85,8 @@ export const launchWatchTui = (
           onRefresh={onRefresh}
           refreshIntervalMs={refreshIntervalMs}
           initialError={initialError}
-          onTaskAction={onTaskAction}
           workerStatus={currentWorkerStatus}
           workerLogs={currentWorkerLogs}
-          onPauseToggle={() => workerPauseToggle?.()}
         />,
       )
     }
@@ -116,15 +108,6 @@ export const launchWatchTui = (
       const tasks = parseBdTaskList(stdout)
       latestTasks = tasks
       return tasks
-    }
-
-    // Task action callback for write-through state transitions
-    const onTaskAction = async (
-      task: WatchTask,
-      action: TaskAction,
-    ): Promise<TaskActionResult> => {
-      const { Effect } = await import("effect")
-      return Effect.runPromise(executeTaskAction(task, action, workDir))
     }
 
     // Track latest tasks for re-render
@@ -165,15 +148,6 @@ export const launchWatchTui = (
         workDir,
       },
     )
-
-    // Wire up pause/resume toggle
-    workerPauseToggle = () => {
-      if (worker.isPaused()) {
-        worker.resume()
-      } else {
-        worker.pause()
-      }
-    }
 
     // Initial render
     rerender()

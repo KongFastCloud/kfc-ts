@@ -3,11 +3,7 @@ import {
   parseBdTaskList,
   beadsDatabaseExists,
   getAvailableActions,
-  taskActionKey,
-  taskActionLabel,
-  keyToTaskAction,
   type WatchTask,
-  type TaskAction,
 } from "../src/beadsAdapter.js"
 
 // ---------------------------------------------------------------------------
@@ -223,34 +219,34 @@ describe("getAvailableActions", () => {
     owner,
   })
 
-  test("actionable tasks can be started, completed, or cancelled", () => {
+  test("actionable tasks have no manual actions", () => {
     const actions = getAvailableActions(makeTask("actionable"))
-    expect(actions).toEqual(["start", "complete", "cancel"])
+    expect(actions).toEqual([])
   })
 
-  test("blocked tasks can only be cancelled", () => {
+  test("blocked tasks have no manual actions", () => {
     const actions = getAvailableActions(makeTask("blocked"))
-    expect(actions).toEqual(["cancel"])
+    expect(actions).toEqual([])
   })
 
-  test("active tasks can be completed or failed", () => {
+  test("active tasks have no manual actions", () => {
     const actions = getAvailableActions(makeTask("active"))
-    expect(actions).toEqual(["complete", "fail"])
+    expect(actions).toEqual([])
   })
 
-  test("active tasks with owner still allow complete/fail", () => {
+  test("active tasks with owner still have no manual actions", () => {
     const actions = getAvailableActions(makeTask("active", "worker-1"))
-    expect(actions).toEqual(["complete", "fail"])
+    expect(actions).toEqual([])
   })
 
-  test("done tasks can be reopened", () => {
+  test("done tasks have no manual actions", () => {
     const actions = getAvailableActions(makeTask("done"))
-    expect(actions).toEqual(["reopen"])
+    expect(actions).toEqual([])
   })
 
-  test("error tasks can be reopened", () => {
+  test("error tasks have no manual actions", () => {
     const actions = getAvailableActions(makeTask("error"))
-    expect(actions).toEqual(["reopen"])
+    expect(actions).toEqual([])
   })
 
   test("no actions available for unknown status", () => {
@@ -258,43 +254,6 @@ describe("getAvailableActions", () => {
     const task = { ...makeTask("actionable"), status: "unknown" as WatchTask["status"] }
     const actions = getAvailableActions(task)
     expect(actions).toEqual([])
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Task action key/label mappings
-// ---------------------------------------------------------------------------
-
-describe("taskActionKey and taskActionLabel", () => {
-  test("every action has a key and label", () => {
-    const allActions: TaskAction[] = ["start", "complete", "fail", "cancel", "reopen"]
-    for (const action of allActions) {
-      expect(taskActionKey[action]).toBeDefined()
-      expect(taskActionLabel[action]).toBeDefined()
-      expect(typeof taskActionKey[action]).toBe("string")
-      expect(typeof taskActionLabel[action]).toBe("string")
-    }
-  })
-
-  test("keyToTaskAction reverses taskActionKey", () => {
-    const allActions: TaskAction[] = ["start", "complete", "fail", "cancel", "reopen"]
-    for (const action of allActions) {
-      const key = taskActionKey[action]
-      expect(keyToTaskAction[key]).toBe(action)
-    }
-  })
-
-  test("keys are single characters", () => {
-    for (const key of Object.keys(keyToTaskAction)) {
-      expect(key).toHaveLength(1)
-    }
-  })
-
-  test("no key conflicts with navigation keys", () => {
-    const navKeys = ["q", "r", "k", "j"]
-    for (const key of Object.keys(keyToTaskAction)) {
-      expect(navKeys).not.toContain(key)
-    }
   })
 })
 
