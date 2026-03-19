@@ -65,7 +65,9 @@ The wizard reads the root `package.json` and lets you select from the root-level
     "bun run lint",
     "bun test"
   ],
-  "autoCommit": false,
+  "git": {
+    "mode": "none"
+  },
   "report": "none"
 }
 ```
@@ -75,7 +77,7 @@ The wizard reads the root `package.json` and lets you select from the root-level
 | `engine` | `"claude"` | AI engine (`"claude"` or `"codex"`) |
 | `maxAttempts` | `2` | Max retry attempts on check failure |
 | `checks` | `[]` | Shell commands to verify agent output |
-| `autoCommit` | `false` | Auto-commit and push on success |
+| `git.mode` | `"none"` | Git behavior after success (`"none"`, `"commit"`, `"commit_and_push"`) |
 | `report` | `"none"` | Verification report mode (`"none"`, `"basic"`, or `"browser"`) |
 
 Without a config, or when no root scripts are selected, ralphe runs the agent with no verification checks.
@@ -104,8 +106,7 @@ Critical usage notes:
 TUI keys:
 
 - `q`: quit (current in-flight task is allowed to finish)
-- `p`: pause future task pickup
-- `r`: resume pickup
+- `r`: refresh task list
 - `j` / `k`: move selection
 - `Enter`: open task details
 
@@ -128,11 +129,11 @@ flowchart TD
     E -- "Yes" --> F["Optionally run a verification report<br/>(basic or browser)"]
     F --> G{"Report passes?"}
     G -- "No, retry if attempts remain" --> C
-    G -- "Yes" --> H["Optionally auto-commit and push to git"]
+    G -- "Yes" --> H["Optionally run git.mode flow (none/commit/commit_and_push)"]
     H --> I["Done"]
 ```
 
-When `autoCommit` is enabled, ralphe uses the engine to generate a conventional commit message from the staged diff, then commits and pushes.
+When `git.mode` is `commit` or `commit_and_push`, ralphe uses the engine to generate a conventional commit message from the staged diff, then commits. In `commit_and_push`, it also pushes.
 
 ## Monorepos
 
