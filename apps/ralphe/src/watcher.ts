@@ -13,6 +13,7 @@ import {
   markTaskExhaustedFailure,
   type BeadsMetadata,
 } from "./beads.js"
+import { isWorktreeDirty } from "./git.js"
 
 export interface WatcherOptions {
   /** Poll interval in milliseconds. Defaults to 10_000 (10 seconds). */
@@ -52,6 +53,21 @@ export const watch = (
     const recovered = yield* recoverStaleTasks(workerId)
     if (recovered > 0) {
       yield* Console.log(`Recovered ${recovered} stale task(s) from previous run`)
+    }
+
+    // Dirty-worktree guard: pause automatic pickup until the working tree is clean
+    const dirty = yield* isWorktreeDirty()
+    if (dirty) {
+      yield* Console.log("Worktree has uncommitted changes — pausing automatic pickup.")
+      yield* Effect.iterate(true as boolean, {
+        while: (isDirty) => isDirty,
+        body: () =>
+          Effect.gen(function* () {
+            yield* Effect.sleep(pollIntervalMs)
+            return yield* isWorktreeDirty()
+          }),
+      })
+      yield* Console.log("Worktree is clean — resuming automatic pickup.")
     }
 
     const config = loadConfig(workDir)

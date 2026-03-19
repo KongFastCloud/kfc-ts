@@ -68,6 +68,15 @@ const run = (args: string[]): Effect.Effect<GitResult, FatalError> =>
 const runGh = (args: string[]): Effect.Effect<CliResult, FatalError> =>
   runCommand("gh", args)
 
+/**
+ * Check whether the git worktree has uncommitted changes (staged or unstaged).
+ * Returns `true` when the working tree is dirty.
+ */
+export const isWorktreeDirty = (): Effect.Effect<boolean, FatalError> =>
+  run(["status", "--porcelain"]).pipe(
+    Effect.map((result) => result.stdout.trim().length > 0),
+  )
+
 const COMMIT_MSG_PROMPT = `Look at the following git diff and generate a conventional commit message.
 Use the format: type(scope): description
 

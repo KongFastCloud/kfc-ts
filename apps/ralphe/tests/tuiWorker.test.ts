@@ -1,10 +1,43 @@
-import { describe, test, expect } from "bun:test"
-import {
-  startTuiWorker,
-  type WorkerStatus,
-  type WorkerLogEntry,
-  type TuiWorkerCallbacks,
+import { describe, test, expect, beforeAll, afterAll, mock } from "bun:test"
+import { Effect } from "effect"
+import type {
+  WorkerStatus,
+  WorkerLogEntry,
+  TuiWorkerCallbacks,
 } from "../src/tuiWorker.js"
+
+// ---------------------------------------------------------------------------
+// Module setup — mock git to avoid dirty-worktree pause in tests
+// ---------------------------------------------------------------------------
+
+let startTuiWorker: typeof import("../src/tuiWorker.js").startTuiWorker
+
+beforeAll(async () => {
+  // Only mock isWorktreeDirty so the dirty-worktree guard doesn't block tests.
+  // Preserve real git exports to avoid leaking stubs into git.test.ts.
+  const realGit = await import("../src/git.js")
+  mock.module("../src/git.js", () => ({
+    ...realGit,
+    isWorktreeDirty: () => Effect.succeed(false),
+  }))
+
+  mock.module("../src/beads.js", () => ({
+    recoverStaleTasks: () => Effect.succeed(0),
+    claimTask: () => Effect.succeed(false),
+    closeTaskSuccess: () => Effect.succeed(undefined),
+    closeTaskFailure: () => Effect.succeed(undefined),
+    markTaskExhaustedFailure: () => Effect.succeed(undefined),
+    writeMetadata: () => Effect.succeed(undefined),
+    buildPromptFromIssue: (issue: { title: string }) => issue.title,
+  }))
+
+  // @ts-expect-error Bun test isolation import suffix is runtime-only.
+  ;({ startTuiWorker } = await import("../src/tuiWorker.js?tuiWorker") as typeof import("../src/tuiWorker.js"))
+})
+
+afterAll(() => {
+  mock.restore()
+})
 
 // ---------------------------------------------------------------------------
 // Unit tests for worker types and stop behavior

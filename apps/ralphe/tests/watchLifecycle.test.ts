@@ -109,6 +109,14 @@ beforeAll(async () => {
     },
   }))
 
+  // Only mock isWorktreeDirty so the dirty-worktree guard doesn't block tests.
+  // Preserve real git exports to avoid leaking stubs into git.test.ts.
+  const realGit = await import("../src/git.js")
+  mock.module("../src/git.js", () => ({
+    ...realGit,
+    isWorktreeDirty: () => Effect.succeed(false),
+  }))
+
   mock.module("../src/config.js", () => ({
     loadConfig: () => ({
       engine: "claude" as const,

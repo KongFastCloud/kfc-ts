@@ -18,6 +18,7 @@ import {
   markTaskExhaustedFailure,
   type BeadsMetadata,
 } from "./beads.js"
+import { isWorktreeDirty } from "./git.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -99,6 +100,23 @@ export function startTuiWorker(
       }
     } catch (e) {
       log(`Recovery check failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+
+    // Dirty-worktree guard: pause automatic pickup until the working tree is clean
+    try {
+      let dirty = await Effect.runPromise(isWorktreeDirty())
+      if (dirty) {
+        log("Worktree has uncommitted changes — pausing automatic pickup.")
+        while (dirty && !stopped) {
+          await sleep(pollIntervalMs)
+          dirty = await Effect.runPromise(isWorktreeDirty())
+        }
+        if (!stopped) {
+          log("Worktree is clean — resuming automatic pickup.")
+        }
+      }
+    } catch (e) {
+      log(`Worktree check failed: ${e instanceof Error ? e.message : String(e)}`)
     }
 
     const config = loadConfig(workDir)

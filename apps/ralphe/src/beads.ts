@@ -271,22 +271,42 @@ export const queryStaleClaimed = (
   )
 
 /**
- * Recover stale claimed tasks by closing them as failures.
+ * Query ALL stale in-progress tasks regardless of which worker originally
+ * claimed them. Used for global startup recovery so that orphaned tasks
+ * from any crashed worker are cleaned up.
+ */
+export const queryAllStaleInProgress = (): Effect.Effect<BeadsIssue[], FatalError> =>
+  runBd(["list", "--status", "in_progress", "--json"]).pipe(
+    Effect.map(parseIssueJson),
+  )
+
+/**
+ * Recover ALL stale in-progress tasks on startup.
+ *
+ * Recovery is global: every in_progress issue is recovered regardless of
+ * which worker originally claimed it. Each recovered task is transitioned
+ * to open + error state via {@link markTaskExhaustedFailure} so it remains
+ * visible to operators but is no longer automatically picked up.
  */
 export const recoverStaleTasks = (
   workerId: string,
 ): Effect.Effect<number, FatalError> =>
   Effect.gen(function* () {
-    const stale = yield* queryStaleClaimed(workerId)
+    const stale = yield* queryAllStaleInProgress()
 
     for (const issue of stale) {
       yield* Console.log(`Recovering stale task: ${issue.id} (${issue.title})`)
-      yield* writeMetadata(issue.id, {
-        engine: "claude",
-        workerId,
-        timestamp: new Date().toISOString(),
-      })
-      yield* closeTaskFailure(issue.id, "worker crashed — recovered on startup")
+      const now = new Date().toISOString()
+      yield* markTaskExhaustedFailure(
+        issue.id,
+        "worker crashed — recovered on startup",
+        {
+          engine: "claude",
+          workerId,
+          timestamp: now,
+          finishedAt: now,
+        },
+      )
     }
 
     return stale.length
