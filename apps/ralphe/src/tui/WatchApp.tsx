@@ -146,8 +146,8 @@ function WatchHeader({
 function WatchFooter({ viewMode, hasMarkReady }: { viewMode: "dashboard" | "detail"; hasMarkReady?: boolean }): ReactNode {
   const navShortcuts =
     viewMode === "detail"
-      ? `Esc/Backspace:Back${hasMarkReady ? "  m:Mark Ready" : ""}  ^Q:Quit`
-      : "↑↓:Navigate  Tab:Switch Table  Enter:Detail  r:Refresh  ^Q:Quit"
+      ? "Esc/Backspace:Back  ^Q:Quit"
+      : `↑↓:Navigate  Tab:Switch Table  Enter:Detail  r:Refresh${hasMarkReady ? "  m:Mark Ready" : ""}  ^Q:Quit`
   return (
     <box
       style={{
@@ -522,27 +522,6 @@ export function WatchApp({
           case "backspace":
             setFocusState(returnFromDetail())
             return
-          case "m":
-            // Mark Ready action — only if available for the selected task
-            if (
-              selectedTask &&
-              getAvailableActions(selectedTask).includes("mark-ready") &&
-              !markingReadyRef.current
-            ) {
-              markingReadyRef.current = true
-              const taskId = selectedTask.id
-              const currentLabels = selectedTask.labels ?? []
-              Effect.runPromise(markTaskReady(taskId, currentLabels))
-                .then(() => doRefresh())
-                .catch((e) => {
-                  const msg = e instanceof Error ? e.message : String(e)
-                  setError(`Mark ready failed: ${msg}`)
-                })
-                .finally(() => {
-                  markingReadyRef.current = false
-                })
-            }
-            return
           default:
             return
         }
@@ -582,6 +561,28 @@ export function WatchApp({
 
         case "r":
           void doRefresh()
+          break
+
+        case "m":
+          // Mark Ready action — only if available for the selected task
+          if (
+            selectedTask &&
+            getAvailableActions(selectedTask).includes("mark-ready") &&
+            !markingReadyRef.current
+          ) {
+            markingReadyRef.current = true
+            const taskId = selectedTask.id
+            const currentLabels = selectedTask.labels ?? []
+            Effect.runPromise(markTaskReady(taskId, currentLabels))
+              .then(() => doRefresh())
+              .catch((e) => {
+                const msg = e instanceof Error ? e.message : String(e)
+                setError(`Mark ready failed: ${msg}`)
+              })
+              .finally(() => {
+                markingReadyRef.current = false
+              })
+          }
           break
 
         default:
@@ -635,7 +636,7 @@ export function WatchApp({
       <WatchFooter
         viewMode={viewMode}
         hasMarkReady={
-          viewMode === "detail" &&
+          viewMode === "dashboard" &&
           selectedTask != null &&
           getAvailableActions(selectedTask).includes("mark-ready")
         }
