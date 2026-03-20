@@ -1,4 +1,4 @@
-import { Console, Effect, Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { FatalError } from "../errors.js"
 import { Engine, type AgentResult } from "./Engine.js"
 
@@ -102,7 +102,7 @@ const make: Engine = {
     }).pipe(
       Effect.tap((result) =>
         result.threadId
-          ? Console.log(`Resume this Codex session with: codex resume ${result.threadId}`)
+          ? Effect.logInfo(`Resume this Codex session with: codex resume ${result.threadId}`)
           : Effect.void,
       ),
       Effect.map(({ response, threadId }) => ({ response, resumeToken: threadId }) satisfies AgentResult),

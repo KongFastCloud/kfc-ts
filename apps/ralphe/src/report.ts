@@ -1,6 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
-import { Console, Effect } from "effect"
+import { Effect } from "effect"
 import { CheckFailure, FatalError } from "./errors.js"
 import { Engine } from "./engine/Engine.js"
 
@@ -73,14 +73,14 @@ export const report = (
     const reportsDir = path.join(process.cwd(), REPORTS_DIR)
     fs.mkdirSync(reportsDir, { recursive: true })
 
-    yield* Console.log(`Running verification (${mode})...`)
+    yield* Effect.logInfo(`Running verification (${mode})...`)
     const prompt = buildPrompt(task, mode)
     const result = yield* engine.execute(prompt, process.cwd())
 
     const reportResult = parseReportResult(result.response)
 
     if (!reportResult.success) {
-      yield* Console.log(`Verification failed: ${reportResult.report}`)
+      yield* Effect.logWarning(`Verification failed: ${reportResult.report}`)
       return yield* Effect.fail(
         new CheckFailure({
           command: "report",
@@ -90,10 +90,10 @@ export const report = (
       )
     }
 
-    yield* Console.log(`Verification passed.`)
+    yield* Effect.logInfo(`Verification passed.`)
     if (reportResult.reportPath) {
-      yield* Console.log(`Report: ${reportResult.reportPath}`)
+      yield* Effect.logInfo(`Report: ${reportResult.reportPath}`)
     }
 
     return reportResult
-  })
+  }).pipe(Effect.withLogSpan("verification"))

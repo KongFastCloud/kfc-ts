@@ -1,4 +1,4 @@
-import { Console, Effect, Layer, pipe } from "effect"
+import { Effect, Layer, pipe } from "effect"
 import type { LoopEvent } from "./loop.js"
 import { ClaudeEngineLayer } from "./engine/ClaudeEngine.js"
 import { CodexEngineLayer } from "./engine/CodexEngine.js"
@@ -53,15 +53,15 @@ export const buildCiGitStep = (
   Effect.gen(function* () {
     const commitResult = yield* ops.commit()
     if (!commitResult) {
-      yield* Console.log("Push/CI skipped: no commit created.")
+      yield* Effect.logDebug("Push/CI skipped: no commit created.")
       return
     }
 
-    yield* Console.log(`Commit hash: ${commitResult.hash}`)
+    yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
     const pushResult = yield* ops.push()
-    yield* Console.log(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
+    yield* Effect.logInfo(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
     const ciResult = yield* ops.waitCi()
-    yield* Console.log(`CI passed: run ${ciResult.runId}`)
+    yield* Effect.logInfo(`CI passed: run ${ciResult.runId}`)
   })
 
 /**
@@ -75,7 +75,7 @@ export const executePostLoopGitOps = (
   ops: GitOps,
 ): Effect.Effect<void, FatalError, Engine> =>
   Effect.gen(function* () {
-    yield* Console.log(`Git mode: ${gitMode}`)
+    yield* Effect.logInfo(`Git mode: ${gitMode}`)
     switch (gitMode) {
       case "none":
       case "commit_and_push_and_wait_ci":
@@ -83,20 +83,20 @@ export const executePostLoopGitOps = (
       case "commit": {
         const commitResult = yield* ops.commit()
         if (commitResult) {
-          yield* Console.log(`Commit hash: ${commitResult.hash}`)
+          yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
         }
         break
       }
       case "commit_and_push": {
         const commitResult = yield* ops.commit()
         if (!commitResult) {
-          yield* Console.log("Push skipped: no commit created.")
+          yield* Effect.logDebug("Push skipped: no commit created.")
           break
         }
 
-        yield* Console.log(`Commit hash: ${commitResult.hash}`)
+        yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
         const pushResult = yield* ops.push()
-        yield* Console.log(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
+        yield* Effect.logInfo(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
         break
       }
     }
@@ -219,7 +219,7 @@ export const runTask = (
       resumeToken: lastResumeToken,
       engine: engineChoice,
     } satisfies TaskResult
-  })
+  }).pipe(Effect.annotateLogs({ gitMode }))
 
   return fullWorkflow.pipe(
     Effect.catchTag("FatalError", (err) =>

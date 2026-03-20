@@ -1,4 +1,4 @@
-import { Console, Effect } from "effect"
+import { Effect } from "effect"
 import { CheckFailure, FatalError } from "./errors.js"
 
 export interface CmdResult {
@@ -11,7 +11,7 @@ export const cmd = (
   command: string,
 ): Effect.Effect<CmdResult, CheckFailure | FatalError> =>
   Effect.gen(function* () {
-    yield* Console.log(`Running: ${command}`)
+    yield* Effect.logDebug(`Running: ${command}`)
 
     const result = yield* Effect.tryPromise({
       try: async () => {
@@ -55,6 +55,6 @@ export const cmd = (
       },
     })
 
-    yield* Console.log(`Passed: ${command}`)
+    yield* Effect.logInfo(`Passed: ${command}`)
     return result
   })

@@ -1,4 +1,4 @@
-import { Console, Effect } from "effect"
+import { Effect } from "effect"
 import type { CheckFailure, FatalError } from "./errors.js"
 import { Engine, type AgentResult } from "./engine/Engine.js"
 
@@ -18,9 +18,9 @@ export const agent = (
       prompt += `\n\nPrevious attempt failed:\n${opts.feedback}`
     }
 
-    yield* Console.log(`Running agent...`)
+    yield* Effect.logInfo(`Running agent...`)
     const result = yield* engine.execute(prompt, process.cwd())
-    yield* Console.log(`Agent done.`)
+    yield* Effect.logInfo(`Agent done.`)
 
     return result
-  })
+  }).pipe(Effect.withLogSpan("agent"))

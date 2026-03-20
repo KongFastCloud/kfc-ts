@@ -1,4 +1,4 @@
-import { Console, Effect } from "effect"
+import { Effect } from "effect"
 import { CheckFailure, FatalError } from "./errors.js"
 
 export type LoopEventType = "attempt_start" | "check_failed" | "success"
@@ -38,10 +38,10 @@ export const loop = <R>(
       body: (state) =>
         Effect.gen(function* () {
           yield* emitEvent({ type: "attempt_start", attempt: state.attempt, maxAttempts })
-          yield* Console.log(`\n--- Attempt ${state.attempt}/${maxAttempts} ---`)
+          yield* Effect.logInfo(`Attempt ${state.attempt}/${maxAttempts}`)
 
           if (state.feedback) {
-            yield* Console.log(`Retrying with feedback from previous failure`)
+            yield* Effect.logDebug(`Retrying with feedback from previous failure`)
           }
 
           return yield* fn(state.feedback, state.attempt, maxAttempts).pipe(
@@ -65,7 +65,7 @@ export const loop = <R>(
                 maxAttempts,
                 feedback,
               }).pipe(
-                Effect.andThen(Console.log(
+                Effect.andThen(Effect.logWarning(
                   `Check failed: "${err.command}" exited ${err.exitCode}. Will retry.`,
                 )),
                 Effect.map(() => ({
@@ -76,7 +76,7 @@ export const loop = <R>(
               )
             }),
           )
-        }),
+        }).pipe(Effect.annotateLogs({ attempt: state.attempt, maxAttempts })),
     },
   ) as Effect.Effect<void, FatalError, R>
 }

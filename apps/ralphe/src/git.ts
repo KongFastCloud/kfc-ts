@@ -1,4 +1,4 @@
-import { Console, Effect } from "effect"
+import { Effect } from "effect"
 import { CheckFailure, FatalError } from "./errors.js"
 import { Engine } from "./engine/Engine.js"
 
@@ -209,7 +209,7 @@ export const gitCommit = (): Effect.Effect<GitCommitResult | undefined, FatalErr
   Effect.gen(function* () {
     const status = yield* run(["status", "--porcelain"])
     if (!status.stdout.trim()) {
-      yield* Console.log("No changes to commit.")
+      yield* Effect.logDebug("No changes to commit.")
       return undefined
     }
 
@@ -217,7 +217,7 @@ export const gitCommit = (): Effect.Effect<GitCommitResult | undefined, FatalErr
 
     const diff = yield* run(["diff", "--staged"])
 
-    yield* Console.log("Generating commit message...")
+    yield* Effect.logInfo("Generating commit message...")
     const engine = yield* Engine
     const result = yield* engine.execute(
       COMMIT_MSG_PROMPT + diff.stdout,
@@ -229,11 +229,11 @@ export const gitCommit = (): Effect.Effect<GitCommitResult | undefined, FatalErr
     )
 
     const message = result.response.trim()
-    yield* Console.log(`Commit: ${message}`)
+    yield* Effect.logInfo(`Commit: ${message}`)
 
     yield* run(["commit", "-m", message])
     const hash = (yield* run(["rev-parse", "--short", "HEAD"])).stdout.trim()
-    yield* Console.log("Committed.")
+    yield* Effect.logInfo("Committed.")
 
     return { message, hash }
   })
@@ -246,9 +246,9 @@ export const gitPush = (): Effect.Effect<GitPushResult, FatalError> =>
       Effect.catchTag("FatalError", () => Effect.succeed("origin")),
     )
 
-    yield* Console.log("Pushing...")
+    yield* Effect.logInfo("Pushing...")
     const pushOutput = (yield* run(["push"])).stdout.trim()
-    yield* Console.log("Pushed.")
+    yield* Effect.logInfo("Pushed.")
 
     return { remote, ref, output: pushOutput }
   })
@@ -259,7 +259,7 @@ export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError | Check
     yield* runGh(["--version"])
 
     const sha = (yield* run(["rev-parse", "HEAD"])).stdout.trim()
-    yield* Console.log(`Waiting for GitHub Actions for commit ${sha.slice(0, 7)}...`)
+    yield* Effect.logInfo(`Waiting for GitHub Actions for commit ${sha.slice(0, 7)}...`)
 
     const listCommand = `gh run list --commit ${sha} --limit 20 --json databaseId,status,conclusion,url,workflowName`
 
@@ -286,7 +286,7 @@ export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError | Check
 
       if (runs.length === 0) {
         if (attempt < CI_RUN_DISCOVERY_ATTEMPTS - 1) {
-          yield* Console.log(`No CI run found yet for ${sha.slice(0, 7)}; retrying in 10s...`)
+          yield* Effect.logDebug(`No CI run found yet for ${sha.slice(0, 7)}; retrying in 10s...`)
           yield* Effect.sleep(CI_STATUS_POLL_DELAY_MS)
           continue
         }
@@ -301,7 +301,7 @@ export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError | Check
 
       const runningRuns = runs.filter((run) => run.status !== "completed")
       if (runningRuns.length > 0) {
-        yield* Console.log(
+        yield* Effect.logDebug(
           `CI in progress (${runningRuns.length}/${runs.length} still running). Checking again in 10s...`,
         )
         yield* Effect.sleep(CI_STATUS_POLL_DELAY_MS)
@@ -326,7 +326,7 @@ export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError | Check
       }
 
       const latestRun = runs[0]!
-      yield* Console.log(`CI succeeded across ${runs.length} run(s).`)
+      yield* Effect.logInfo(`CI succeeded across ${runs.length} run(s).`)
       return {
         runId: latestRun.databaseId,
         status: latestRun.status,
@@ -342,4 +342,4 @@ export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError | Check
         message: `Timed out waiting for CI completion for commit ${sha.slice(0, 7)} after ${CI_STATUS_POLL_ATTEMPTS * (CI_STATUS_POLL_DELAY_MS / 1000)}s.`,
       }),
     )
-  })
+  }).pipe(Effect.withLogSpan("ci-wait"))

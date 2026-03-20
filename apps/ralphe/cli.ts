@@ -153,19 +153,21 @@ const run = Command.make(
       if (fileOpt._tag === "Some") {
         const filePath = fileOpt.value
         task = fs.readFileSync(filePath, "utf-8")
-        yield* Console.log(`Task from file: ${filePath}`)
+        yield* Effect.logInfo(`Task from file: ${filePath}`)
       } else if (taskArg._tag === "Some") {
         task = taskArg.value
-        yield* Console.log(`Task: ${task}`)
+        yield* Effect.logInfo(`Task: ${task}`)
       }
-      yield* Console.log(`Engine: ${engineChoice}`)
+      yield* Effect.logInfo(`Engine: ${engineChoice}`)
       if (cfg.checks.length > 0) {
-        yield* Console.log(`Root checks: ${cfg.checks.join(", ")}`)
+        yield* Effect.logInfo(`Root checks: ${cfg.checks.join(", ")}`)
       } else {
-        yield* Console.log(`No root checks configured — running agent only.`)
+        yield* Effect.logInfo(`No root checks configured — running agent only.`)
       }
 
-      const result = yield* runTask(task, runConfig, { engineOverride: engineChoice })
+      const result = yield* Effect.annotateLogs({ engine: engineChoice, task: task.slice(0, 80) })(
+        runTask(task, runConfig, { engineOverride: engineChoice }),
+      )
 
       if (!result.success) {
         return yield* Effect.fail(
@@ -173,7 +175,7 @@ const run = Command.make(
         )
       }
 
-      yield* Console.log("Done!")
+      yield* Effect.logInfo("Done!")
     }),
 )
 

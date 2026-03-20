@@ -1,4 +1,4 @@
-import { Console, Effect, Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { query } from "@anthropic-ai/claude-agent-sdk"
 import { FatalError } from "../errors.js"
 import { Engine, type AgentResult } from "./Engine.js"
@@ -41,7 +41,7 @@ const make: Engine = {
     }).pipe(
       Effect.tap((result) =>
         result.sessionId
-          ? Console.log(`Resume this Claude session with: claude --resume ${result.sessionId}`)
+          ? Effect.logInfo(`Resume this Claude session with: claude --resume ${result.sessionId}`)
           : Effect.void,
       ),
       Effect.map(({ response, sessionId }) => ({ response, resumeToken: sessionId }) satisfies AgentResult),
