@@ -42,8 +42,8 @@ ralphe watch
 # Headless mode (no TUI)
 ralphe watch --headless
 
-# Override engine and poll interval (seconds)
-ralphe watch --engine codex --interval 30
+# Override poll interval (seconds)
+ralphe watch --interval 30
 ```
 
 ## Config
@@ -96,12 +96,40 @@ ralphe watch
 ralphe watch --headless
 ```
 
+The TUI header displays a condensed config summary showing the active engine, max attempts, checks count, git mode, and report mode.
+
 Critical usage notes:
 
 - Run from repository root so `.ralphe/config.json` and `.beads/` resolve correctly.
 - Watch mode executes only `bd ready` tasks (not every `open` task).
 - Only one task runs at a time.
 - Metadata is written under `metadata.ralphe` (engine, resume token, worker ID, timestamp).
+- **Dirty worktree guard** — watch mode pauses task pickup when uncommitted changes are detected in the working tree. Commit or stash your changes to resume automatic execution.
+- **Stale task recovery** — on startup, any tasks left in `in_progress` from a previous session are reclaimed and retried automatically.
+- **Session comment logging** — after each agent execution, the session ID is logged as a comment on the task for traceability.
+- **Retry error feedback** — when a task is retried, the previous error output is included in the agent prompt so the engine can avoid repeating the same mistake.
+- **Structured CI failure annotations** — when `git.mode` is `commit_and_push_and_wait_ci`, CI failure annotations are returned as structured feedback for the retry loop.
+
+### Mark Ready
+
+Press `m` in the TUI to mark a task as ready for execution. Only tasks in `backlog`, `blocked`, or `error` status are eligible. Marking a task ready adds it to a non-blocking FIFO queue so the worker picks it up in order without interrupting the current task.
+
+### Detail View
+
+Press `Enter` on any task to open the detail view. Sections displayed (when present):
+
+- Metadata (Ralphe status, engine, attempt count, worker ID, timestamps)
+- Error details (failure reason, check output)
+- Activity log with comments
+- Description
+- Design
+- Acceptance criteria (with checkbox rendering)
+- Notes
+- Dependencies
+- Close reason
+- Timestamps (created, updated, closed)
+
+Press `Backspace` to return to the task list from the detail view.
 
 ### Watch TUI Status Mapping
 
@@ -129,10 +157,13 @@ Notes:
 
 TUI keys:
 
-- `q`: quit (current in-flight task is allowed to finish)
+- `q` / `Escape` / `Ctrl+Q`: quit (current in-flight task is allowed to finish)
 - `r`: refresh task list
-- `j` / `k`: move selection
+- `j` / `k` / `↑` / `↓`: move selection
+- `Tab`: switch between tables
+- `m`: mark task as ready (backlog, blocked, and error tasks only)
 - `Enter`: open task details
+- `Backspace`: back from detail view
 
 Resume tokens (Claude `session_id` / Codex `thread_id`) are persisted in Beads metadata to support manual interactive resume:
 
