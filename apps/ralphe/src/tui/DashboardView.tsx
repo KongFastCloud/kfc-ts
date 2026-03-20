@@ -3,10 +3,11 @@
  * ABOUTME: Dashboard landing view for the watch TUI.
  * Renders two stacked tables: a top table for non-done tasks
  * (backlog, queued, blocked, active, error) and a bottom
- * table for done tasks. The active table shows Label while the
- * done table shows a compact Completed datetime instead.
+ * table for done tasks. The active table shows a Ready checkmark
+ * when a task has the 'ready' label, while the done table shows
+ * a compact Completed datetime instead.
  * Shared columns: ID, Title (clipped), Status, Duration.
- * The active table also shows Label and Priority; the done table
+ * The active table also shows Ready and Priority; the done table
  * replaces both with a wider Completed column.
  */
 
@@ -55,10 +56,10 @@ const COL = {
   /** Visible separator gutter between ID and Title (e.g. " │ "). */
   idTitleSep: 3,
   status: 12,
-  label: 14,
+  ready: 14,
   priority: 5,
   duration: 10,
-  /** Width of the Completed column in the done table (label 14 + priority 5 + separator 3). */
+  /** Width of the Completed column in the done table (ready 14 + priority 5 + separator 3). */
   completedDone: 22,
   /** Title takes remaining space — computed dynamically. */
 } as const
@@ -272,7 +273,7 @@ function DashboardTableHeader({ titleWidth, variant }: { titleWidth: number; var
           {pad("Status", COL.status)}
           {isDone
             ? pad("Completed", COL.completedDone)
-            : `${pad("Label", COL.label)}${pad("Pri", COL.priority)}`}
+            : `${pad("Ready", COL.ready)}${pad("Pri", COL.priority)}`}
           {pad("Duration", COL.duration)}
         </span>
       </text>
@@ -310,12 +311,10 @@ function DashboardRow({
     isDone
       ? pad(truncate(formatCompletedAt(task.closedAt), COL.completedDone - 1), COL.completedDone)
       : isMarkingReady
-        ? pad("...", COL.label)
+        ? pad("◌", COL.ready)
         : pad(
-            task.labels && task.labels.length > 0
-              ? truncate(task.labels.join(", "), COL.label - 1)
-              : "—",
-            COL.label,
+            task.labels?.includes("ready") ? "✓" : "",
+            COL.ready,
           )
   const priorityStr = isDone
     ? ""
@@ -349,7 +348,7 @@ function DashboardRow({
         <span fg={colors.border.normal}>{ID_TITLE_SEP}</span>
         <span fg={titleColor}>{titleStr}</span>
         <span fg={sColor}>{statusStr}</span>
-        <span fg={colors.accent.secondary}>{fourthColStr}</span>
+        <span fg={isDone ? colors.accent.secondary : isMarkingReady ? colors.fg.dim : colors.status.success}>{fourthColStr}</span>
         <span fg={colors.fg.secondary}>{priorityStr}</span>
         <span fg={task.status === "active" || !effectiveDimmed ? colors.status.info : colors.fg.dim}>{durationStr}</span>
       </text>
@@ -568,7 +567,7 @@ export function DashboardView({
   // (completedDone === label + priority + separator gap absorbed), so a single
   // fixedColumnsWidth works for both tables.
   const activeFixedWidth =
-    COL.id + COL.idTitleSep + COL.status + COL.label + COL.priority + COL.duration + 4 // +4 for padding/border
+    COL.id + COL.idTitleSep + COL.status + COL.ready + COL.priority + COL.duration + 4 // +4 for padding/border
   const doneFixedWidth =
     COL.id + COL.idTitleSep + COL.status + COL.completedDone + COL.duration + 4
   const activeTitleWidth = Math.max(10, terminalWidth - activeFixedWidth)
