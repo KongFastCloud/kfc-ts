@@ -19,8 +19,6 @@ import { isWorktreeDirty } from "./git.js"
 export interface WatcherOptions {
   /** Poll interval in milliseconds. Defaults to 10_000 (10 seconds). */
   readonly pollIntervalMs?: number
-  /** Engine override. If not set, uses config. */
-  readonly engineOverride?: "claude" | "codex"
   /** Worker ID. Defaults to hostname. */
   readonly workerId?: string
   /** Maximum number of tasks to process before stopping. Undefined = run forever. */
@@ -111,7 +109,7 @@ export const watch = (
           // Write initial metadata
           const startedAt = new Date().toISOString()
           const startMetadata: BeadsMetadata = {
-            engine: opts?.engineOverride ?? config.engine,
+            engine: config.engine,
             workerId,
             timestamp: startedAt,
             startedAt,
@@ -123,9 +121,7 @@ export const watch = (
           if (previousError) {
             prompt += `\n\n## Previous Error\n${previousError}`
           }
-          const result = yield* runTask(prompt, config, {
-            engineOverride: opts?.engineOverride,
-          })
+          const result = yield* runTask(prompt, config)
 
           // Write final metadata with resume token
           const finishedAt = new Date().toISOString()

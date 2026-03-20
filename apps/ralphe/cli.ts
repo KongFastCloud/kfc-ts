@@ -191,9 +191,6 @@ const skill = Command.make("skill", {}, () =>
 
 // -- watch subcommand --
 
-const watchEngineFlag = Options.choice("engine", ["claude", "codex"]).pipe(
-  Options.optional,
-)
 const pollInterval = Options.integer("interval").pipe(
   Options.withAlias("i"),
   Options.withDefault(10),
@@ -204,25 +201,19 @@ const headlessFlag = Options.boolean("headless").pipe(
 
 const watchCmd = Command.make(
   "watch",
-  { engine: watchEngineFlag, interval: pollInterval, headless: headlessFlag },
-  ({ engine: engineOverride, interval, headless }) =>
+  { interval: pollInterval, headless: headlessFlag },
+  ({ interval, headless }) =>
     Effect.gen(function* () {
-      const engineOpt = engineOverride._tag === "Some"
-        ? engineOverride.value as "claude" | "codex"
-        : undefined
-
       if (headless) {
         // Original headless watcher (no TUI)
         yield* Console.log("Starting Beads watcher (headless)...")
         yield* watch({
           pollIntervalMs: interval * 1000,
-          engineOverride: engineOpt,
         })
       } else {
         // Interactive TUI mode (default) — includes in-process worker
         yield* launchWatchTui({
           refreshIntervalMs: interval * 1000,
-          engineOverride: engineOpt,
         })
       }
     }),

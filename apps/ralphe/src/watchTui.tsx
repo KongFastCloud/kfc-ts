@@ -27,8 +27,6 @@ export interface WatchTuiOptions {
   readonly refreshIntervalMs?: number
   /** Working directory. Default process.cwd(). */
   readonly workDir?: string
-  /** Engine override for the in-TUI worker. */
-  readonly engineOverride?: "claude" | "codex"
 }
 
 /**
@@ -121,7 +119,6 @@ export const launchWatchTui = (
       },
       {
         pollIntervalMs: refreshIntervalMs,
-        engineOverride: opts?.engineOverride,
         workDir,
       },
     )

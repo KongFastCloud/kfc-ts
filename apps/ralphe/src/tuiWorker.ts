@@ -52,8 +52,6 @@ export interface TuiWorkerCallbacks {
 export interface TuiWorkerOptions {
   /** Poll interval in milliseconds. Defaults to 10_000. */
   readonly pollIntervalMs?: number
-  /** Engine override. If not set, uses config. */
-  readonly engineOverride?: "claude" | "codex"
   /** Worker ID. Defaults to hostname-based ID. */
   readonly workerId?: string
   /** Working directory. Defaults to process.cwd(). */
@@ -78,8 +76,6 @@ export function startTuiWorker(
   const pollIntervalMs = opts?.pollIntervalMs ?? 10_000
   const workerId = opts?.workerId ?? `ralphe-${os.hostname()}`
   const workDir = opts?.workDir ?? process.cwd()
-  const engineOverride = opts?.engineOverride
-
   let stopped = false
   const log = (message: string, taskId?: string) => {
     callbacks.onLog({ timestamp: new Date(), message, taskId })
@@ -167,7 +163,7 @@ export function startTuiWorker(
         // Write initial metadata
         const startedAt = new Date().toISOString()
         const startMetadata: BeadsMetadata = {
-          engine: engineOverride ?? config.engine,
+          engine: config.engine,
           workerId,
           timestamp: startedAt,
           startedAt,
@@ -188,7 +184,7 @@ export function startTuiWorker(
         let result: TaskResult
         try {
           result = await Effect.runPromise(
-            runTask(prompt, config, { engineOverride }),
+            runTask(prompt, config),
           )
         } catch (e) {
           // runTask catches its own errors and returns TaskResult,
@@ -196,7 +192,7 @@ export function startTuiWorker(
           log(`Task ${issue.id} threw unexpectedly: ${e instanceof Error ? e.message : String(e)}`, issue.id)
           result = {
             success: false,
-            engine: engineOverride ?? config.engine,
+            engine: config.engine,
             error: e instanceof Error ? e.message : String(e),
           }
         }
