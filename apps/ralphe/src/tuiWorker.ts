@@ -127,7 +127,7 @@ export function startTuiWorker(
 
     while (!stopped) {
       try {
-        // Poll for queued tasks (open + ready + no error + not blocked)
+        // Poll for queued tasks (open + ready + not blocked)
         const ready = await Effect.runPromise(queryQueued(workDir))
 
         if (ready.length === 0) {

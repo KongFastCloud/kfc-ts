@@ -217,6 +217,8 @@ export const markTaskReady = (
         yield* removeLabel(id, label)
       }
     }
+    // Clear stale assignee so the task can be re-claimed by a worker
+    yield* clearAssignee(id)
     // Apply the ready label
     yield* addLabel(id, "ready")
   })
