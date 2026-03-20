@@ -149,14 +149,17 @@ export const claimTask = (
 
 /**
  * Close a task with a success reason.
+ * Also removes the `error` label so stale failure state does not persist
+ * on successfully completed tasks.
  */
 export const closeTaskSuccess = (
   id: string,
   reason = "completed successfully",
 ): Effect.Effect<void, FatalError> =>
-  runBd(["close", id, "--reason", reason]).pipe(
-    Effect.map(() => undefined),
-  )
+  Effect.gen(function* () {
+    yield* removeLabel(id, "error")
+    yield* runBd(["close", id, "--reason", reason])
+  })
 
 /**
  * Close a task with a failure reason.
@@ -193,21 +196,28 @@ export const removeLabel = (
   )
 
 /**
- * Mark a task as ready by replacing all existing labels with exactly `ready`.
+ * Mark a task as ready by adding the `ready` label.
  * This is a label-only operation — it does not change Beads lifecycle state.
  * Used for manual error-to-ready recovery and promoting non-done issues
  * back into the automatic pickup queue.
+ *
+ * The `error` label is intentionally preserved so that downstream consumers
+ * (e.g. the agent) can detect that this is a retry and inspect the previous
+ * failure context. The error label is cleared on successful completion.
  */
 export const markTaskReady = (
   id: string,
   currentLabels: string[],
 ): Effect.Effect<void, FatalError> =>
   Effect.gen(function* () {
-    // Remove every existing label
+    // Remove every existing label except error — error is preserved so the
+    // agent knows this is a retry and can read the previous failure context.
     for (const label of currentLabels) {
-      yield* removeLabel(id, label)
+      if (label !== "error") {
+        yield* removeLabel(id, label)
+      }
     }
-    // Apply exactly the ready label
+    // Apply the ready label
     yield* addLabel(id, "ready")
   })
 

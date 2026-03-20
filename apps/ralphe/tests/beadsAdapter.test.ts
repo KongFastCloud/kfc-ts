@@ -283,7 +283,7 @@ describe("parseBdTaskList", () => {
     expect(parseBdTaskList(json)[0]!.status).toBe("blocked")
   })
 
-  test("open + error label → error (regardless of ready label or blockers)", () => {
+  test("open + error + ready + unresolved blockers → blocked (blockers override ready)", () => {
     const json = JSON.stringify([
       {
         id: "t-1",
@@ -295,7 +295,7 @@ describe("parseBdTaskList", () => {
         ],
       },
     ])
-    expect(parseBdTaskList(json)[0]!.status).toBe("error")
+    expect(parseBdTaskList(json)[0]!.status).toBe("blocked")
   })
 
   test("open + error label without ready → error", () => {
@@ -461,16 +461,16 @@ describe("parseBdTaskList", () => {
   // Label precedence regression — PRD §Label Behavior
   // -------------------------------------------------------------------------
 
-  test("error label on open task with ready label and no deps → error (not queued)", () => {
+  test("error + ready label on open task with no deps → queued (ready overrides error for retry)", () => {
     const json = JSON.stringify([
       { id: "t-1", title: "Errored+Ready", status: "open", labels: ["ready", "error"] },
     ])
     const task = parseBdTaskList(json)[0]!
-    expect(task.status).toBe("error")
+    expect(task.status).toBe("queued")
   })
 
-  test("error label on open task with blockers → error (not blocked)", () => {
-    // Error label takes highest priority among open-task derivations
+  test("error label on open task with blockers → blocked (blockers override error)", () => {
+    // Blockers take highest priority among open-task derivations
     const json = JSON.stringify([
       {
         id: "t-1",
@@ -482,7 +482,7 @@ describe("parseBdTaskList", () => {
         ],
       },
     ])
-    expect(parseBdTaskList(json)[0]!.status).toBe("error")
+    expect(parseBdTaskList(json)[0]!.status).toBe("blocked")
   })
 })
 
@@ -547,10 +547,11 @@ describe("getAvailableActions", () => {
 // ---------------------------------------------------------------------------
 
 describe("mark-ready status outcomes", () => {
-  test("error issue relabeled to ready derives to queued (no blockers)", () => {
-    // After mark-ready: labels change from [error] to [ready]
+  test("error issue marked ready derives to queued — error label preserved (no blockers)", () => {
+    // After mark-ready: labels change from [error] to [error, ready]
+    // Error label is preserved so the agent can see previous failure context.
     const json = JSON.stringify([
-      { id: "t-1", title: "Was error", status: "open", labels: ["ready"] },
+      { id: "t-1", title: "Was error", status: "open", labels: ["error", "ready"] },
     ])
     const task = parseBdTaskList(json)[0]!
     expect(task.status).toBe("queued")
@@ -596,6 +597,41 @@ describe("mark-ready status outcomes", () => {
     ])
     const task = parseBdTaskList(json)[0]!
     expect(task.status).toBe("queued")
+  })
+
+  test("error issue marked ready but blocked stays blocked", () => {
+    // After mark-ready: labels are [error, ready], but blocker still open
+    const json = JSON.stringify([
+      {
+        id: "t-1",
+        title: "Error retry blocked",
+        status: "open",
+        labels: ["error", "ready"],
+        dependencies: [
+          { id: "dep-1", status: "open", dependency_type: "blocks" },
+        ],
+      },
+    ])
+    const task = parseBdTaskList(json)[0]!
+    expect(task.status).toBe("blocked")
+  })
+
+  test("re-failed task (ready removed, error kept) derives to error", () => {
+    // After markTaskExhaustedFailure: labels are [error] (ready was removed)
+    const json = JSON.stringify([
+      { id: "t-1", title: "Failed again", status: "open", labels: ["error"] },
+    ])
+    const task = parseBdTaskList(json)[0]!
+    expect(task.status).toBe("error")
+  })
+
+  test("successfully completed retry task (closed, error cleared) derives to done", () => {
+    // After closeTaskSuccess: task is closed and error label removed
+    const json = JSON.stringify([
+      { id: "t-1", title: "Fixed on retry", status: "closed" },
+    ])
+    const task = parseBdTaskList(json)[0]!
+    expect(task.status).toBe("done")
   })
 })
 
@@ -653,13 +689,14 @@ describe("queued filtering (queryActionable semantics)", () => {
     expect(queued).toHaveLength(0)
   })
 
-  test("error issues with ready label are still excluded", () => {
+  test("error issues with ready label are included as queued (retry)", () => {
     const json = JSON.stringify([
       { id: "t-1", title: "Error+Ready", status: "open", labels: ["ready", "error"] },
     ])
     const tasks = parseBdTaskList(json)
     const queued = tasks.filter((t) => t.status === "queued")
-    expect(queued).toHaveLength(0)
+    expect(queued).toHaveLength(1)
+    expect(queued[0]!.id).toBe("t-1")
   })
 
   test("open errored dependency keeps dependent out of queued set", () => {

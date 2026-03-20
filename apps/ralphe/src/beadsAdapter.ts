@@ -19,10 +19,10 @@ import type { BeadsIssue } from "./beads.js"
  * Ralphe status derived from Beads status, labels, and dependency state.
  *
  * Mapping (see /prd/ralphe-status-alignment.md):
- *  open + no ready + no error + no unresolved blockers → backlog
- *  open + ready   + no error + no unresolved blockers → queued
  *  open + unresolved blocking dependencies            → blocked
- *  open + error label                                 → error
+ *  open + ready label (even with error, no blockers)  → queued  (retry)
+ *  open + error label (no ready, no blockers)         → error   (exhausted)
+ *  open + no ready + no error + no blockers           → backlog
  *  in_progress                                        → active
  *  closed                                             → done
  */
@@ -185,9 +185,7 @@ function mapStatus(
     case "cancelled":
       return "error"
     case "open": {
-      // Error label takes priority — task exhausted all retries
-      if (labels && labels.includes("error")) return "error"
-      // Check if blocked by unresolved dependencies
+      // Check if blocked by unresolved dependencies (highest open priority)
       if (deps && deps.length > 0) {
         const hasUnresolved = deps.some(
           (d) => {
@@ -204,8 +202,12 @@ function mapStatus(
         )
         if (hasUnresolved) return "blocked"
       }
-      // Ready label distinguishes queued from backlog
+      // Ready label overrides error — a task marked ready for retry should
+      // be queued even if it still carries the error label from a previous
+      // failure (the error label is preserved so the agent can inspect it).
       if (labels && labels.includes("ready")) return "queued"
+      // Error label — task exhausted all retries and has not been re-queued
+      if (labels && labels.includes("error")) return "error"
       return "backlog"
     }
     default:
