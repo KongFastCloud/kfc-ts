@@ -399,7 +399,7 @@ function DashboardTable({
       style={{
         width: "100%",
         flexGrow,
-        flexShrink: 1,
+        flexShrink: 0,
         minHeight: 5,
         flexDirection: "column",
         backgroundColor: colors.bg.primary,
@@ -572,7 +572,7 @@ export function DashboardView({
         selectedIndex={focusedTable === "active" ? activeSelectedIndex : -1}
         scrollOffset={activeScrollOffset}
         titleWidth={titleWidth}
-        flexGrow={2}
+        flexGrow={1}
         borderColor={
           focusedTable === "active"
             ? colors.accent.primary
