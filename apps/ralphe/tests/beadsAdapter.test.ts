@@ -114,7 +114,7 @@ describe("parseBdTaskList", () => {
     expect(tasks[0]!.status).toBe("backlog")
   })
 
-  test("maps open with resolved blocking deps and ready label to actionable", () => {
+  test("maps open with resolved blocking deps and ready label to queued", () => {
     const json = JSON.stringify([
       {
         id: "t-1",
@@ -128,7 +128,7 @@ describe("parseBdTaskList", () => {
     ])
 
     const tasks = parseBdTaskList(json)
-    expect(tasks[0]!.status).toBe("actionable")
+    expect(tasks[0]!.status).toBe("queued")
   })
 
   test("extracts dependsOn and blocks from deps/dependents", () => {
@@ -254,18 +254,18 @@ describe("parseBdTaskList", () => {
     expect(parseBdTaskList(json)[0]!.status).toBe("backlog")
   })
 
-  test("open + ready + no error + no blockers → actionable", () => {
+  test("open + ready + no error + no blockers → queued", () => {
     const json = JSON.stringify([
       { id: "t-1", title: "Ready item", status: "open", labels: ["ready"] },
     ])
-    expect(parseBdTaskList(json)[0]!.status).toBe("actionable")
+    expect(parseBdTaskList(json)[0]!.status).toBe("queued")
   })
 
-  test("open + ready + other labels + no error + no blockers → actionable", () => {
+  test("open + ready + other labels + no error + no blockers → queued", () => {
     const json = JSON.stringify([
       { id: "t-1", title: "Ready item", status: "open", labels: ["frontend", "ready", "p1"] },
     ])
-    expect(parseBdTaskList(json)[0]!.status).toBe("actionable")
+    expect(parseBdTaskList(json)[0]!.status).toBe("queued")
   })
 
   test("open + unresolved blocking deps → blocked (regardless of ready label)", () => {
@@ -348,7 +348,7 @@ describe("parseBdTaskList", () => {
         ],
       },
     ])
-    expect(parseBdTaskList(json)[0]!.status).toBe("actionable")
+    expect(parseBdTaskList(json)[0]!.status).toBe("queued")
   })
 
   test("in_progress deps still block", () => {
@@ -398,7 +398,7 @@ describe("parseBdTaskList", () => {
         ],
       },
     ])
-    expect(parseBdTaskList(json)[0]!.status).toBe("actionable")
+    expect(parseBdTaskList(json)[0]!.status).toBe("queued")
   })
 
   test("closed dependency unblocks regardless of its labels", () => {
@@ -415,10 +415,10 @@ describe("parseBdTaskList", () => {
         ],
       },
     ])
-    expect(parseBdTaskList(json)[0]!.status).toBe("actionable")
+    expect(parseBdTaskList(json)[0]!.status).toBe("queued")
   })
 
-  test("all deps closed → actionable when ready label present", () => {
+  test("all deps closed → queued when ready label present", () => {
     const json = JSON.stringify([
       {
         id: "t-1",
@@ -432,10 +432,10 @@ describe("parseBdTaskList", () => {
         ],
       },
     ])
-    expect(parseBdTaskList(json)[0]!.status).toBe("actionable")
+    expect(parseBdTaskList(json)[0]!.status).toBe("queued")
   })
 
-  test("all deps closed but no ready label → backlog, not actionable", () => {
+  test("all deps closed but no ready label → backlog, not queued", () => {
     const json = JSON.stringify([
       {
         id: "t-1",
@@ -461,7 +461,7 @@ describe("parseBdTaskList", () => {
   // Label precedence regression — PRD §Label Behavior
   // -------------------------------------------------------------------------
 
-  test("error label on open task with ready label and no deps → error (not actionable)", () => {
+  test("error label on open task with ready label and no deps → error (not queued)", () => {
     const json = JSON.stringify([
       { id: "t-1", title: "Errored+Ready", status: "open", labels: ["ready", "error"] },
     ])
@@ -503,8 +503,8 @@ describe("getAvailableActions", () => {
     expect(actions).toContain("mark-ready")
   })
 
-  test("actionable tasks expose mark-ready action", () => {
-    const actions = getAvailableActions(makeTask("actionable"))
+  test("queued tasks expose mark-ready action", () => {
+    const actions = getAvailableActions(makeTask("queued"))
     expect(actions).toContain("mark-ready")
   })
 
@@ -536,7 +536,7 @@ describe("getAvailableActions", () => {
 
   test("no actions available for unknown status", () => {
     // Force a status that doesn't match any case
-    const task = { ...makeTask("actionable"), status: "unknown" as WatchTask["status"] }
+    const task = { ...makeTask("queued"), status: "unknown" as WatchTask["status"] }
     const actions = getAvailableActions(task)
     expect(actions).toEqual([])
   })
@@ -547,13 +547,13 @@ describe("getAvailableActions", () => {
 // ---------------------------------------------------------------------------
 
 describe("mark-ready status outcomes", () => {
-  test("error issue relabeled to ready derives to actionable (no blockers)", () => {
+  test("error issue relabeled to ready derives to queued (no blockers)", () => {
     // After mark-ready: labels change from [error] to [ready]
     const json = JSON.stringify([
       { id: "t-1", title: "Was error", status: "open", labels: ["ready"] },
     ])
     const task = parseBdTaskList(json)[0]!
-    expect(task.status).toBe("actionable")
+    expect(task.status).toBe("queued")
   })
 
   test("blocked issue relabeled to ready still derives to blocked", () => {
@@ -582,12 +582,12 @@ describe("mark-ready status outcomes", () => {
     expect(task.status).toBe("active")
   })
 
-  test("backlog issue relabeled to ready derives to actionable (no blockers)", () => {
+  test("backlog issue relabeled to ready derives to queued (no blockers)", () => {
     const json = JSON.stringify([
       { id: "t-1", title: "Now ready", status: "open", labels: ["ready"] },
     ])
     const task = parseBdTaskList(json)[0]!
-    expect(task.status).toBe("actionable")
+    expect(task.status).toBe("queued")
   })
 
   test("already-ready issue remains stable after mark-ready", () => {
@@ -595,19 +595,19 @@ describe("mark-ready status outcomes", () => {
       { id: "t-1", title: "Already ready", status: "open", labels: ["ready"] },
     ])
     const task = parseBdTaskList(json)[0]!
-    expect(task.status).toBe("actionable")
+    expect(task.status).toBe("queued")
   })
 })
 
 // ---------------------------------------------------------------------------
-// Actionable filtering — only actionable tasks are eligible for automatic pickup
+// Actionable filtering — only queued tasks are eligible for automatic pickup
 // ---------------------------------------------------------------------------
 
-describe("actionable filtering (queryActionable semantics)", () => {
+describe("queued filtering (queryActionable semantics)", () => {
   // These tests verify the filtering behavior that queryActionable applies:
-  // only tasks with derived status "actionable" pass through.
+  // only tasks with derived status "queued" pass through.
 
-  test("only actionable tasks survive filtering from a mixed list", () => {
+  test("only queued tasks survive filtering from a mixed list", () => {
     const json = JSON.stringify([
       { id: "backlog-1", title: "Backlog", status: "open" },
       { id: "ready-1", title: "Ready", status: "open", labels: ["ready"] },
@@ -619,10 +619,10 @@ describe("actionable filtering (queryActionable semantics)", () => {
     ])
 
     const tasks = parseBdTaskList(json)
-    const actionable = tasks.filter((t) => t.status === "actionable")
+    const queued = tasks.filter((t) => t.status === "queued")
 
-    expect(actionable).toHaveLength(1)
-    expect(actionable[0]!.id).toBe("ready-1")
+    expect(queued).toHaveLength(1)
+    expect(queued[0]!.id).toBe("ready-1")
   })
 
   test("backlog issues are excluded from automatic pickup", () => {
@@ -630,8 +630,8 @@ describe("actionable filtering (queryActionable semantics)", () => {
       { id: "t-1", title: "No ready label", status: "open" },
     ])
     const tasks = parseBdTaskList(json)
-    const actionable = tasks.filter((t) => t.status === "actionable")
-    expect(actionable).toHaveLength(0)
+    const queued = tasks.filter((t) => t.status === "queued")
+    expect(queued).toHaveLength(0)
   })
 
   test("blocked issues are excluded from automatic pickup even with ready label", () => {
@@ -640,8 +640,8 @@ describe("actionable filtering (queryActionable semantics)", () => {
         dependencies: [{ id: "dep-1", status: "open", dependency_type: "blocks" }] },
     ])
     const tasks = parseBdTaskList(json)
-    const actionable = tasks.filter((t) => t.status === "actionable")
-    expect(actionable).toHaveLength(0)
+    const queued = tasks.filter((t) => t.status === "queued")
+    expect(queued).toHaveLength(0)
   })
 
   test("error issues are excluded from automatic pickup", () => {
@@ -649,8 +649,8 @@ describe("actionable filtering (queryActionable semantics)", () => {
       { id: "t-1", title: "Errored", status: "open", labels: ["error"] },
     ])
     const tasks = parseBdTaskList(json)
-    const actionable = tasks.filter((t) => t.status === "actionable")
-    expect(actionable).toHaveLength(0)
+    const queued = tasks.filter((t) => t.status === "queued")
+    expect(queued).toHaveLength(0)
   })
 
   test("error issues with ready label are still excluded", () => {
@@ -658,11 +658,11 @@ describe("actionable filtering (queryActionable semantics)", () => {
       { id: "t-1", title: "Error+Ready", status: "open", labels: ["ready", "error"] },
     ])
     const tasks = parseBdTaskList(json)
-    const actionable = tasks.filter((t) => t.status === "actionable")
-    expect(actionable).toHaveLength(0)
+    const queued = tasks.filter((t) => t.status === "queued")
+    expect(queued).toHaveLength(0)
   })
 
-  test("open errored dependency keeps dependent out of actionable set", () => {
+  test("open errored dependency keeps dependent out of queued set", () => {
     const json = JSON.stringify([
       // dep-1 is open+error: an unresolved dependency
       { id: "dep-1", title: "Failed dep", status: "open", labels: ["error"] },
@@ -671,59 +671,59 @@ describe("actionable filtering (queryActionable semantics)", () => {
         dependencies: [{ id: "dep-1", status: "open", dependency_type: "blocks" }] },
     ])
     const tasks = parseBdTaskList(json)
-    const actionable = tasks.filter((t) => t.status === "actionable")
-    expect(actionable).toHaveLength(0)
+    const queued = tasks.filter((t) => t.status === "queued")
+    expect(queued).toHaveLength(0)
   })
 
-  test("only genuinely resolved (closed) dependencies unblock into actionable", () => {
+  test("only genuinely resolved (closed) dependencies unblock into queued", () => {
     const json = JSON.stringify([
       { id: "t-1", title: "Unblocked", status: "open", labels: ["ready"],
         dependencies: [{ id: "dep-1", status: "closed", dependency_type: "blocks" }] },
     ])
     const tasks = parseBdTaskList(json)
-    const actionable = tasks.filter((t) => t.status === "actionable")
-    expect(actionable).toHaveLength(1)
-    expect(actionable[0]!.id).toBe("t-1")
+    const queued = tasks.filter((t) => t.status === "queued")
+    expect(queued).toHaveLength(1)
+    expect(queued[0]!.id).toBe("t-1")
   })
 
   test("cancelled deps resolve but cancelled tasks themselves are errors", () => {
-    // dep-1 is cancelled (resolved dependency), t-1 should be actionable.
-    // But t-2 itself is cancelled → error status, not actionable.
+    // dep-1 is cancelled (resolved dependency), t-1 should be queued.
+    // But t-2 itself is cancelled → error status, not queued.
     const json = JSON.stringify([
       { id: "t-1", title: "Depends on cancelled", status: "open", labels: ["ready"],
         dependencies: [{ id: "dep-1", status: "cancelled", dependency_type: "blocks" }] },
       { id: "t-2", title: "Cancelled task", status: "cancelled" },
     ])
     const tasks = parseBdTaskList(json)
-    const actionable = tasks.filter((t) => t.status === "actionable")
-    expect(actionable).toHaveLength(1)
-    expect(actionable[0]!.id).toBe("t-1")
+    const queued = tasks.filter((t) => t.status === "queued")
+    expect(queued).toHaveLength(1)
+    expect(queued[0]!.id).toBe("t-1")
     expect(tasks.find((t) => t.id === "t-2")!.status).toBe("error")
   })
 
-  test("active and done statuses are excluded from actionable", () => {
+  test("active and done statuses are excluded from queued", () => {
     const json = JSON.stringify([
       { id: "t-1", title: "Active", status: "in_progress" },
       { id: "t-2", title: "Done", status: "closed" },
       { id: "t-3", title: "Actionable", status: "open", labels: ["ready"] },
     ])
     const tasks = parseBdTaskList(json)
-    const actionable = tasks.filter((t) => t.status === "actionable")
-    expect(actionable).toHaveLength(1)
-    expect(actionable[0]!.id).toBe("t-3")
+    const queued = tasks.filter((t) => t.status === "queued")
+    expect(queued).toHaveLength(1)
+    expect(queued[0]!.id).toBe("t-3")
   })
 
-  test("dependency with in_progress status keeps dependent out of actionable", () => {
+  test("dependency with in_progress status keeps dependent out of queued", () => {
     const json = JSON.stringify([
       { id: "t-1", title: "Waiting on WIP", status: "open", labels: ["ready"],
         dependencies: [{ id: "dep-1", status: "in_progress", dependency_type: "blocks" }] },
     ])
     const tasks = parseBdTaskList(json)
-    const actionable = tasks.filter((t) => t.status === "actionable")
-    expect(actionable).toHaveLength(0)
+    const queued = tasks.filter((t) => t.status === "queued")
+    expect(queued).toHaveLength(0)
   })
 
-  test("flat bd list dependencies with open blocker are excluded from actionable", () => {
+  test("flat bd list dependencies with open blocker are excluded from queued", () => {
     const json = JSON.stringify([
       { id: "dep-1", title: "Navigation slice", status: "open", labels: ["ready"] },
       {
@@ -736,8 +736,8 @@ describe("actionable filtering (queryActionable semantics)", () => {
     ])
 
     const tasks = parseBdTaskList(json)
-    const actionable = tasks.filter((t) => t.status === "actionable")
-    expect(actionable.map((t) => t.id)).toEqual(["dep-1"])
+    const queued = tasks.filter((t) => t.status === "queued")
+    expect(queued.map((t) => t.id)).toEqual(["dep-1"])
     expect(tasks.find((t) => t.id === "t-1")?.status).toBe("blocked")
   })
 })

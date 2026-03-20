@@ -58,9 +58,9 @@ let startTuiWorker: typeof import("../src/tuiWorker.js").startTuiWorker
 
 beforeAll(async () => {
   mock.module("../src/beadsAdapter.js", () => ({
-    queryActionable: () =>
+    queryQueued: () =>
       Effect.succeed((() => {
-        calls.push({ op: "queryActionable" })
+        calls.push({ op: "queryQueued" })
         const result = [...readyQueue]
         if (readyOneShot) readyQueue = []
         return result
@@ -256,7 +256,7 @@ afterAll(() => {
 // ===========================================================================
 
 describe("restart recovery: startup ordering", () => {
-  test("recoverStaleTasks runs before any queryActionable poll", async () => {
+  test("recoverStaleTasks runs before any queryQueued poll", async () => {
     readyQueue = []
 
     const { callbacks } = makeCallbacks()
@@ -266,11 +266,11 @@ describe("restart recovery: startup ordering", () => {
     })
 
     // Wait for at least one poll to occur
-    await waitFor(() => calls.filter((c) => c.op === "queryActionable").length >= 1)
+    await waitFor(() => calls.filter((c) => c.op === "queryQueued").length >= 1)
     worker.stop()
 
     const recoveryIdx = calls.findIndex((c) => c.op === "recoverStaleTasks")
-    const firstPollIdx = calls.findIndex((c) => c.op === "queryActionable")
+    const firstPollIdx = calls.findIndex((c) => c.op === "queryQueued")
 
     expect(recoveryIdx).toBeGreaterThanOrEqual(0)
     expect(firstPollIdx).toBeGreaterThan(recoveryIdx)
@@ -307,12 +307,12 @@ describe("restart recovery: startup ordering", () => {
       workerId: "test-dirty-order",
     })
 
-    await waitFor(() => calls.filter((c) => c.op === "queryActionable").length >= 1)
+    await waitFor(() => calls.filter((c) => c.op === "queryQueued").length >= 1)
     worker.stop()
 
     const recoveryIdx = calls.findIndex((c) => c.op === "recoverStaleTasks")
     const dirtyCheckIdx = calls.findIndex((c) => c.op === "isWorktreeDirty")
-    const firstPollIdx = calls.findIndex((c) => c.op === "queryActionable")
+    const firstPollIdx = calls.findIndex((c) => c.op === "queryQueued")
 
     expect(recoveryIdx).toBeGreaterThanOrEqual(0)
     expect(dirtyCheckIdx).toBeGreaterThan(recoveryIdx)
@@ -523,7 +523,7 @@ describe("restart recovery: recovered issue state is open + error", () => {
     })
 
     // Wait for several poll cycles after recovery
-    await waitFor(() => calls.filter((c) => c.op === "queryActionable").length >= 3)
+    await waitFor(() => calls.filter((c) => c.op === "queryQueued").length >= 3)
     worker.stop()
 
     // No claim calls should have been made (recovered task is not re-picked-up)
@@ -572,8 +572,8 @@ describe("dirty worktree: pauses automatic pickup", () => {
     // No claims should have been made — the worker is paused
     expect(calls.some((c) => c.op === "claimTask")).toBe(false)
 
-    // No queryActionable calls either — the polling loop hasn't started
-    expect(calls.some((c) => c.op === "queryActionable")).toBe(false)
+    // No queryQueued calls either — the polling loop hasn't started
+    expect(calls.some((c) => c.op === "queryQueued")).toBe(false)
 
     // Logs should mention the pause
     expect(logs.some((l) => l.message.includes("pausing automatic pickup"))).toBe(true)
@@ -601,7 +601,7 @@ describe("dirty worktree: pauses automatic pickup", () => {
     ).toBe(true)
 
     // But no polling occurred
-    expect(calls.some((c) => c.op === "queryActionable")).toBe(false)
+    expect(calls.some((c) => c.op === "queryQueued")).toBe(false)
   })
 })
 
@@ -624,7 +624,7 @@ describe("dirty worktree: clean state allows normal polling", () => {
     const ops = calls.map((c) => c.op)
     expect(ops).toContain("recoverStaleTasks")
     expect(ops).toContain("isWorktreeDirty")
-    expect(ops).toContain("queryActionable")
+    expect(ops).toContain("queryQueued")
     expect(ops).toContain("claimTask")
     expect(ops).toContain("closeTaskSuccess")
   })
@@ -669,7 +669,7 @@ describe("dirty worktree: clean state allows normal polling", () => {
       workerId: "test-clean-no-pause-log",
     })
 
-    await waitFor(() => calls.filter((c) => c.op === "queryActionable").length >= 1)
+    await waitFor(() => calls.filter((c) => c.op === "queryQueued").length >= 1)
     worker.stop()
 
     // No pause message should appear
@@ -699,7 +699,7 @@ describe("restart recovery: combined recovery + dirty-worktree + polling", () =>
       (c) => c.op === "markTaskExhaustedFailure" && c.id === "full-stale-1",
     )
     const dirtyCheckIdx = calls.findIndex((c) => c.op === "isWorktreeDirty")
-    const pollIdx = calls.findIndex((c) => c.op === "queryActionable")
+    const pollIdx = calls.findIndex((c) => c.op === "queryQueued")
     const claimIdx = calls.findIndex((c) => c.op === "claimTask" && c.id === "full-new-1")
     const closeIdx = calls.findIndex((c) => c.op === "closeTaskSuccess" && c.id === "full-new-1")
 
@@ -736,7 +736,7 @@ describe("restart recovery: combined recovery + dirty-worktree + polling", () =>
     expect(calls.some((c) => c.op === "isWorktreeDirty")).toBe(true)
 
     // But no polling or claiming — the worker is paused
-    expect(calls.some((c) => c.op === "queryActionable")).toBe(false)
+    expect(calls.some((c) => c.op === "queryQueued")).toBe(false)
     expect(calls.some((c) => c.op === "claimTask")).toBe(false)
   })
 })

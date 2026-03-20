@@ -27,7 +27,7 @@ describe("partitionTasks", () => {
   it("puts non-done tasks only in the active bucket", () => {
     const tasks = [
       makeTask("1", "backlog"),
-      makeTask("2", "actionable"),
+      makeTask("2", "queued"),
       makeTask("3", "blocked"),
       makeTask("4", "active"),
       makeTask("5", "error"),
@@ -53,7 +53,7 @@ describe("partitionTasks", () => {
 
   it("preserves adapter ordering within each bucket", () => {
     const tasks = [
-      makeTask("z", "actionable"),
+      makeTask("z", "queued"),
       makeTask("a", "done"),
       makeTask("m", "error"),
       makeTask("b", "done"),
@@ -74,7 +74,7 @@ describe("partitionTasks", () => {
   it("never places done tasks in the active bucket", () => {
     // Exhaustive: ensure done status is exclusively in done bucket
     const allStatuses: WatchTask["status"][] = [
-      "backlog", "actionable", "blocked", "active", "error", "done",
+      "backlog", "queued", "blocked", "active", "error", "done",
     ]
     const tasks = allStatuses.map((s, i) => makeTask(String(i), s))
     const { active, done } = partitionTasks(tasks)
@@ -183,7 +183,7 @@ describe("sortDoneTasks", () => {
 describe("partitionTasks preserves non-done order (regression)", () => {
   it("active bucket keeps adapter ordering regardless of done sorting", () => {
     const tasks = [
-      makeTask("z", "actionable"),
+      makeTask("z", "queued"),
       { ...makeTask("d1", "done"), closedAt: "2026-03-19T00:00:00Z" },
       makeTask("a", "active"),
       { ...makeTask("d2", "done"), closedAt: "2026-01-01T00:00:00Z" },

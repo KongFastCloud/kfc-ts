@@ -20,7 +20,7 @@ import type { BeadsIssue } from "./beads.js"
  *
  * Mapping (see /prd/ralphe-status-alignment.md):
  *  open + no ready + no error + no unresolved blockers → backlog
- *  open + ready   + no error + no unresolved blockers → actionable
+ *  open + ready   + no error + no unresolved blockers → queued
  *  open + unresolved blocking dependencies            → blocked
  *  open + error label                                 → error
  *  in_progress                                        → active
@@ -28,7 +28,7 @@ import type { BeadsIssue } from "./beads.js"
  */
 export type WatchTaskStatus =
   | "backlog"    // open + no ready label + no error label + no unresolved blockers
-  | "actionable" // open + ready label + no error label + no unresolved blockers
+  | "queued" // open + ready label + no error label + no unresolved blockers
   | "blocked"    // open + unresolved blocking deps
   | "active"     // in_progress
   | "done"       // closed
@@ -201,8 +201,8 @@ function mapStatus(
         )
         if (hasUnresolved) return "blocked"
       }
-      // Ready label distinguishes actionable from backlog
-      if (labels && labels.includes("ready")) return "actionable"
+      // Ready label distinguishes queued from backlog
+      if (labels && labels.includes("ready")) return "queued"
       return "backlog"
     }
     default:
@@ -358,22 +358,22 @@ export const queryAllTasks = (
   runBd(["list", "--json", "--all", "--limit", "0"], cwd).pipe(Effect.map(parseBdTaskList))
 
 /**
- * Query only actionable tasks for the executor.
+ * Query only queued tasks for the executor.
  * Uses the full task list with derived status to ensure only issues that are
  * open, ready-labeled, not errored, and not blocked by unresolved dependencies
  * are returned. This is the authoritative gate for automatic pickup.
  *
  * Note: this fetches all issues and filters client-side, which is heavier
  * than `bd ready --json` but guarantees correctness against the Ralphe
- * actionable definition (see /prd/ralphe-status-alignment.md).
+ * queued definition (see /prd/ralphe-status-alignment.md).
  */
-export const queryActionable = (
+export const queryQueued = (
   cwd?: string,
 ): Effect.Effect<BeadsIssue[], FatalError> =>
   queryAllTasks(cwd).pipe(
     Effect.map((tasks) =>
       tasks
-        .filter((t) => t.status === "actionable")
+        .filter((t) => t.status === "queued")
         .map((t): BeadsIssue => ({
           id: t.id,
           title: t.title,
@@ -414,7 +414,7 @@ export type TaskAction = "mark-ready"
  */
 const MARK_READY_ELIGIBLE: ReadonlySet<WatchTaskStatus> = new Set([
   "backlog",
-  "actionable",
+  "queued",
   "blocked",
   "active",
   "error",

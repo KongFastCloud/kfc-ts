@@ -3,7 +3,7 @@ import { Console, Effect } from "effect"
 import { FatalError } from "./errors.js"
 import { loadConfig } from "./config.js"
 import { runTask } from "./runTask.js"
-import { queryActionable } from "./beadsAdapter.js"
+import { queryQueued } from "./beadsAdapter.js"
 import {
   claimTask,
   closeTaskSuccess,
@@ -83,8 +83,8 @@ export const watch = (
             return false
           }
 
-          // Poll for actionable tasks (open + ready + no error + not blocked)
-          const ready = yield* queryActionable(workDir)
+          // Poll for queued tasks (open + ready + no error + not blocked)
+          const ready = yield* queryQueued(workDir)
 
           if (ready.length === 0) {
             yield* Effect.sleep(pollIntervalMs)

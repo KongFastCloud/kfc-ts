@@ -2,7 +2,7 @@
 /**
  * ABOUTME: Dashboard landing view for the watch TUI.
  * Renders two stacked tables: a top table for non-done tasks
- * (backlog, actionable, blocked, active, error) and a bottom
+ * (backlog, queued, blocked, active, error) and a bottom
  * table for done tasks. The active table shows Label while the
  * done table shows a compact Completed datetime instead.
  * Shared columns: ID, Title (clipped), Status, Priority, Duration.
@@ -27,7 +27,7 @@ const colors = {
 
 const taskStatusColor: Record<WatchTaskStatus, string> = {
   backlog: colors.fg.muted,
-  actionable: colors.status.success,
+  queued: colors.status.success,
   active: colors.status.success,
   blocked: colors.status.error,
   done: colors.status.success,
@@ -36,7 +36,7 @@ const taskStatusColor: Record<WatchTaskStatus, string> = {
 
 const taskStatusIndicator: Record<WatchTaskStatus, string> = {
   backlog: "·",
-  actionable: "○",
+  queued: "○",
   active: "▶",
   blocked: "⊘",
   done: "✓",
@@ -126,13 +126,13 @@ export function formatDuration(ms: number): string {
  *
  * - active: live elapsed time from now - startedAt
  * - done / error: finishedAt - startedAt
- * - backlog / actionable / blocked / incomplete metadata: "—"
+ * - backlog / queued / blocked / incomplete metadata: "—"
  */
 export function computeDuration(task: WatchTask): string {
   const { status, startedAt, finishedAt } = task
 
   // Statuses that never show duration
-  if (status === "backlog" || status === "actionable" || status === "blocked") {
+  if (status === "backlog" || status === "queued" || status === "blocked") {
     return "—"
   }
 
@@ -163,7 +163,7 @@ export function computeDuration(task: WatchTask): string {
 /** Non-done statuses that appear in the top table. */
 const NON_DONE_STATUSES: ReadonlySet<WatchTaskStatus> = new Set([
   "backlog",
-  "actionable",
+  "queued",
   "blocked",
   "active",
   "error",

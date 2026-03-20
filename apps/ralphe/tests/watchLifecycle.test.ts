@@ -38,7 +38,7 @@ let calls: Array<{
 // Track runTask invocations
 let runTaskCalls: Array<{ prompt: string }> = []
 
-// Control whether queryActionable is one-shot (returns queue then empty)
+// Control whether queryQueued is one-shot (returns queue then empty)
 let readyOneShot = true
 
 // ---------------------------------------------------------------------------
@@ -49,9 +49,9 @@ let startTuiWorker: typeof import("../src/tuiWorker.js").startTuiWorker
 
 beforeAll(async () => {
   mock.module("../src/beadsAdapter.js", () => ({
-    queryActionable: () =>
+    queryQueued: () =>
       Effect.succeed((() => {
-        calls.push({ op: "queryActionable" })
+        calls.push({ op: "queryQueued" })
         const result = [...readyQueue]
         if (readyOneShot) readyQueue = []
         return result
@@ -218,7 +218,7 @@ describe("watch lifecycle: ready → claim → execute → close", () => {
     // Verify operation ordering
     const ops = calls.map((c) => c.op)
     expect(ops).toContain("recoverStaleTasks")
-    expect(ops).toContain("queryActionable")
+    expect(ops).toContain("queryQueued")
     expect(ops).toContain("claimTask")
     expect(ops).toContain("writeMetadata")
     expect(ops).toContain("closeTaskSuccess")
@@ -569,12 +569,12 @@ describe("watch lifecycle: metadata and operation ordering", () => {
     })
 
     // Wait for at least one poll
-    await waitFor(() => calls.filter((c) => c.op === "queryActionable").length >= 1)
+    await waitFor(() => calls.filter((c) => c.op === "queryQueued").length >= 1)
     worker.stop()
 
-    // recoverStaleTasks should come before any queryActionable
+    // recoverStaleTasks should come before any queryQueued
     const recoveryIdx = calls.findIndex((c) => c.op === "recoverStaleTasks")
-    const firstPollIdx = calls.findIndex((c) => c.op === "queryActionable")
+    const firstPollIdx = calls.findIndex((c) => c.op === "queryQueued")
 
     expect(recoveryIdx).toBeGreaterThanOrEqual(0)
     expect(firstPollIdx).toBeGreaterThan(recoveryIdx)
@@ -603,14 +603,14 @@ describe("watch lifecycle: callback behavior", () => {
   })
 })
 
-describe("watch lifecycle: only actionable issues are picked up", () => {
-  // These tests verify the executor's contract: queryActionable is the
-  // authoritative gate. Since we mock queryActionable directly, these tests
-  // prove the executor correctly processes only what queryActionable returns
-  // and never bypasses the actionable filter.
+describe("watch lifecycle: only queued issues are picked up", () => {
+  // These tests verify the executor's contract: queryQueued is the
+  // authoritative gate. Since we mock queryQueued directly, these tests
+  // prove the executor correctly processes only what queryQueued returns
+  // and never bypasses the queued filter.
 
   test("empty ready queue means no claims are made", async () => {
-    readyQueue = [] // queryActionable returns nothing
+    readyQueue = [] // queryQueued returns nothing
 
     const { callbacks } = makeCallbacks()
     const worker = startTuiWorker(callbacks, {
@@ -619,7 +619,7 @@ describe("watch lifecycle: only actionable issues are picked up", () => {
     })
 
     // Let it poll a few times
-    await waitFor(() => calls.filter((c) => c.op === "queryActionable").length >= 2)
+    await waitFor(() => calls.filter((c) => c.op === "queryQueued").length >= 2)
     worker.stop()
 
     // No claims should have been made
@@ -627,8 +627,8 @@ describe("watch lifecycle: only actionable issues are picked up", () => {
     expect(runTaskCalls.length).toBe(0)
   })
 
-  test("executor does not independently query for non-actionable work", async () => {
-    // Even when queryActionable returns nothing, the executor should not
+  test("executor does not independently query for non-queued work", async () => {
+    // Even when queryQueued returns nothing, the executor should not
     // fall back to a different query that might return backlog/blocked/error tasks.
     readyQueue = []
 
@@ -638,12 +638,12 @@ describe("watch lifecycle: only actionable issues are picked up", () => {
       workerId: "test-no-fallback",
     })
 
-    await waitFor(() => calls.filter((c) => c.op === "queryActionable").length >= 3)
+    await waitFor(() => calls.filter((c) => c.op === "queryQueued").length >= 3)
     worker.stop()
 
-    // Only queryActionable and recoverStaleTasks should appear — no other query ops
+    // Only queryQueued and recoverStaleTasks should appear — no other query ops
     const queryOps = calls.filter(
-      (c) => c.op !== "queryActionable" && c.op !== "recoverStaleTasks",
+      (c) => c.op !== "queryQueued" && c.op !== "recoverStaleTasks",
     )
     expect(queryOps).toHaveLength(0)
   })

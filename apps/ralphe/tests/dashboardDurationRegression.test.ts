@@ -252,7 +252,7 @@ describe("regression: live-tick activation rules", () => {
   it("does not activate tick for waiting statuses even with timestamps", () => {
     const tasks = [
       makeTask("backlog", { startedAt: "2025-01-01T00:00:00Z" }),
-      makeTask("actionable", { startedAt: "2025-01-01T00:00:00Z" }),
+      makeTask("queued", { startedAt: "2025-01-01T00:00:00Z" }),
       makeTask("blocked", { startedAt: "2025-01-01T00:00:00Z" }),
     ]
     expect(hasActiveTimedTask(tasks)).toBe(false)

@@ -63,8 +63,8 @@ describe("computeDuration", () => {
     }))).toBe("—")
   })
 
-  it("returns dash for actionable status", () => {
-    expect(computeDuration(makeTask("actionable"))).toBe("—")
+  it("returns dash for queued status", () => {
+    expect(computeDuration(makeTask("queued"))).toBe("—")
   })
 
   it("returns dash for blocked status", () => {
@@ -154,7 +154,7 @@ describe("hasActiveTimedTask", () => {
       makeTask("done", { startedAt: "2025-01-01T00:00:00Z", finishedAt: "2025-01-01T00:01:00Z" }),
       makeTask("error", { startedAt: "2025-01-01T00:00:00Z", finishedAt: "2025-01-01T00:01:00Z" }),
       makeTask("backlog"),
-      makeTask("actionable"),
+      makeTask("queued"),
       makeTask("blocked"),
     ]
     expect(hasActiveTimedTask(tasks)).toBe(false)

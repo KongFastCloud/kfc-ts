@@ -41,7 +41,7 @@ const colors = {
 // Status theme used by DetailPane
 const taskStatusColor: Record<WatchTaskStatus, string> = {
   backlog: colors.fg.muted,
-  actionable: colors.status.success,
+  queued: colors.status.success,
   active: colors.status.success,
   blocked: colors.status.error,
   done: colors.status.success,
@@ -50,7 +50,7 @@ const taskStatusColor: Record<WatchTaskStatus, string> = {
 
 const taskStatusIndicator: Record<WatchTaskStatus, string> = {
   backlog: "·",
-  actionable: "○",
+  queued: "○",
   active: "▶",
   blocked: "⊘",
   done: "✓",
