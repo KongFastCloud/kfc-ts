@@ -57,6 +57,26 @@ export const runTask = (
       if (config.report !== "none") {
         pipeline = pipe(pipeline, Effect.andThen(report(task, config.report)))
       }
+      if (gitMode === "commit_and_push_and_wait_ci") {
+        pipeline = pipe(
+          pipeline,
+          Effect.andThen(
+            Effect.gen(function* () {
+              const commitResult = yield* gitCommit()
+              if (!commitResult) {
+                yield* Console.log("Push/CI skipped: no commit created.")
+                return
+              }
+
+              yield* Console.log(`Commit hash: ${commitResult.hash}`)
+              const pushResult = yield* gitPush()
+              yield* Console.log(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
+              const ciResult = yield* gitWaitForCi()
+              yield* Console.log(`CI passed: run ${ciResult.runId}`)
+            }),
+          ),
+        )
+      }
       return pipeline
     },
     { maxAttempts: config.maxAttempts },
@@ -68,6 +88,7 @@ export const runTask = (
     yield* Console.log(`Git mode: ${gitMode}`)
     switch (gitMode) {
       case "none":
+      case "commit_and_push_and_wait_ci":
         break
       case "commit": {
         const commitResult = yield* Effect.provide(gitCommit(), engineLayer)
@@ -86,20 +107,6 @@ export const runTask = (
         yield* Console.log(`Commit hash: ${commitResult.hash}`)
         const pushResult = yield* gitPush()
         yield* Console.log(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
-        break
-      }
-      case "commit_and_push_and_wait_ci": {
-        const commitResult = yield* Effect.provide(gitCommit(), engineLayer)
-        if (!commitResult) {
-          yield* Console.log("Push/CI skipped: no commit created.")
-          break
-        }
-
-        yield* Console.log(`Commit hash: ${commitResult.hash}`)
-        const pushResult = yield* gitPush()
-        yield* Console.log(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
-        const ciResult = yield* gitWaitForCi()
-        yield* Console.log(`CI passed: run ${ciResult.runId}`)
         break
       }
     }

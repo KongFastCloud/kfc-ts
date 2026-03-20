@@ -1,5 +1,5 @@
 import { Console, Effect } from "effect"
-import { FatalError } from "./errors.js"
+import { CheckFailure, FatalError } from "./errors.js"
 import { Engine } from "./engine/Engine.js"
 
 export interface GitResult {
@@ -184,7 +184,7 @@ export const gitPush = (): Effect.Effect<GitPushResult, FatalError> =>
     return { remote, ref, output: pushOutput }
   })
 
-export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError> =>
+export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError | CheckFailure> =>
   Effect.gen(function* () {
     // Early check produces a clear error when GitHub CLI is missing.
     yield* runGh(["--version"])
@@ -245,10 +245,21 @@ export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError> =>
         run.conclusion !== "neutral"
       )
       if (failingRun) {
+        const failedLogs = yield* runGh([
+          "run",
+          "view",
+          String(failingRun.databaseId),
+          "--log-failed",
+        ]).pipe(
+          Effect.map((r) => r.stdout.trim()),
+          Effect.catchTag("FatalError", () => Effect.succeed("(failed to fetch CI logs)")),
+        )
+
         return yield* Effect.fail(
-          new FatalError({
-            command: listCommand,
-            message: `CI failed for run ${failingRun.databaseId} (conclusion: ${failingRun.conclusion ?? "unknown"}).`,
+          new CheckFailure({
+            command: `gh run view ${failingRun.databaseId} --log-failed`,
+            stderr: `CI failed for run ${failingRun.databaseId} (conclusion: ${failingRun.conclusion ?? "unknown"}).\n\n${failedLogs}`,
+            exitCode: 1,
           }),
         )
       }

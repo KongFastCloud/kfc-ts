@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { RalpheConfig } from "../src/config.js"
-import { FatalError } from "../src/errors.js"
+import { CheckFailure, FatalError } from "../src/errors.js"
 
 let gitCalls: string[] = []
 let mockedCommitResult: { message: string; hash: string } | undefined = {
@@ -40,7 +40,15 @@ beforeAll(async () => {
   }))
 
   mock.module("../src/loop.js", () => ({
-    loop: (fn: (feedback?: string) => Effect.Effect<unknown, never>) => fn(undefined),
+    loop: (fn: (feedback?: string) => Effect.Effect<unknown, CheckFailure | FatalError>) =>
+      fn(undefined).pipe(
+        Effect.catchTag("CheckFailure", (err) =>
+          Effect.fail(new FatalError({
+            command: err.command,
+            message: `Check failed after 1 attempts: ${err.stderr}`,
+          })),
+        ),
+      ),
   }))
 
   mock.module("../src/report.js", () => ({
@@ -81,7 +89,11 @@ beforeAll(async () => {
         gitCalls.push("wait_ci")
         if (waitCiShouldFail) {
           return yield* Effect.fail(
-            new FatalError({ command: "gh run watch", message: "ci failed" }),
+            new CheckFailure({
+              command: "gh run view 123 --log-failed",
+              stderr: "CI failed for run 123 (conclusion: failure).\n\nError: tests failed",
+              exitCode: 1,
+            }),
           )
         }
         return {
@@ -206,7 +218,7 @@ describe("runTask git mode behavior", () => {
     )
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain("ci failed")
+    expect(result.error).toContain("CI failed for run 123")
     expect(gitCalls).toEqual(["commit", "push", "wait_ci"])
   })
 })
