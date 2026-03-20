@@ -122,7 +122,7 @@ export const watch = (
           if (previousError) {
             prompt += `\n\n## Previous Error\n${previousError}`
           }
-          const result = yield* runTask(prompt, config)
+          const result = yield* runTask(prompt, config, { issueId: issue.id })
 
           // Write final metadata with resume token
           const finishedAt = new Date().toISOString()

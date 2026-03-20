@@ -7,6 +7,7 @@ import { cmd } from "./cmd.js"
 import { loop } from "./loop.js"
 import { report } from "./report.js"
 import { gitCommit, gitPush, gitWaitForCi } from "./git.js"
+import { addComment } from "./beads.js"
 import type { GitMode, RalpheConfig } from "./config.js"
 import type { CheckFailure, FatalError } from "./errors.js"
 import type { GitCommitResult, GitPushResult, GitHubCiResult } from "./git.js"
@@ -101,6 +102,25 @@ export const executePostLoopGitOps = (
   })
 
 /**
+ * Format the session comment for a given engine and resume token.
+ */
+export const formatSessionComment = (
+  engine: "claude" | "codex",
+  attempt: number,
+  maxAttempts: number,
+  resumeToken: string | undefined,
+): string => {
+  if (!resumeToken) {
+    return `[attempt ${attempt}/${maxAttempts}] agent completed (no session id)`
+  }
+  const resumeCmd =
+    engine === "codex"
+      ? `codex resume ${resumeToken}`
+      : `claude --resume ${resumeToken}`
+  return `[attempt ${attempt}/${maxAttempts}] ${resumeCmd}`
+}
+
+/**
  * Shared task executor used by both direct CLI runs and Beads watcher runs.
  * Runs the full pipeline: agent → checks → report → loop with retries → git mode flow.
  */
@@ -110,10 +130,12 @@ export const runTask = (
   opts?: {
     readonly engineOverride?: "claude" | "codex"
     readonly gitModeOverride?: GitMode
+    readonly issueId?: string
   },
 ): Effect.Effect<TaskResult, never> => {
   const engineChoice = opts?.engineOverride ?? config.engine
   const gitMode = resolveGitMode(config, opts?.gitModeOverride)
+  const issueId = opts?.issueId
 
   const engineLayer: Layer.Layer<Engine> =
     engineChoice === "codex" ? CodexEngineLayer : ClaudeEngineLayer
@@ -124,11 +146,17 @@ export const runTask = (
   const ops = defaultGitOps
 
   const workflow = loop(
-    (feedback) => {
+    (feedback, attempt, maxAttempts) => {
       let pipeline: Effect.Effect<unknown, any, Engine> = agent(task, { feedback }).pipe(
         Effect.tap((result: AgentResult) => {
           lastResumeToken = result.resumeToken
           return Effect.void
+        }),
+        // Write session comment when running under watcher (issueId present)
+        Effect.tap((result: AgentResult) => {
+          if (!issueId) return Effect.void
+          const comment = formatSessionComment(engineChoice, attempt, maxAttempts, result.resumeToken)
+          return addComment(issueId, comment)
         }),
       )
       for (const check of config.checks) {

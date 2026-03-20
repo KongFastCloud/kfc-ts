@@ -5,6 +5,7 @@ import { FatalError } from "../src/errors.js"
 import { agent } from "../src/agent.js"
 import { cmd } from "../src/cmd.js"
 import { loop } from "../src/loop.js"
+import { formatSessionComment } from "../src/runTask.js"
 import type { RalpheConfig } from "../src/config.js"
 
 const baseConfig: RalpheConfig = {
@@ -121,5 +122,27 @@ describe("shared executor orchestration", () => {
 
     await Effect.runPromise(Effect.provide(workflow, mockLayer))
     expect(capturedToken).toBeUndefined()
+  })
+})
+
+describe("formatSessionComment", () => {
+  test("formats Claude resume command", () => {
+    const comment = formatSessionComment("claude", 1, 3, "sess-abc123")
+    expect(comment).toBe("[attempt 1/3] claude --resume sess-abc123")
+  })
+
+  test("formats Codex resume command", () => {
+    const comment = formatSessionComment("codex", 2, 3, "thread-xyz789")
+    expect(comment).toBe("[attempt 2/3] codex resume thread-xyz789")
+  })
+
+  test("handles no resume token", () => {
+    const comment = formatSessionComment("claude", 1, 2, undefined)
+    expect(comment).toBe("[attempt 1/2] agent completed (no session id)")
+  })
+
+  test("handles no resume token for codex", () => {
+    const comment = formatSessionComment("codex", 3, 5, undefined)
+    expect(comment).toBe("[attempt 3/5] agent completed (no session id)")
   })
 })

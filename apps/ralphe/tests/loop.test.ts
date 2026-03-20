@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { Effect } from "effect"
-import { loop } from "../src/loop.js"
+import { loop, type LoopEvent } from "../src/loop.js"
 import { CheckFailure, FatalError } from "../src/errors.js"
 
 describe("loop", () => {
@@ -83,5 +83,77 @@ describe("loop", () => {
       expect(err._tag).toBe("FatalError")
       expect(err.message).toBe("auth failed")
     }
+  })
+
+  test("passes attempt and maxAttempts to fn", async () => {
+    const seen: Array<{ attempt: number; maxAttempts: number }> = []
+    await Effect.runPromise(
+      loop(
+        (_feedback, attempt, maxAttempts) => {
+          seen.push({ attempt, maxAttempts })
+          if (seen.length === 1) {
+            return Effect.fail(
+              new CheckFailure({ command: "test", stderr: "fail", exitCode: 1 }),
+            )
+          }
+          return Effect.succeed("ok")
+        },
+        { maxAttempts: 3 },
+      ),
+    )
+    expect(seen).toEqual([
+      { attempt: 1, maxAttempts: 3 },
+      { attempt: 2, maxAttempts: 3 },
+    ])
+  })
+
+  test("onEvent fires attempt_start and success events", async () => {
+    const events: LoopEvent[] = []
+    await Effect.runPromise(
+      loop(
+        () => Effect.succeed("ok"),
+        {
+          maxAttempts: 2,
+          onEvent: (event) => {
+            events.push(event)
+            return Effect.void
+          },
+        },
+      ),
+    )
+    expect(events).toEqual([
+      { type: "attempt_start", attempt: 1, maxAttempts: 2 },
+      { type: "success", attempt: 1, maxAttempts: 2 },
+    ])
+  })
+
+  test("onEvent fires attempt_start for each retry", async () => {
+    const events: LoopEvent[] = []
+    let calls = 0
+    await Effect.runPromise(
+      loop(
+        () => {
+          calls++
+          if (calls === 1) {
+            return Effect.fail(
+              new CheckFailure({ command: "test", stderr: "err", exitCode: 1 }),
+            )
+          }
+          return Effect.succeed("ok")
+        },
+        {
+          maxAttempts: 3,
+          onEvent: (event) => {
+            events.push(event)
+            return Effect.void
+          },
+        },
+      ),
+    )
+    expect(events).toEqual([
+      { type: "attempt_start", attempt: 1, maxAttempts: 3 },
+      { type: "attempt_start", attempt: 2, maxAttempts: 3 },
+      { type: "success", attempt: 2, maxAttempts: 3 },
+    ])
   })
 })

@@ -357,6 +357,21 @@ export const queryAllStaleInProgress = (): Effect.Effect<BeadsIssue[], FatalErro
  * to open + error state via {@link markTaskExhaustedFailure} so it remains
  * visible to operators but is no longer automatically picked up.
  */
+/**
+ * Add a comment to a task via `bd comments add`.
+ * Fire-and-forget: a failed comment write logs a warning instead of propagating.
+ */
+export const addComment = (
+  id: string,
+  text: string,
+): Effect.Effect<void, never> =>
+  runBd(["comments", "add", id, text]).pipe(
+    Effect.map(() => undefined),
+    Effect.catchTag("FatalError", (err) =>
+      Console.warn(`Failed to write comment on ${id}: ${err.message}`),
+    ),
+  )
+
 export const recoverStaleTasks = (
   workerId: string,
 ): Effect.Effect<number, FatalError> =>
