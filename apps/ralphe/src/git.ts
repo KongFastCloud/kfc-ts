@@ -25,6 +25,20 @@ export interface GitHubCiResult {
   readonly workflowName: string | null
 }
 
+interface GhJob {
+  readonly databaseId: number
+  readonly name: string
+  readonly conclusion: string | null
+}
+
+interface GhAnnotation {
+  readonly path: string
+  readonly start_line: number
+  readonly annotation_level: string
+  readonly title: string | null
+  readonly message: string
+}
+
 interface CliResult {
   readonly stdout: string
 }
@@ -125,6 +139,61 @@ const parseGhRunList = (raw: string): GhRun[] | undefined => {
     return undefined
   }
 }
+
+/**
+ * Fetch structured failure annotations for a CI run via the GitHub check-runs API.
+ * Returns a formatted string of failure-level annotations (~4KB) instead of
+ * raw logs (~117KB) so the agent gets concise, actionable feedback.
+ */
+const fetchCiAnnotations = (runId: number): Effect.Effect<string, never> =>
+  Effect.gen(function* () {
+    // Get repo owner/name for API calls
+    const repoInfo = yield* runGh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])
+    const repo = repoInfo.stdout.trim()
+
+    // Get jobs for the run
+    const jobsOutput = yield* runGh(["run", "view", String(runId), "--json", "jobs"])
+    const jobs: GhJob[] = (() => {
+      try {
+        const parsed = JSON.parse(jobsOutput.stdout)
+        return (parsed.jobs ?? []) as GhJob[]
+      } catch {
+        return []
+      }
+    })()
+
+    const failedJobs = jobs.filter((j) => j.conclusion === "failure")
+    if (failedJobs.length === 0) return "(no failed jobs found)"
+
+    // Fetch annotations for each failed job
+    const annotations: GhAnnotation[] = []
+    for (const job of failedJobs) {
+      const annOutput = yield* runGh([
+        "api",
+        `repos/${repo}/check-runs/${job.databaseId}/annotations`,
+      ]).pipe(
+        Effect.catchTag("FatalError", () => Effect.succeed({ stdout: "[]" })),
+      )
+      try {
+        const parsed = JSON.parse(annOutput.stdout) as GhAnnotation[]
+        annotations.push(...parsed.filter((a) => a.annotation_level === "failure"))
+      } catch {
+        // skip unparseable annotations
+      }
+    }
+
+    if (annotations.length === 0) return "(no failure annotations found)"
+
+    return annotations
+      .map((a) => {
+        const location = a.start_line ? `${a.path}:${a.start_line}` : a.path
+        const title = a.title ? ` — ${a.title}` : ""
+        return `- ${location}${title}: ${a.message}`
+      })
+      .join("\n")
+  }).pipe(
+    Effect.catchTag("FatalError", () => Effect.succeed("(failed to fetch CI annotations)")),
+  )
 
 export const gitCommitAndPush = (): Effect.Effect<void, FatalError, Engine> =>
   Effect.gen(function* () {
@@ -245,20 +314,12 @@ export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError | Check
         run.conclusion !== "neutral"
       )
       if (failingRun) {
-        const failedLogs = yield* runGh([
-          "run",
-          "view",
-          String(failingRun.databaseId),
-          "--log-failed",
-        ]).pipe(
-          Effect.map((r) => r.stdout.trim()),
-          Effect.catchTag("FatalError", () => Effect.succeed("(failed to fetch CI logs)")),
-        )
+        const annotations = yield* fetchCiAnnotations(failingRun.databaseId)
 
         return yield* Effect.fail(
           new CheckFailure({
-            command: `gh run view ${failingRun.databaseId} --log-failed`,
-            stderr: `CI failed for run ${failingRun.databaseId} (conclusion: ${failingRun.conclusion ?? "unknown"}).\n\n${failedLogs}`,
+            command: `CI run ${failingRun.databaseId}`,
+            stderr: `CI failed (run ${failingRun.databaseId}). Failure annotations:\n\n${annotations}`,
             exitCode: 1,
           }),
         )
