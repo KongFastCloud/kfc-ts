@@ -126,6 +126,26 @@ describe("loadConfig", () => {
   })
 })
 
+describe("loadConfig reload", () => {
+  test("returns fresh values after config file is mutated", () => {
+    const configDir = path.join(tmpDir, ".ralphe")
+    fs.mkdirSync(configDir, { recursive: true })
+    const configPath = path.join(configDir, "config.json")
+
+    // Write initial config
+    fs.writeFileSync(configPath, JSON.stringify({ engine: "claude", maxAttempts: 2 }))
+    const first = loadConfig(tmpDir)
+    expect(first.engine).toBe("claude")
+    expect(first.maxAttempts).toBe(2)
+
+    // Mutate config on disk
+    fs.writeFileSync(configPath, JSON.stringify({ engine: "codex", maxAttempts: 5 }))
+    const second = loadConfig(tmpDir)
+    expect(second.engine).toBe("codex")
+    expect(second.maxAttempts).toBe(5)
+  })
+})
+
 describe("saveConfig", () => {
   test("creates directory and writes config with canonical git.mode", () => {
     saveConfig(

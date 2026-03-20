@@ -116,12 +116,12 @@ export function startTuiWorker(
       log(`Worktree check failed: ${e instanceof Error ? e.message : String(e)}`)
     }
 
-    const config = loadConfig(workDir)
-
     log("Worker ready, polling for tasks...")
     setState("idle")
 
     while (!stopped) {
+      const config = loadConfig(workDir)
+
       try {
         // Poll for queued tasks (open + ready + not blocked)
         const ready = await Effect.runPromise(queryQueued(workDir))

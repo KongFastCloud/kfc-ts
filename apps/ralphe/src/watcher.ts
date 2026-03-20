@@ -69,13 +69,14 @@ export const watch = (
       yield* Console.log("Worktree is clean — resuming automatic pickup.")
     }
 
-    const config = loadConfig(workDir)
     let tasksProcessed = 0
 
     yield* Effect.iterate(true as boolean, {
       while: (running) => running,
       body: () =>
         Effect.gen(function* () {
+          const config = loadConfig(workDir)
+
           // Check task limit
           if (maxTasks !== undefined && tasksProcessed >= maxTasks) {
             yield* Console.log(`Reached task limit (${maxTasks}). Stopping.`)
