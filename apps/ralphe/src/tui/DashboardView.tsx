@@ -369,7 +369,7 @@ function DashboardTable({
   flexGrow,
   borderColor,
   variant,
-  markingReadyTaskId,
+  markingReadyIds,
   onVisibleRowCountChange,
 }: {
   title: string
@@ -380,7 +380,7 @@ function DashboardTable({
   flexGrow: number
   borderColor: string
   variant: TableVariant
-  markingReadyTaskId?: string | null
+  markingReadyIds?: Set<string>
   onVisibleRowCountChange?: (count: number) => void
 }): ReactNode {
   const boxRef = useRef<BoxRenderable>(null)
@@ -432,7 +432,7 @@ function DashboardTable({
                 isSelected={absoluteIdx === selectedIndex}
                 titleWidth={titleWidth}
                 variant={variant}
-                isMarkingReady={task.id === markingReadyTaskId}
+                isMarkingReady={markingReadyIds?.has(task.id) ?? false}
               />
             )
           })
@@ -530,8 +530,8 @@ export interface DashboardViewProps {
   /** Scroll offset (first visible row) for the done table. */
   doneScrollOffset: number
   terminalWidth: number
-  /** Task ID currently being marked ready (shows loading indicator). */
-  markingReadyTaskId?: string | null
+  /** Set of task IDs currently being marked ready (shows ◌ loading indicator). */
+  markingReadyIds?: Set<string>
   /** Callback when the active table's measured visible row count changes. */
   onActiveVisibleRowCountChange?: (count: number) => void
   /** Callback when the done table's measured visible row count changes. */
@@ -551,7 +551,7 @@ export function DashboardView({
   activeScrollOffset,
   doneScrollOffset,
   terminalWidth,
-  markingReadyTaskId,
+  markingReadyIds,
   onActiveVisibleRowCountChange,
   onDoneVisibleRowCountChange,
 }: DashboardViewProps): ReactNode {
@@ -594,7 +594,7 @@ export function DashboardView({
             : colors.border.normal
         }
         variant="active"
-        markingReadyTaskId={markingReadyTaskId}
+        markingReadyIds={markingReadyIds}
         onVisibleRowCountChange={onActiveVisibleRowCountChange}
       />
       <DashboardTable

@@ -12,11 +12,10 @@ import type { ReactNode } from "react"
 import { useState, useCallback, useEffect, useRef } from "react"
 import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
 import { getAvailableActions } from "../beadsAdapter.js"
-import { markTaskReady } from "../beads.js"
-import { Effect } from "effect"
 import type { RalpheConfig, GitMode } from "../config.js"
 import type { WorkerStatus } from "../tuiWorker.js"
 import { DashboardView, partitionTasks } from "./DashboardView.js"
+import { useMarkReadyQueue } from "./useMarkReadyQueue.js"
 import {
   initialDashboardFocusState,
   toggleFocusedTable,
@@ -524,7 +523,6 @@ export function WatchApp({
     initialTasks.length > 0 ? new Date() : null,
   )
   const refreshingRef = useRef(false)
-  const [markingReadyTaskId, setMarkingReadyTaskId] = useState<string | null>(null)
 
   // Dashboard focus and per-table selection state (single source of truth)
   const [focusState, setFocusState] = useState(initialDashboardFocusState)
@@ -564,6 +562,9 @@ export function WatchApp({
       refreshingRef.current = false
     }
   }, [onRefresh, activeVisibleRows, doneVisibleRows])
+
+  // Mark-ready queue (non-blocking, FIFO)
+  const { enqueue: enqueueMarkReady, pendingIds: markingReadyIds } = useMarkReadyQueue(doRefresh)
 
   // Periodic auto-refresh
   useEffect(() => {
@@ -633,24 +634,13 @@ export function WatchApp({
           break
 
         case "m":
-          // Mark Ready action — only if available for the selected task
+          // Mark Ready action — enqueue into non-blocking FIFO queue
           if (
             selectedTask &&
             getAvailableActions(selectedTask).includes("mark-ready") &&
-            markingReadyTaskId === null
+            !markingReadyIds.has(selectedTask.id)
           ) {
-            const taskId = selectedTask.id
-            setMarkingReadyTaskId(taskId)
-            const currentLabels = selectedTask.labels ?? []
-            Effect.runPromise(markTaskReady(taskId, currentLabels))
-              .then(() => doRefresh())
-              .catch((e) => {
-                const msg = e instanceof Error ? e.message : String(e)
-                setError(`Mark ready failed: ${msg}`)
-              })
-              .finally(() => {
-                setMarkingReadyTaskId(null)
-              })
+            enqueueMarkReady({ id: selectedTask.id, labels: selectedTask.labels ?? [] })
           }
           break
 
@@ -658,7 +648,7 @@ export function WatchApp({
           break
       }
     },
-    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh, selectedTask, activeVisibleRows, doneVisibleRows, markingReadyTaskId],
+    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh, selectedTask, activeVisibleRows, doneVisibleRows, markingReadyIds, enqueueMarkReady],
   )
 
   useKeyboard(handleKeyboard)
@@ -697,7 +687,7 @@ export function WatchApp({
             activeScrollOffset={activeScrollOffset}
             doneScrollOffset={doneScrollOffset}
             terminalWidth={width}
-            markingReadyTaskId={markingReadyTaskId}
+            markingReadyIds={markingReadyIds}
             onActiveVisibleRowCountChange={setActiveVisibleRows}
             onDoneVisibleRowCountChange={setDoneVisibleRows}
           />
