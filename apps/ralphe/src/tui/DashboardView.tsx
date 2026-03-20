@@ -284,11 +284,13 @@ function DashboardRow({
   isSelected,
   titleWidth,
   variant,
+  isMarkingReady,
 }: {
   task: WatchTask
   isSelected: boolean
   titleWidth: number
   variant: TableVariant
+  isMarkingReady?: boolean
 }): ReactNode {
   const indicator = taskStatusIndicator[task.status]
   const sColor = taskStatusColor[task.status]
@@ -300,12 +302,14 @@ function DashboardRow({
   const fourthColStr =
     variant === "done"
       ? pad(truncate(formatCompletedAt(task.closedAt), COL.label - 1), COL.label)
-      : pad(
-          task.labels && task.labels.length > 0
-            ? truncate(task.labels.join(", "), COL.label - 1)
-            : "—",
-          COL.label,
-        )
+      : isMarkingReady
+        ? pad("...", COL.label)
+        : pad(
+            task.labels && task.labels.length > 0
+              ? truncate(task.labels.join(", "), COL.label - 1)
+              : "—",
+            COL.label,
+          )
   const priorityStr = pad(
     task.priority !== undefined ? `P${task.priority}` : "—",
     COL.priority,
@@ -357,6 +361,7 @@ function DashboardTable({
   flexGrow,
   borderColor,
   variant,
+  markingReadyTaskId,
   onVisibleRowCountChange,
 }: {
   title: string
@@ -367,6 +372,7 @@ function DashboardTable({
   flexGrow: number
   borderColor: string
   variant: TableVariant
+  markingReadyTaskId?: string | null
   onVisibleRowCountChange?: (count: number) => void
 }): ReactNode {
   const boxRef = useRef<BoxRenderable>(null)
@@ -417,6 +423,7 @@ function DashboardTable({
                 isSelected={absoluteIdx === selectedIndex}
                 titleWidth={titleWidth}
                 variant={variant}
+                isMarkingReady={task.id === markingReadyTaskId}
               />
             )
           })
@@ -506,6 +513,8 @@ export interface DashboardViewProps {
   /** Scroll offset (first visible row) for the done table. */
   doneScrollOffset: number
   terminalWidth: number
+  /** Task ID currently being marked ready (shows loading indicator). */
+  markingReadyTaskId?: string | null
   /** Callback when the active table's measured visible row count changes. */
   onActiveVisibleRowCountChange?: (count: number) => void
   /** Callback when the done table's measured visible row count changes. */
@@ -525,6 +534,7 @@ export function DashboardView({
   activeScrollOffset,
   doneScrollOffset,
   terminalWidth,
+  markingReadyTaskId,
   onActiveVisibleRowCountChange,
   onDoneVisibleRowCountChange,
 }: DashboardViewProps): ReactNode {
@@ -560,6 +570,7 @@ export function DashboardView({
             : colors.border.normal
         }
         variant="active"
+        markingReadyTaskId={markingReadyTaskId}
         onVisibleRowCountChange={onActiveVisibleRowCountChange}
       />
       <DashboardTable

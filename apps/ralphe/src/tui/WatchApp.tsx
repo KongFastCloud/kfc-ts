@@ -455,7 +455,7 @@ export function WatchApp({
     initialTasks.length > 0 ? new Date() : null,
   )
   const refreshingRef = useRef(false)
-  const markingReadyRef = useRef(false)
+  const [markingReadyTaskId, setMarkingReadyTaskId] = useState<string | null>(null)
 
   // Dashboard focus and per-table selection state (single source of truth)
   const [focusState, setFocusState] = useState(initialDashboardFocusState)
@@ -568,10 +568,10 @@ export function WatchApp({
           if (
             selectedTask &&
             getAvailableActions(selectedTask).includes("mark-ready") &&
-            !markingReadyRef.current
+            markingReadyTaskId === null
           ) {
-            markingReadyRef.current = true
             const taskId = selectedTask.id
+            setMarkingReadyTaskId(taskId)
             const currentLabels = selectedTask.labels ?? []
             Effect.runPromise(markTaskReady(taskId, currentLabels))
               .then(() => doRefresh())
@@ -580,7 +580,7 @@ export function WatchApp({
                 setError(`Mark ready failed: ${msg}`)
               })
               .finally(() => {
-                markingReadyRef.current = false
+                setMarkingReadyTaskId(null)
               })
           }
           break
@@ -589,7 +589,7 @@ export function WatchApp({
           break
       }
     },
-    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh, selectedTask, activeVisibleRows, doneVisibleRows],
+    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh, selectedTask, activeVisibleRows, doneVisibleRows, markingReadyTaskId],
   )
 
   useKeyboard(handleKeyboard)
@@ -627,6 +627,7 @@ export function WatchApp({
             activeScrollOffset={activeScrollOffset}
             doneScrollOffset={doneScrollOffset}
             terminalWidth={width}
+            markingReadyTaskId={markingReadyTaskId}
             onActiveVisibleRowCountChange={setActiveVisibleRows}
             onDoneVisibleRowCountChange={setDoneVisibleRows}
           />
