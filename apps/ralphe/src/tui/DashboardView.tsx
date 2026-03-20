@@ -295,6 +295,7 @@ function DashboardRow({
   const indicator = taskStatusIndicator[task.status]
   const sColor = taskStatusColor[task.status]
   const isDimmed = task.status === "done" || task.status === "error"
+  const effectiveDimmed = isDimmed && !isSelected
 
   const idStr = formatIdCell(task.id)
   const titleStr = pad(truncate(task.title, titleWidth - 1), titleWidth)
@@ -316,8 +317,8 @@ function DashboardRow({
   )
   const durationStr = pad(computeDuration(task), COL.duration)
 
-  const idColor = isDimmed ? colors.fg.dim : colors.fg.muted
-  const titleColor = isDimmed
+  const idColor = effectiveDimmed ? colors.fg.dim : colors.fg.muted
+  const titleColor = effectiveDimmed
     ? colors.fg.dim
     : isSelected
       ? colors.fg.primary
@@ -342,7 +343,7 @@ function DashboardRow({
         <span fg={sColor}>{statusStr}</span>
         <span fg={colors.accent.secondary}>{fourthColStr}</span>
         <span fg={colors.fg.secondary}>{priorityStr}</span>
-        <span fg={task.status === "active" ? colors.status.info : colors.fg.dim}>{durationStr}</span>
+        <span fg={task.status === "active" || !effectiveDimmed ? colors.status.info : colors.fg.dim}>{durationStr}</span>
       </text>
     </box>
   )
