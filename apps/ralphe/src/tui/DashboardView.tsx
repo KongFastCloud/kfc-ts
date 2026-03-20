@@ -10,6 +10,7 @@
 
 import type { ReactNode } from "react"
 import { useState, useEffect, useRef } from "react"
+import type { BoxRenderable } from "@opentui/core"
 import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
 
 // ---------------------------------------------------------------------------
@@ -352,7 +353,6 @@ function DashboardTable({
   tasks,
   selectedIndex,
   scrollOffset,
-  visibleRowCount,
   titleWidth,
   flexGrow,
   borderColor,
@@ -362,17 +362,27 @@ function DashboardTable({
   tasks: WatchTask[]
   selectedIndex: number
   scrollOffset: number
-  visibleRowCount: number
   titleWidth: number
   flexGrow: number
   borderColor: string
   variant: TableVariant
 }): ReactNode {
+  const boxRef = useRef<BoxRenderable>(null)
+  const [visibleRowCount, setVisibleRowCount] = useState(0)
+
+  useEffect(() => {
+    const node = boxRef.current?.getLayoutNode()
+    if (!node) return
+    const measuredHeight = Math.floor(node.getComputedHeight())
+    setVisibleRowCount(Math.max(0, measuredHeight - TABLE_CHROME_LINES))
+  })
+
   // Render only the visible window of rows
   const visibleSlice = tasks.slice(scrollOffset, scrollOffset + visibleRowCount)
 
   return (
     <box
+      ref={boxRef}
       style={{
         width: "100%",
         flexGrow,
@@ -513,7 +523,6 @@ export interface DashboardViewProps {
   /** Scroll offset (first visible row) for the done table. */
   doneScrollOffset: number
   terminalWidth: number
-  terminalHeight: number
 }
 
 /**
@@ -529,7 +538,6 @@ export function DashboardView({
   activeScrollOffset,
   doneScrollOffset,
   terminalWidth,
-  terminalHeight,
 }: DashboardViewProps): ReactNode {
   // Drive a one-second re-render while any active task needs a live duration.
   useDurationTick(tasks)
@@ -541,9 +549,6 @@ export function DashboardView({
   const fixedColumnsWidth =
     COL.id + COL.idTitleSep + COL.status + COL.label + COL.priority + COL.duration + 4 // +4 for padding/border
   const titleWidth = Math.max(10, terminalWidth - fixedColumnsWidth)
-
-  // Derive visible row capacities from terminal height
-  const { activeVisibleRows, doneVisibleRows } = computeVisibleRowCounts(terminalHeight)
 
   return (
     <box
@@ -558,7 +563,6 @@ export function DashboardView({
         tasks={active}
         selectedIndex={focusedTable === "active" ? activeSelectedIndex : -1}
         scrollOffset={activeScrollOffset}
-        visibleRowCount={activeVisibleRows}
         titleWidth={titleWidth}
         flexGrow={2}
         borderColor={
@@ -573,7 +577,6 @@ export function DashboardView({
         tasks={done}
         selectedIndex={focusedTable === "done" ? doneSelectedIndex : -1}
         scrollOffset={doneScrollOffset}
-        visibleRowCount={doneVisibleRows}
         titleWidth={titleWidth}
         flexGrow={1}
         borderColor={

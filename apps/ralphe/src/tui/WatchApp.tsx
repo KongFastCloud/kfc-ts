@@ -627,7 +627,6 @@ export function WatchApp({
             activeScrollOffset={activeScrollOffset}
             doneScrollOffset={doneScrollOffset}
             terminalWidth={width}
-            terminalHeight={height}
           />
         )}
       </box>
