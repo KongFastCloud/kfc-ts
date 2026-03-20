@@ -146,8 +146,8 @@ function WatchHeader({
 function WatchFooter({ viewMode, hasMarkReady }: { viewMode: "dashboard" | "detail"; hasMarkReady?: boolean }): ReactNode {
   const navShortcuts =
     viewMode === "detail"
-      ? `Esc/Backspace:Back${hasMarkReady ? "  m:Mark Ready" : ""}  q:Quit`
-      : "↑↓:Navigate  Tab:Switch Table  Enter:Detail  r:Refresh  q:Quit"
+      ? `Esc/Backspace:Back${hasMarkReady ? "  m:Mark Ready" : ""}  ^Q:Quit`
+      : "↑↓:Navigate  Tab:Switch Table  Enter:Detail  r:Refresh  ^Q:Quit"
   return (
     <box
       style={{
@@ -507,17 +507,20 @@ export function WatchApp({
 
   // Keyboard handler — delegates to pure state transitions from dashboardFocus.ts
   const handleKeyboard = useCallback(
-    (key: { name: string; shift?: boolean }) => {
+    (key: { name: string; shift?: boolean; ctrl?: boolean }) => {
+      // Ctrl+Q quits from any view
+      if (key.ctrl && key.name === "q") {
+        onQuit?.()
+        process.exit(0)
+        return
+      }
+
       // --- Detail-mode keys ---
       if (viewMode === "detail") {
         switch (key.name) {
           case "escape":
           case "backspace":
             setFocusState(returnFromDetail())
-            return
-          case "q":
-            onQuit?.()
-            process.exit(0)
             return
           case "m":
             // Mark Ready action — only if available for the selected task
@@ -547,11 +550,6 @@ export function WatchApp({
 
       // --- Dashboard-mode keys ---
       switch (key.name) {
-        case "q":
-          onQuit?.()
-          process.exit(0)
-          break
-
         case "escape":
           onQuit?.()
           process.exit(0)
