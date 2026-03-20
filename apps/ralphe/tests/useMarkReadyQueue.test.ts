@@ -5,8 +5,8 @@
  */
 
 import { describe, test, expect } from "bun:test"
-import { MarkReadyQueueEngine } from "../src/tui/useMarkReadyQueue.js"
-import type { RunMarkReady } from "../src/tui/useMarkReadyQueue.js"
+import { MarkReadyQueueEngine } from "../src/tui/markReadyQueueEngine.js"
+import type { RunMarkReady } from "../src/tui/markReadyQueueEngine.js"
 
 // ---------------------------------------------------------------------------
 // Helpers
