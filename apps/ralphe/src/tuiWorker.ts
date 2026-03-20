@@ -13,6 +13,7 @@ import {
   claimTask,
   closeTaskSuccess,
   writeMetadata,
+  readMetadata,
   buildPromptFromIssue,
   recoverStaleTasks,
   markTaskExhaustedFailure,
@@ -154,6 +155,15 @@ export function startTuiWorker(
         log(`Claimed task: ${issue.id}`, issue.id)
         setState("running", issue.id)
 
+        // Read existing metadata before overwriting to capture previous error
+        let previousError: string | undefined
+        try {
+          const existingMeta = await Effect.runPromise(readMetadata(issue.id))
+          previousError = existingMeta?.error
+        } catch (e) {
+          log(`Failed to read metadata for ${issue.id}: ${e instanceof Error ? e.message : String(e)}`, issue.id)
+        }
+
         // Write initial metadata
         const startedAt = new Date().toISOString()
         const startMetadata: BeadsMetadata = {
@@ -169,7 +179,10 @@ export function startTuiWorker(
         }
 
         // Build prompt and execute
-        const prompt = buildPromptFromIssue(issue)
+        let prompt = buildPromptFromIssue(issue)
+        if (previousError) {
+          prompt += `\n\n## Previous Error\n${previousError}`
+        }
         log(`Executing task ${issue.id}...`, issue.id)
 
         let result: TaskResult

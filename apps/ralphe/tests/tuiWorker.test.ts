@@ -28,6 +28,7 @@ beforeAll(async () => {
     closeTaskFailure: () => Effect.succeed(undefined),
     markTaskExhaustedFailure: () => Effect.succeed(undefined),
     writeMetadata: () => Effect.succeed(undefined),
+    readMetadata: () => Effect.succeed(undefined),
     buildPromptFromIssue: (issue: { title: string }) => issue.title,
   }))
 

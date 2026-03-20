@@ -8,6 +8,7 @@ import {
   claimTask,
   closeTaskSuccess,
   writeMetadata,
+  readMetadata,
   buildPromptFromIssue,
   recoverStaleTasks,
   markTaskExhaustedFailure,
@@ -103,6 +104,10 @@ export const watch = (
 
           yield* Console.log(`Claimed task: ${issue.id}`)
 
+          // Read existing metadata before overwriting to capture previous error
+          const existingMeta = yield* Effect.either(readMetadata(issue.id))
+          const previousError = existingMeta._tag === "Right" ? existingMeta.right?.error : undefined
+
           // Write initial metadata
           const startedAt = new Date().toISOString()
           const startMetadata: BeadsMetadata = {
@@ -114,7 +119,10 @@ export const watch = (
           yield* writeMetadata(issue.id, startMetadata)
 
           // Build prompt and execute
-          const prompt = buildPromptFromIssue(issue)
+          let prompt = buildPromptFromIssue(issue)
+          if (previousError) {
+            prompt += `\n\n## Previous Error\n${previousError}`
+          }
           const result = yield* runTask(prompt, config, {
             engineOverride: opts?.engineOverride,
           })

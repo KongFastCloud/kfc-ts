@@ -244,6 +244,41 @@ export const markTaskExhaustedFailure = (
   })
 
 /**
+ * Read execution metadata from a task's `ralphe` namespace.
+ * Returns undefined when the task has no ralphe metadata or it is unparseable.
+ */
+export const readMetadata = (
+  id: string,
+): Effect.Effect<BeadsMetadata | undefined, FatalError> =>
+  runBd(["show", id, "--json"]).pipe(
+    Effect.map((stdout) => {
+      try {
+        const parsed = JSON.parse(stdout)
+        const item = Array.isArray(parsed) ? parsed[0] : parsed
+        const ralphe = item?.metadata?.ralphe
+        if (ralphe == null) return undefined
+
+        // Handle both structured object and serialized JSON string
+        const obj =
+          typeof ralphe === "string" ? JSON.parse(ralphe) : ralphe
+        if (!obj || typeof obj !== "object") return undefined
+
+        return {
+          engine: obj.engine ?? "claude",
+          workerId: obj.workerId ?? "",
+          timestamp: obj.timestamp ?? "",
+          resumeToken: typeof obj.resumeToken === "string" ? obj.resumeToken : undefined,
+          startedAt: typeof obj.startedAt === "string" ? obj.startedAt : undefined,
+          finishedAt: typeof obj.finishedAt === "string" ? obj.finishedAt : undefined,
+          error: typeof obj.error === "string" ? obj.error : undefined,
+        } as BeadsMetadata
+      } catch {
+        return undefined
+      }
+    }),
+  )
+
+/**
  * Write execution metadata to a task under the `ralphe` namespace.
  */
 export const writeMetadata = (

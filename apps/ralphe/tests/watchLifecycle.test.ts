@@ -41,6 +41,9 @@ let runTaskCalls: Array<{ prompt: string }> = []
 // Control whether queryQueued is one-shot (returns queue then empty)
 let readyOneShot = true
 
+// Configurable previous metadata returned by readMetadata
+let previousMetadata: BeadsMetadata | undefined = undefined
+
 // ---------------------------------------------------------------------------
 // Module setup — install mocks lazily so they do not leak into other files
 // ---------------------------------------------------------------------------
@@ -59,6 +62,11 @@ beforeAll(async () => {
   }))
 
   mock.module("../src/beads.js", () => ({
+    readMetadata: (id: string) => {
+      calls.push({ op: "readMetadata", id })
+      return Effect.succeed(previousMetadata)
+    },
+
     claimTask: (id: string) =>
       Effect.succeed((() => {
         calls.push({ op: "claimTask", id })
@@ -187,6 +195,7 @@ beforeEach(() => {
   taskResult = { success: true, engine: "claude", resumeToken: "tok-test" }
   taskExecutionDelay = 0
   readyOneShot = true
+  previousMetadata = undefined
   calls = []
   runTaskCalls = []
 })
@@ -782,5 +791,105 @@ describe("watch lifecycle: prompt building", () => {
     const prompt = runTaskCalls[0]!.prompt
     expect(prompt).toContain("Add user authentication")
     expect(prompt).toContain("Implement OAuth2 login flow")
+  })
+
+  test("prompt includes Previous Error section when retrying an errored task", async () => {
+    readyQueue = [makeIssue("retry-1", "Fix broken tests")]
+    taskResult = { success: true, engine: "claude" }
+
+    // Simulate previous failure metadata
+    previousMetadata = {
+      engine: "claude",
+      workerId: "old-worker",
+      timestamp: "2026-03-19T10:00:00Z",
+      startedAt: "2026-03-19T10:00:00Z",
+      finishedAt: "2026-03-19T10:05:00Z",
+      error: "TypeError: Cannot read property 'map' of undefined at src/utils.ts:42",
+    }
+
+    const { callbacks } = makeCallbacks()
+    const worker = startTuiWorker(callbacks, {
+      pollIntervalMs: 30,
+      workerId: "test-retry-prompt",
+    })
+
+    await waitFor(() => runTaskCalls.length >= 1)
+    worker.stop()
+
+    const prompt = runTaskCalls[0]!.prompt
+    expect(prompt).toContain("## Previous Error")
+    expect(prompt).toContain("TypeError: Cannot read property 'map' of undefined at src/utils.ts:42")
+  })
+
+  test("prompt does not include Previous Error for fresh tasks", async () => {
+    readyQueue = [makeIssue("fresh-1", "New feature")]
+    taskResult = { success: true, engine: "claude" }
+
+    // No previous metadata (fresh task)
+    previousMetadata = undefined
+
+    const { callbacks } = makeCallbacks()
+    const worker = startTuiWorker(callbacks, {
+      pollIntervalMs: 30,
+      workerId: "test-fresh-prompt",
+    })
+
+    await waitFor(() => runTaskCalls.length >= 1)
+    worker.stop()
+
+    const prompt = runTaskCalls[0]!.prompt
+    expect(prompt).not.toContain("## Previous Error")
+  })
+
+  test("prompt does not include Previous Error when metadata exists but has no error", async () => {
+    readyQueue = [makeIssue("no-err-1", "Previously succeeded task")]
+    taskResult = { success: true, engine: "claude" }
+
+    // Previous metadata without error field
+    previousMetadata = {
+      engine: "claude",
+      workerId: "old-worker",
+      timestamp: "2026-03-19T10:00:00Z",
+      startedAt: "2026-03-19T10:00:00Z",
+      finishedAt: "2026-03-19T10:05:00Z",
+    }
+
+    const { callbacks } = makeCallbacks()
+    const worker = startTuiWorker(callbacks, {
+      pollIntervalMs: 30,
+      workerId: "test-no-error",
+    })
+
+    await waitFor(() => runTaskCalls.length >= 1)
+    worker.stop()
+
+    const prompt = runTaskCalls[0]!.prompt
+    expect(prompt).not.toContain("## Previous Error")
+  })
+
+  test("previous error is read from metadata before metadata is overwritten", async () => {
+    readyQueue = [makeIssue("order-1", "Check ordering")]
+    taskResult = { success: true, engine: "claude" }
+    previousMetadata = {
+      engine: "claude",
+      workerId: "old-worker",
+      timestamp: "2026-03-19T10:00:00Z",
+      error: "previous failure",
+    }
+
+    const { callbacks } = makeCallbacks()
+    const worker = startTuiWorker(callbacks, {
+      pollIntervalMs: 30,
+      workerId: "test-ordering",
+    })
+
+    await waitFor(() => runTaskCalls.length >= 1)
+    worker.stop()
+
+    // Verify readMetadata happens before writeMetadata
+    const readIdx = calls.findIndex((c) => c.op === "readMetadata" && c.id === "order-1")
+    const writeIdx = calls.findIndex((c) => c.op === "writeMetadata" && c.id === "order-1")
+    expect(readIdx).toBeGreaterThanOrEqual(0)
+    expect(writeIdx).toBeGreaterThan(readIdx)
   })
 })

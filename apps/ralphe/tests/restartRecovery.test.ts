@@ -94,6 +94,11 @@ beforeAll(async () => {
       return Effect.succeed(undefined)
     },
 
+    readMetadata: (id: string) => {
+      calls.push({ op: "readMetadata", id })
+      return Effect.succeed(undefined)
+    },
+
     reopenTask: (id: string) => {
       calls.push({ op: "reopenTask", id })
       return Effect.succeed(undefined)
