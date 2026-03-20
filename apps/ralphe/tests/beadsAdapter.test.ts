@@ -234,6 +234,107 @@ describe("parseBdTaskList", () => {
     expect(t.closeReason).toBe("All done")
   })
 
+  // -------------------------------------------------------------------------
+  // Comment parsing
+  // -------------------------------------------------------------------------
+
+  test("parses comments from bd show --json output", () => {
+    const json = JSON.stringify([
+      {
+        id: "t-1",
+        title: "Task with comments",
+        status: "open",
+        comments: [
+          { id: "c-1", issue_id: "t-1", author: "agent-1", text: "Starting execution", created_at: "2025-03-01T10:00:00Z" },
+          { id: "c-2", issue_id: "t-1", author: "agent-1", text: "Attempt failed\nRetrying...", created_at: "2025-03-01T10:05:00Z" },
+        ],
+      },
+    ])
+
+    const tasks = parseBdTaskList(json)
+    const t = tasks[0]!
+    expect(t.comments).toBeDefined()
+    expect(t.comments).toHaveLength(2)
+    expect(t.comments![0]!.id).toBe("c-1")
+    expect(t.comments![0]!.author).toBe("agent-1")
+    expect(t.comments![0]!.text).toBe("Starting execution")
+    expect(t.comments![0]!.createdAt).toBe("2025-03-01T10:00:00Z")
+    expect(t.comments![1]!.text).toBe("Attempt failed\nRetrying...")
+  })
+
+  test("comments are sorted chronologically (oldest first)", () => {
+    const json = JSON.stringify([
+      {
+        id: "t-1",
+        title: "Task",
+        status: "open",
+        comments: [
+          { id: "c-2", text: "Second", created_at: "2025-03-01T12:00:00Z" },
+          { id: "c-1", text: "First", created_at: "2025-03-01T10:00:00Z" },
+          { id: "c-3", text: "Third", created_at: "2025-03-01T14:00:00Z" },
+        ],
+      },
+    ])
+
+    const tasks = parseBdTaskList(json)
+    const comments = tasks[0]!.comments!
+    expect(comments[0]!.id).toBe("c-1")
+    expect(comments[1]!.id).toBe("c-2")
+    expect(comments[2]!.id).toBe("c-3")
+  })
+
+  test("missing comments array results in undefined", () => {
+    const json = JSON.stringify([
+      { id: "t-1", title: "No comments", status: "open" },
+    ])
+    const tasks = parseBdTaskList(json)
+    expect(tasks[0]!.comments).toBeUndefined()
+  })
+
+  test("empty comments array results in undefined", () => {
+    const json = JSON.stringify([
+      { id: "t-1", title: "Empty comments", status: "open", comments: [] },
+    ])
+    const tasks = parseBdTaskList(json)
+    expect(tasks[0]!.comments).toBeUndefined()
+  })
+
+  test("malformed comments are filtered out", () => {
+    const json = JSON.stringify([
+      {
+        id: "t-1",
+        title: "Task",
+        status: "open",
+        comments: [
+          { id: "c-1", text: "Valid", created_at: "2025-03-01T10:00:00Z" },
+          { id: 123, text: "Invalid id type", created_at: "2025-03-01T11:00:00Z" },
+          { text: "Missing id", created_at: "2025-03-01T11:00:00Z" },
+          { id: "c-4", created_at: "2025-03-01T11:00:00Z" }, // missing text
+          { id: "c-5", text: "Missing timestamp" }, // missing created_at
+          null,
+        ],
+      },
+    ])
+    const tasks = parseBdTaskList(json)
+    expect(tasks[0]!.comments).toHaveLength(1)
+    expect(tasks[0]!.comments![0]!.id).toBe("c-1")
+  })
+
+  test("comments without author have undefined author", () => {
+    const json = JSON.stringify([
+      {
+        id: "t-1",
+        title: "Task",
+        status: "open",
+        comments: [
+          { id: "c-1", text: "No author", created_at: "2025-03-01T10:00:00Z" },
+        ],
+      },
+    ])
+    const tasks = parseBdTaskList(json)
+    expect(tasks[0]!.comments![0]!.author).toBeUndefined()
+  })
+
   test("handles unknown status gracefully", () => {
     const json = JSON.stringify([
       { id: "t-1", title: "Mystery", status: "mystery_status" },

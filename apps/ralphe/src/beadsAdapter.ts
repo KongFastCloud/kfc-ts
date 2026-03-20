@@ -35,6 +35,17 @@ export type WatchTaskStatus =
   | "error"      // open + error label (exhausted retries), or cancelled
 
 /**
+ * A single comment/activity entry on a task.
+ * Parsed from the `comments` array in bd show --json output.
+ */
+export interface WatchTaskComment {
+  readonly id: string
+  readonly author?: string | undefined
+  readonly text: string
+  readonly createdAt: string
+}
+
+/**
  * Task item shaped for TUI rendering.
  * Intentionally decoupled from the raw BeadsIssue so the TUI
  * layer never depends on bd CLI output format directly.
@@ -64,6 +75,8 @@ export interface WatchTask {
   readonly finishedAt?: string | undefined
   /** Error message from the last failed run (from ralphe metadata). */
   readonly error?: string | undefined
+  /** Activity log comments (populated from bd show --json detail view). */
+  readonly comments?: WatchTaskComment[] | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +107,13 @@ interface BdIssueJson {
       error?: string
     } | string
   }
+  comments?: Array<{
+    id: string
+    issue_id?: string
+    author?: string
+    text: string
+    created_at: string
+  }>
   dependencies?: Array<{
     id?: string
     depends_on_id?: string
@@ -329,6 +349,29 @@ function bdIssueToWatchTask(
 
   const timing = normalizeRalpheMeta(item.metadata)
 
+  // Parse comments — sort chronologically (oldest first)
+  let comments: WatchTaskComment[] | undefined
+  if (item.comments && Array.isArray(item.comments) && item.comments.length > 0) {
+    comments = item.comments
+      .filter(
+        (c): c is { id: string; issue_id?: string; author?: string; text: string; created_at: string } =>
+          c != null &&
+          typeof c === "object" &&
+          typeof c.id === "string" &&
+          typeof c.text === "string" &&
+          typeof c.created_at === "string",
+      )
+      .map((c) => ({
+        id: c.id,
+        author: c.author,
+        text: c.text,
+        createdAt: c.created_at,
+      }))
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+
+    if (comments.length === 0) comments = undefined
+  }
+
   return {
     id: item.id,
     title: item.title ?? "",
@@ -351,6 +394,7 @@ function bdIssueToWatchTask(
     startedAt: timing?.startedAt,
     finishedAt: timing?.finishedAt,
     error: timing?.error,
+    comments,
   }
 }
 

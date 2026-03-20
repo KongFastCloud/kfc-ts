@@ -14,7 +14,7 @@ import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
 import { getAvailableActions } from "../beadsAdapter.js"
 import type { RalpheConfig, GitMode } from "../config.js"
 import type { WorkerStatus } from "../tuiWorker.js"
-import { DashboardView, partitionTasks } from "./DashboardView.js"
+import { DashboardView, partitionTasks, formatCompletedAt } from "./DashboardView.js"
 import { useMarkReadyQueue } from "./useMarkReadyQueue.js"
 import {
   initialDashboardFocusState,
@@ -327,6 +327,36 @@ function DetailPane({ task }: { task: WatchTask | null }): ReactNode {
                   Task failed — no error details available
                 </text>
               )}
+            </box>
+          </box>
+        )}
+
+        {/* Activity Log */}
+        {task.comments && task.comments.length > 0 && (
+          <box style={{ marginBottom: 1 }}>
+            <box style={{ marginBottom: 0 }}>
+              <text fg={colors.accent.primary}>Activity Log</text>
+            </box>
+            <box
+              style={{
+                padding: 1,
+                backgroundColor: colors.bg.secondary,
+                border: true,
+                borderColor: colors.border.muted,
+                flexDirection: "column",
+              }}
+            >
+              {task.comments.map((comment, i) => (
+                <box key={comment.id} style={{ marginBottom: i < task.comments!.length - 1 ? 1 : 0, flexDirection: "column" }}>
+                  <text fg={colors.fg.muted}>
+                    {formatCompletedAt(comment.createdAt)}
+                    {comment.author ? ` — ${comment.author}` : ""}
+                  </text>
+                  {comment.text.split("\n").map((line, j) => (
+                    <text key={j} fg={colors.fg.secondary}>{line}</text>
+                  ))}
+                </box>
+              ))}
             </box>
           </box>
         )}
