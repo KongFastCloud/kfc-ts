@@ -1,7 +1,14 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
+import { beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { RalpheConfig } from "../src/config.js"
 import { CheckFailure, FatalError } from "../src/errors.js"
+import { Engine } from "../src/engine/Engine.js"
+import {
+  resolveGitMode,
+  buildCiGitStep,
+  executePostLoopGitOps,
+  type GitOps,
+} from "../src/runTask.js"
 
 let gitCalls: string[] = []
 let mockedCommitResult: { message: string; hash: string } | undefined = {
@@ -12,8 +19,6 @@ let commitShouldFail = false
 let pushShouldFail = false
 let waitCiShouldFail = false
 
-let runTask: typeof import("../src/runTask.js").runTask
-
 const baseConfig: RalpheConfig = {
   engine: "claude",
   maxAttempts: 1,
@@ -21,6 +26,53 @@ const baseConfig: RalpheConfig = {
   git: { mode: "none" },
   report: "none",
 }
+
+const emptyEngineLayer = Layer.succeed(Engine, {
+  execute: () => Effect.succeed({ response: "ok" }),
+})
+
+const makeGitOps = (): GitOps => ({
+  commit: () =>
+    Effect.gen(function* () {
+      gitCalls.push("commit")
+      if (commitShouldFail) {
+        return yield* Effect.fail(
+          new FatalError({ command: "git commit", message: "commit failed" }),
+        )
+      }
+      return mockedCommitResult
+    }),
+  push: () =>
+    Effect.gen(function* () {
+      gitCalls.push("push")
+      if (pushShouldFail) {
+        return yield* Effect.fail(
+          new FatalError({ command: "git push", message: "push failed" }),
+        )
+      }
+      return { remote: "origin", ref: "main", output: "" }
+    }),
+  waitCi: () =>
+    Effect.gen(function* () {
+      gitCalls.push("wait_ci")
+      if (waitCiShouldFail) {
+        return yield* Effect.fail(
+          new CheckFailure({
+            command: "CI run 123",
+            stderr: "CI failed (run 123). Failure annotations:\n\nError: tests failed",
+            exitCode: 1,
+          }),
+        )
+      }
+      return {
+        runId: 123,
+        status: "completed",
+        conclusion: "success",
+        url: "https://example.com/run/123",
+        workflowName: "ci",
+      }
+    }),
+})
 
 beforeEach(() => {
   gitCalls = []
@@ -30,195 +82,103 @@ beforeEach(() => {
   waitCiShouldFail = false
 })
 
-beforeAll(async () => {
-  mock.module("../src/agent.js", () => ({
-    agent: () => Effect.succeed({ response: "ok", resumeToken: "tok-1" }),
-  }))
-
-  mock.module("../src/cmd.js", () => ({
-    cmd: () => Effect.succeed({ stdout: "ok" }),
-  }))
-
-  mock.module("../src/loop.js", () => ({
-    loop: (fn: (feedback?: string) => Effect.Effect<unknown, CheckFailure | FatalError>) =>
-      fn(undefined).pipe(
-        Effect.catchTag("CheckFailure", (err) =>
-          Effect.fail(new FatalError({
-            command: err.command,
-            message: `Check failed after 1 attempts: ${err.stderr}`,
-          })),
-        ),
-      ),
-  }))
-
-  mock.module("../src/report.js", () => ({
-    report: () => Effect.succeed({ success: true, report: "ok" }),
-  }))
-
-  mock.module("../src/engine/ClaudeEngine.js", () => ({
-    ClaudeEngineLayer: Layer.empty,
-  }))
-
-  mock.module("../src/engine/CodexEngine.js", () => ({
-    CodexEngineLayer: Layer.empty,
-  }))
-
-  mock.module("../src/git.js", () => ({
-    gitCommit: () =>
-      Effect.gen(function* () {
-        gitCalls.push("commit")
-        if (commitShouldFail) {
-          return yield* Effect.fail(
-            new FatalError({ command: "git commit", message: "commit failed" }),
-          )
-        }
-        return mockedCommitResult
-      }),
-    gitPush: () =>
-      Effect.gen(function* () {
-        gitCalls.push("push")
-        if (pushShouldFail) {
-          return yield* Effect.fail(
-            new FatalError({ command: "git push", message: "push failed" }),
-          )
-        }
-        return { remote: "origin", ref: "main", output: "" }
-      }),
-    gitWaitForCi: () =>
-      Effect.gen(function* () {
-        gitCalls.push("wait_ci")
-        if (waitCiShouldFail) {
-          return yield* Effect.fail(
-            new CheckFailure({
-              command: "gh run view 123 --log-failed",
-              stderr: "CI failed for run 123 (conclusion: failure).\n\nError: tests failed",
-              exitCode: 1,
-            }),
-          )
-        }
-        return {
-          runId: 123,
-          status: "completed",
-          conclusion: "success",
-          url: "https://example.com/run/123",
-          workflowName: "ci",
-        }
-      }),
-  }))
-
-  // @ts-expect-error Bun test isolation import suffix is runtime-only.
-  ;({ runTask } = await import("../src/runTask.js?runTaskGitMode") as typeof import("../src/runTask.js"))
-})
-
-afterAll(() => {
-  mock.restore()
-})
-
 describe("runTask git mode behavior", () => {
   test("none mode executes no git operations", async () => {
-    const result = await Effect.runPromise(
-      runTask("task", { ...baseConfig, git: { mode: "none" } }),
-    )
-
-    expect(result.success).toBe(true)
+    const ops = makeGitOps()
+    await Effect.runPromise(Effect.provide(executePostLoopGitOps("none", ops), emptyEngineLayer))
     expect(gitCalls).toEqual([])
   })
 
   test("commit mode executes commit only", async () => {
-    const result = await Effect.runPromise(
-      runTask("task", { ...baseConfig, git: { mode: "commit" } }),
-    )
-
-    expect(result.success).toBe(true)
+    const ops = makeGitOps()
+    await Effect.runPromise(Effect.provide(executePostLoopGitOps("commit", ops), emptyEngineLayer))
     expect(gitCalls).toEqual(["commit"])
   })
 
   test("commit_and_push executes commit then push", async () => {
-    const result = await Effect.runPromise(
-      runTask("task", { ...baseConfig, git: { mode: "commit_and_push" } }),
+    const ops = makeGitOps()
+    await Effect.runPromise(
+      Effect.provide(executePostLoopGitOps("commit_and_push", ops), emptyEngineLayer),
     )
-
-    expect(result.success).toBe(true)
     expect(gitCalls).toEqual(["commit", "push"])
   })
 
   test("commit_and_push skips push when no commit is created", async () => {
     mockedCommitResult = undefined
-
-    const result = await Effect.runPromise(
-      runTask("task", { ...baseConfig, git: { mode: "commit_and_push" } }),
+    const ops = makeGitOps()
+    await Effect.runPromise(
+      Effect.provide(executePostLoopGitOps("commit_and_push", ops), emptyEngineLayer),
     )
-
-    expect(result.success).toBe(true)
     expect(gitCalls).toEqual(["commit"])
   })
 
   test("commit_and_push_and_wait_ci executes commit then push then wait_ci", async () => {
-    const result = await Effect.runPromise(
-      runTask("task", { ...baseConfig, git: { mode: "commit_and_push_and_wait_ci" } }),
+    const ops = makeGitOps()
+    // In-loop CI step
+    await Effect.runPromise(Effect.provide(buildCiGitStep(ops), emptyEngineLayer))
+    // Post-loop step should be a no-op for this mode
+    await Effect.runPromise(
+      Effect.provide(executePostLoopGitOps("commit_and_push_and_wait_ci", ops), emptyEngineLayer),
     )
-
-    expect(result.success).toBe(true)
     expect(gitCalls).toEqual(["commit", "push", "wait_ci"])
   })
 
   test("commit_and_push_and_wait_ci skips push and wait when no commit is created", async () => {
     mockedCommitResult = undefined
-
-    const result = await Effect.runPromise(
-      runTask("task", { ...baseConfig, git: { mode: "commit_and_push_and_wait_ci" } }),
-    )
-
-    expect(result.success).toBe(true)
+    const ops = makeGitOps()
+    await Effect.runPromise(Effect.provide(buildCiGitStep(ops), emptyEngineLayer))
     expect(gitCalls).toEqual(["commit"])
   })
 
   test("push is not attempted when commit fails", async () => {
     commitShouldFail = true
-
-    const result = await Effect.runPromise(
-      runTask("task", { ...baseConfig, git: { mode: "commit_and_push" } }),
+    const ops = makeGitOps()
+    const result = await Effect.runPromiseExit(
+      Effect.provide(executePostLoopGitOps("commit_and_push", ops), emptyEngineLayer),
     )
 
-    expect(result.success).toBe(false)
-    expect(result.error).toContain("commit failed")
+    expect(result._tag).toBe("Failure")
+    if (result._tag === "Failure" && result.cause._tag === "Fail") {
+      expect((result.cause.error as FatalError).message).toContain("commit failed")
+    }
     expect(gitCalls).toEqual(["commit"])
   })
 
   test("gitModeOverride takes precedence over config mode", async () => {
-    const result = await Effect.runPromise(
-      runTask(
-        "task",
-        { ...baseConfig, git: { mode: "none" } },
-        { gitModeOverride: "commit" },
-      ),
-    )
+    const gitMode = resolveGitMode({ ...baseConfig, git: { mode: "none" } }, "commit")
+    expect(gitMode).toBe("commit")
 
-    expect(result.success).toBe(true)
+    // Verify the resolved mode is used by executing the post-loop git ops
+    const ops = makeGitOps()
+    await Effect.runPromise(Effect.provide(executePostLoopGitOps(gitMode, ops), emptyEngineLayer))
     expect(gitCalls).toEqual(["commit"])
   })
 
   test("wait_ci is not attempted when push fails", async () => {
     pushShouldFail = true
-
-    const result = await Effect.runPromise(
-      runTask("task", { ...baseConfig, git: { mode: "commit_and_push_and_wait_ci" } }),
+    const ops = makeGitOps()
+    const result = await Effect.runPromiseExit(
+      Effect.provide(buildCiGitStep(ops), emptyEngineLayer),
     )
 
-    expect(result.success).toBe(false)
-    expect(result.error).toContain("push failed")
+    expect(result._tag).toBe("Failure")
+    if (result._tag === "Failure" && result.cause._tag === "Fail") {
+      expect((result.cause.error as FatalError).message).toContain("push failed")
+    }
     expect(gitCalls).toEqual(["commit", "push"])
   })
 
   test("run fails when wait_ci fails", async () => {
     waitCiShouldFail = true
-
-    const result = await Effect.runPromise(
-      runTask("task", { ...baseConfig, git: { mode: "commit_and_push_and_wait_ci" } }),
+    const ops = makeGitOps()
+    const result = await Effect.runPromiseExit(
+      Effect.provide(buildCiGitStep(ops), emptyEngineLayer),
     )
 
-    expect(result.success).toBe(false)
-    expect(result.error).toContain("CI failed for run 123")
+    expect(result._tag).toBe("Failure")
+    if (result._tag === "Failure" && result.cause._tag === "Fail") {
+      expect((result.cause.error as CheckFailure).stderr).toContain("CI failed")
+    }
     expect(gitCalls).toEqual(["commit", "push", "wait_ci"])
   })
 })
