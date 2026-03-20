@@ -2,7 +2,7 @@
 import { Args, Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Console, Effect, Layer } from "effect"
-import { AppLoggerLayer } from "./src/logger.js"
+import { AppLoggerLayer, TuiLoggerLayer } from "./src/logger.js"
 import { checkbox, select, input } from "@inquirer/prompts"
 import { FatalError } from "./src/errors.js"
 import { loadConfig, saveConfig, resolveRunConfig, type GitMode, type RalpheConfig } from "./src/config.js"
@@ -215,9 +215,14 @@ const watchCmd = Command.make(
         })
       } else {
         // Interactive TUI mode (default) — includes in-process worker
-        yield* launchWatchTui({
-          refreshIntervalMs: interval * 1000,
-        })
+        // Provide TuiLoggerLayer to suppress stderr logging while TUI renders;
+        // this overrides the global AppLoggerLayer via Effect's innermost-wins semantics.
+        yield* Effect.provide(
+          launchWatchTui({
+            refreshIntervalMs: interval * 1000,
+          }),
+          TuiLoggerLayer,
+        )
       }
     }),
 )
