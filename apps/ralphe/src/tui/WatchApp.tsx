@@ -264,6 +264,36 @@ function DetailPane({ task }: { task: WatchTask | null }): ReactNode {
           )}
         </box>
 
+        {/* Error */}
+        {(task.error || task.status === "error") && (
+          <box style={{ marginBottom: 1 }}>
+            <box style={{ marginBottom: 0 }}>
+              <text fg={colors.status.error}>Error</text>
+            </box>
+            <box
+              style={{
+                padding: 1,
+                backgroundColor: colors.bg.secondary,
+                border: true,
+                borderColor: colors.status.error,
+                flexDirection: "column",
+              }}
+            >
+              {task.error ? (
+                task.error.split("\n").map((line, i) => (
+                  <text key={i} fg={colors.fg.secondary}>
+                    {line}
+                  </text>
+                ))
+              ) : (
+                <text fg={colors.fg.muted}>
+                  Task failed — no error details available
+                </text>
+              )}
+            </box>
+          </box>
+        )}
+
         {/* Description */}
         {task.description && (
           <box style={{ marginBottom: 1 }}>
