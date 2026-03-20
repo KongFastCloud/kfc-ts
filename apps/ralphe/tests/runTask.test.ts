@@ -5,7 +5,7 @@ import { FatalError } from "../src/errors.js"
 import { agent } from "../src/agent.js"
 import { cmd } from "../src/cmd.js"
 import { loop } from "../src/loop.js"
-import { formatSessionComment } from "../src/runTask.js"
+import { formatSessionComment, formatCheckFailedComment, formatSuccessComment } from "../src/runTask.js"
 import type { RalpheConfig } from "../src/config.js"
 
 const baseConfig: RalpheConfig = {
@@ -144,5 +144,30 @@ describe("formatSessionComment", () => {
   test("handles no resume token for codex", () => {
     const comment = formatSessionComment("codex", 3, 5, undefined)
     expect(comment).toBe("[attempt 3/5] agent completed (no session id)")
+  })
+})
+
+describe("formatCheckFailedComment", () => {
+  test("formats check failure with feedback", () => {
+    const comment = formatCheckFailedComment(1, 3, 'Command "test" failed (exit 1):\ntype error')
+    expect(comment).toBe('[attempt 1/3] check failed — Command "test" failed (exit 1):\ntype error')
+  })
+
+  test("formats CI failure with annotations", () => {
+    const feedback = 'Command "CI run 12345" failed (exit 1):\nFAIL src/app.test.ts'
+    const comment = formatCheckFailedComment(2, 3, feedback)
+    expect(comment).toBe(`[attempt 2/3] check failed — ${feedback}`)
+  })
+})
+
+describe("formatSuccessComment", () => {
+  test("formats success comment", () => {
+    const comment = formatSuccessComment(2, 3)
+    expect(comment).toBe("[attempt 2/3] all checks passed")
+  })
+
+  test("formats success on first attempt", () => {
+    const comment = formatSuccessComment(1, 1)
+    expect(comment).toBe("[attempt 1/1] all checks passed")
   })
 })

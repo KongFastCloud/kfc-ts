@@ -7,6 +7,7 @@ export interface LoopEvent {
   readonly type: LoopEventType
   readonly attempt: number
   readonly maxAttempts: number
+  readonly feedback?: string | undefined
 }
 
 export interface LoopOptions {
@@ -57,12 +58,19 @@ export const loop = <R>(
                   }),
                 )
               }
-              return Console.log(
-                `Check failed: "${err.command}" exited ${err.exitCode}. Will retry.`,
-              ).pipe(
+              const feedback = `Command "${err.command}" failed (exit ${err.exitCode}):\n${err.stderr}`
+              return emitEvent({
+                type: "check_failed",
+                attempt: state.attempt,
+                maxAttempts,
+                feedback,
+              }).pipe(
+                Effect.andThen(Console.log(
+                  `Check failed: "${err.command}" exited ${err.exitCode}. Will retry.`,
+                )),
                 Effect.map(() => ({
                   attempt: state.attempt + 1,
-                  feedback: `Command "${err.command}" failed (exit ${err.exitCode}):\n${err.stderr}`,
+                  feedback,
                   done: false,
                 }) as LoopState),
               )

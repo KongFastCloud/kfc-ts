@@ -127,7 +127,7 @@ describe("loop", () => {
     ])
   })
 
-  test("onEvent fires attempt_start for each retry", async () => {
+  test("onEvent fires attempt_start and check_failed for each retry", async () => {
     const events: LoopEvent[] = []
     let calls = 0
     await Effect.runPromise(
@@ -152,8 +152,63 @@ describe("loop", () => {
     )
     expect(events).toEqual([
       { type: "attempt_start", attempt: 1, maxAttempts: 3 },
+      { type: "check_failed", attempt: 1, maxAttempts: 3, feedback: 'Command "test" failed (exit 1):\nerr' },
       { type: "attempt_start", attempt: 2, maxAttempts: 3 },
       { type: "success", attempt: 2, maxAttempts: 3 },
     ])
+  })
+
+  test("onEvent check_failed includes CI stderr in feedback", async () => {
+    const events: LoopEvent[] = []
+    let calls = 0
+    await Effect.runPromise(
+      loop(
+        () => {
+          calls++
+          if (calls === 1) {
+            return Effect.fail(
+              new CheckFailure({
+                command: "CI run 12345",
+                stderr: "FAIL src/app.test.ts\n  ● test suite failed to run",
+                exitCode: 1,
+              }),
+            )
+          }
+          return Effect.succeed("ok")
+        },
+        {
+          maxAttempts: 2,
+          onEvent: (event) => {
+            events.push(event)
+            return Effect.void
+          },
+        },
+      ),
+    )
+    const checkFailed = events.find((e) => e.type === "check_failed")
+    expect(checkFailed).toBeDefined()
+    expect(checkFailed!.feedback).toContain("CI run 12345")
+    expect(checkFailed!.feedback).toContain("FAIL src/app.test.ts")
+  })
+
+  test("onEvent check_failed is not emitted on final attempt", async () => {
+    const events: LoopEvent[] = []
+    const result = await Effect.runPromiseExit(
+      loop(
+        () =>
+          Effect.fail(
+            new CheckFailure({ command: "test", stderr: "err", exitCode: 1 }),
+          ),
+        {
+          maxAttempts: 1,
+          onEvent: (event) => {
+            events.push(event)
+            return Effect.void
+          },
+        },
+      ),
+    )
+    expect(result._tag).toBe("Failure")
+    expect(events.filter((e) => e.type === "check_failed")).toHaveLength(0)
   })
 })

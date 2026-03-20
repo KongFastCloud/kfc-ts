@@ -1,4 +1,5 @@
 import { Console, Effect, Layer, pipe } from "effect"
+import type { LoopEvent } from "./loop.js"
 import { ClaudeEngineLayer } from "./engine/ClaudeEngine.js"
 import { CodexEngineLayer } from "./engine/CodexEngine.js"
 import { Engine, type AgentResult } from "./engine/Engine.js"
@@ -121,6 +122,25 @@ export const formatSessionComment = (
 }
 
 /**
+ * Format a check_failed comment for the activity log.
+ */
+export const formatCheckFailedComment = (
+  attempt: number,
+  maxAttempts: number,
+  feedback: string,
+): string =>
+  `[attempt ${attempt}/${maxAttempts}] check failed — ${feedback}`
+
+/**
+ * Format a success comment for the activity log.
+ */
+export const formatSuccessComment = (
+  attempt: number,
+  maxAttempts: number,
+): string =>
+  `[attempt ${attempt}/${maxAttempts}] all checks passed`
+
+/**
  * Shared task executor used by both direct CLI runs and Beads watcher runs.
  * Runs the full pipeline: agent → checks → report → loop with retries → git mode flow.
  */
@@ -170,7 +190,24 @@ export const runTask = (
       }
       return pipeline
     },
-    { maxAttempts: config.maxAttempts },
+    {
+      maxAttempts: config.maxAttempts,
+      onEvent: (event: LoopEvent) => {
+        if (!issueId) return Effect.void
+        switch (event.type) {
+          case "check_failed": {
+            const comment = formatCheckFailedComment(event.attempt, event.maxAttempts, event.feedback ?? "")
+            return addComment(issueId, comment)
+          }
+          case "success": {
+            const comment = formatSuccessComment(event.attempt, event.maxAttempts)
+            return addComment(issueId, comment)
+          }
+          default:
+            return Effect.void
+        }
+      },
+    },
   )
 
   const fullWorkflow = Effect.gen(function* () {
