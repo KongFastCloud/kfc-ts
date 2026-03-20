@@ -71,9 +71,19 @@ const makeAppLogger = (): Logger.Logger<unknown, void> => {
   )
 }
 
-// -- exported layer --
+// -- exported layers --
 
 export const AppLoggerLayer: Layer.Layer<never> = Layer.merge(
   Logger.replace(Logger.defaultLogger, makeAppLogger()),
+  Layer.effectDiscard(ensureLogDir),
+)
+
+/**
+ * Logger layer for full-screen TUI commands.
+ * Writes JSON lines to .ralphe/logs/ but suppresses all stderr output,
+ * preventing logfmt noise from corrupting the terminal display.
+ */
+export const TuiLoggerLayer: Layer.Layer<never> = Layer.merge(
+  Logger.replace(Logger.defaultLogger, makeFileLogger()),
   Layer.effectDiscard(ensureLogDir),
 )
