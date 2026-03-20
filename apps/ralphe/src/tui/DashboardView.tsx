@@ -15,6 +15,7 @@ import type { ReactNode } from "react"
 import { useState, useEffect, useRef } from "react"
 import type { BoxRenderable } from "@opentui/core"
 import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
+import { computeDayTotal, computeWeekTotal } from "./statsCompute.js"
 
 // ---------------------------------------------------------------------------
 // Theme (inline subset — matches WatchApp theme)
@@ -538,6 +539,60 @@ export interface DashboardViewProps {
   onDoneVisibleRowCountChange?: (count: number) => void
 }
 
+// ---------------------------------------------------------------------------
+// StatsFooter — summary bar rendered between Active and Done tables
+// ---------------------------------------------------------------------------
+
+function StatsFooter({ tasks }: { tasks: WatchTask[] }): ReactNode {
+  const now = new Date()
+  const day = computeDayTotal(tasks, now)
+  const week = computeWeekTotal(tasks, now)
+
+  if (week.count === 0) {
+    return (
+      <box
+        style={{
+          width: "100%",
+          height: 1,
+          flexDirection: "row",
+          backgroundColor: colors.bg.secondary,
+          justifyContent: "flex-end",
+          alignItems: "center",
+          paddingLeft: 1,
+          paddingRight: 1,
+        }}
+      >
+        <text fg={colors.fg.muted}>Today: </text>
+        <text fg={colors.status.info}>—</text>
+        <text fg={colors.fg.muted}> │ This week: </text>
+        <text fg={colors.status.info}>—</text>
+      </box>
+    )
+  }
+
+  return (
+    <box
+      style={{
+        width: "100%",
+        height: 1,
+        flexDirection: "row",
+        backgroundColor: colors.bg.secondary,
+        justifyContent: "flex-end",
+        alignItems: "center",
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <text fg={colors.fg.muted}>Today: </text>
+      <text fg={colors.status.info}>{day.count > 0 ? formatDuration(day.totalMs) : "—"}</text>
+      <text fg={colors.fg.muted}> │ This week: </text>
+      <text fg={colors.status.info}>{formatDuration(week.totalMs)}</text>
+      <text fg={colors.fg.muted}> │ </text>
+      <text fg={colors.status.info}>{week.count} done</text>
+    </box>
+  )
+}
+
 /**
  * Dashboard landing view: two vertically stacked tables.
  * Top table = non-done tasks. Bottom table = done tasks.
@@ -597,6 +652,7 @@ export function DashboardView({
         markingReadyIds={markingReadyIds}
         onVisibleRowCountChange={onActiveVisibleRowCountChange}
       />
+      <StatsFooter tasks={tasks} />
       <DashboardTable
         title="Done"
         tasks={done}

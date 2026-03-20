@@ -15,7 +15,6 @@ import { getAvailableActions } from "../beadsAdapter.js"
 import type { RalpheConfig, GitMode } from "../config.js"
 import type { WorkerStatus } from "../tuiWorker.js"
 import { DashboardView, partitionTasks, formatCompletedAt, formatDuration } from "./DashboardView.js"
-import { computeDayTotal, computeWeekTotal } from "./statsCompute.js"
 import { useMarkReadyQueue } from "./useMarkReadyQueue.js"
 import {
   initialDashboardFocusState,
@@ -193,63 +192,13 @@ function WatchFooter({ viewMode, hasMarkReady }: { viewMode: "dashboard" | "deta
         height: 1,
         flexDirection: "row",
         backgroundColor: colors.bg.secondary,
-        justifyContent: "flex-start",
+        justifyContent: "flex-end",
         alignItems: "center",
         paddingLeft: 1,
         paddingRight: 1,
       }}
     >
       <text fg={colors.fg.muted}>{navShortcuts}</text>
-    </box>
-  )
-}
-
-function StatsFooter({ tasks }: { tasks: WatchTask[] }): ReactNode {
-  const now = new Date()
-  const day = computeDayTotal(tasks, now)
-  const week = computeWeekTotal(tasks, now)
-
-  if (week.count === 0) {
-    return (
-      <box
-        style={{
-          width: "100%",
-          height: 1,
-          flexDirection: "row",
-          backgroundColor: colors.bg.secondary,
-          justifyContent: "flex-start",
-          alignItems: "center",
-          paddingLeft: 1,
-          paddingRight: 1,
-        }}
-      >
-        <text fg={colors.fg.muted}>Today: </text>
-        <text fg={colors.status.info}>—</text>
-        <text fg={colors.fg.muted}> │ This week: </text>
-        <text fg={colors.status.info}>—</text>
-      </box>
-    )
-  }
-
-  return (
-    <box
-      style={{
-        width: "100%",
-        height: 1,
-        flexDirection: "row",
-        backgroundColor: colors.bg.secondary,
-        justifyContent: "flex-start",
-        alignItems: "center",
-        paddingLeft: 1,
-        paddingRight: 1,
-      }}
-    >
-      <text fg={colors.fg.muted}>Today: </text>
-      <text fg={colors.status.info}>{day.count > 0 ? formatDuration(day.totalMs) : "—"}</text>
-      <text fg={colors.fg.muted}> │ This week: </text>
-      <text fg={colors.status.info}>{formatDuration(week.totalMs)}</text>
-      <text fg={colors.fg.muted}> │ </text>
-      <text fg={colors.status.info}>{week.count} done</text>
     </box>
   )
 }
@@ -774,8 +723,6 @@ export function WatchApp({
           />
         )}
       </box>
-
-      <StatsFooter tasks={tasks} />
 
       <WatchFooter
         viewMode={viewMode}
