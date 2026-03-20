@@ -21,6 +21,7 @@ import {
   startTuiWorker,
   type WorkerStatus,
 } from "./tuiWorker.js"
+import { loadConfig } from "./config.js"
 
 export interface WatchTuiOptions {
   /** Poll interval in milliseconds for Beads refresh. Default 10_000. */
@@ -72,6 +73,7 @@ export const launchWatchTui = (
 
     // Re-render helper — captures latest state each time
     const rerender = () => {
+      const config = loadConfig(workDir)
       root.render(
         <WatchApp
           initialTasks={latestTasks}
@@ -79,6 +81,7 @@ export const launchWatchTui = (
           refreshIntervalMs={refreshIntervalMs}
           initialError={initialError}
           workerStatus={currentWorkerStatus}
+          config={config}
         />,
       )
     }
