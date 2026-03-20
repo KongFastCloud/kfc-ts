@@ -350,14 +350,6 @@ export const queryAllStaleInProgress = (): Effect.Effect<BeadsIssue[], FatalErro
   )
 
 /**
- * Recover ALL stale in-progress tasks on startup.
- *
- * Recovery is global: every in_progress issue is recovered regardless of
- * which worker originally claimed it. Each recovered task is transitioned
- * to open + error state via {@link markTaskExhaustedFailure} so it remains
- * visible to operators but is no longer automatically picked up.
- */
-/**
  * Add a comment to a task via `bd comments add`.
  * Fire-and-forget: a failed comment write logs a warning instead of propagating.
  */
@@ -372,6 +364,14 @@ export const addComment = (
     ),
   )
 
+/**
+ * Recover ALL stale in-progress tasks on startup.
+ *
+ * Recovery is global: every in_progress issue is recovered regardless of
+ * which worker originally claimed it. Each recovered task is transitioned
+ * to open + error state via {@link markTaskExhaustedFailure} so it remains
+ * visible to operators but is no longer automatically picked up.
+ */
 export const recoverStaleTasks = (
   workerId: string,
 ): Effect.Effect<number, FatalError> =>

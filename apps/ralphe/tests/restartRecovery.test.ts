@@ -149,6 +149,8 @@ beforeAll(async () => {
       calls.push({ op: "queryAllStaleInProgress" })
       return Effect.succeed([...staleTasks])
     },
+
+    addComment: () => Effect.succeed(undefined),
   }))
 
   // Preserve real git exports so git.test.ts isn't broken by mock leakage.

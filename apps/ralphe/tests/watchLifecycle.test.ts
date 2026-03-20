@@ -103,6 +103,8 @@ beforeAll(async () => {
       if (issue.description) sections.push(`\n## Description\n${issue.description}`)
       return sections.join("\n")
     },
+
+    addComment: () => Effect.succeed(undefined),
   }))
 
   mock.module("../src/runTask.js", () => ({

@@ -30,6 +30,7 @@ beforeAll(async () => {
     writeMetadata: () => Effect.succeed(undefined),
     readMetadata: () => Effect.succeed(undefined),
     buildPromptFromIssue: (issue: { title: string }) => issue.title,
+    addComment: () => Effect.succeed(undefined),
   }))
 
   // @ts-expect-error Bun test isolation import suffix is runtime-only.
