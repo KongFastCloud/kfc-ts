@@ -21,7 +21,7 @@ const config = Command.make("config", {}, () =>
     const existing = loadConfig()
 
     if (detected.packageManager) {
-      yield* Console.log(`Detected root package manager: ${detected.packageManager}`)
+      yield* Effect.logInfo(`Detected root package manager: ${detected.packageManager}`)
     }
 
     const engineChoice = yield* Effect.promise(() =>
@@ -94,12 +94,12 @@ const config = Command.make("config", {}, () =>
     }
 
     saveConfig(newConfig)
-    yield* Console.log(`\nSaved repo config to .ralphe/config.json`)
+    yield* Effect.logInfo(`Saved repo config to .ralphe/config.json`)
 
     if (checks.length > 0) {
-      yield* Console.log(`Root checks: ${checks.join(", ")}`)
+      yield* Effect.logInfo(`Root checks: ${checks.join(", ")}`)
     } else {
-      yield* Console.log(`No root checks configured — agent will run without verification.`)
+      yield* Effect.logInfo(`No root checks configured — agent will run without verification.`)
     }
   }),
 )
@@ -207,7 +207,7 @@ const watchCmd = Command.make(
     Effect.gen(function* () {
       if (headless) {
         // Original headless watcher (no TUI)
-        yield* Console.log("Starting Beads watcher (headless)...")
+        yield* Effect.logInfo("Starting Beads watcher (headless)...")
         yield* watch({
           pollIntervalMs: interval * 1000,
         })

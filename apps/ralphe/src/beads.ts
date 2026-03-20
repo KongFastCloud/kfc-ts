@@ -1,4 +1,4 @@
-import { Console, Effect } from "effect"
+import { Effect } from "effect"
 import { FatalError } from "./errors.js"
 
 // ---------------------------------------------------------------------------
@@ -360,7 +360,7 @@ export const addComment = (
   runBd(["comments", "add", id, text]).pipe(
     Effect.map(() => undefined),
     Effect.catchTag("FatalError", (err) =>
-      Console.warn(`Failed to write comment on ${id}: ${err.message}`),
+      Effect.logWarning(`Failed to write comment on ${id}: ${err.message}`),
     ),
   )
 
@@ -379,7 +379,7 @@ export const recoverStaleTasks = (
     const stale = yield* queryAllStaleInProgress()
 
     for (const issue of stale) {
-      yield* Console.log(`Recovering stale task: ${issue.id} (${issue.title})`)
+      yield* Effect.logInfo(`Recovering stale task: ${issue.id} (${issue.title})`)
       // Clear stale assignee/claim residue
       yield* clearAssignee(issue.id)
       // Apply error state: remove ready label, add error label, persist metadata & notes

@@ -7,7 +7,7 @@
 
 import path from "node:path"
 import fs from "node:fs"
-import { Console, Effect } from "effect"
+import { Effect } from "effect"
 import { FatalError } from "./errors.js"
 import type { BeadsIssue } from "./beads.js"
 
@@ -506,7 +506,7 @@ export const ensureBeadsDatabase = (
       return "Using existing .beads database."
     }
 
-    yield* Console.log("No .beads database found. Initializing…")
+    yield* Effect.logInfo("No .beads database found. Initializing…")
     yield* runBd(["init"], workDir)
     return "Initialized new .beads database."
   })

@@ -9,7 +9,7 @@
 
 import { createCliRenderer } from "@opentui/core"
 import { createRoot } from "@opentui/react"
-import { Console, Effect } from "effect"
+import { Effect } from "effect"
 import { FatalError } from "./errors.js"
 import {
   ensureBeadsDatabase,
@@ -48,7 +48,7 @@ export const launchWatchTui = (
   return Effect.gen(function* () {
     // 1. Ensure .beads database
     const dbMessage = yield* ensureBeadsDatabase(workDir)
-    yield* Console.log(dbMessage)
+    yield* Effect.logInfo(dbMessage)
 
     // 2. Load initial tasks
     let initialTasks: WatchTask[] = []
@@ -59,7 +59,7 @@ export const launchWatchTui = (
       initialTasks = loadResult.right
     } else {
       initialError = `Could not load tasks: ${loadResult.left.message}`
-      yield* Console.log(`Warning: ${initialError}`)
+      yield* Effect.logWarning(initialError)
     }
 
     // 3. Create renderer and render
@@ -129,7 +129,7 @@ export const launchWatchTui = (
     // Initial render
     rerender()
 
-    yield* Console.log(`Watch TUI started. Press 'q' to quit.`)
+    yield* Effect.logInfo(`Watch TUI started. Press 'q' to quit.`)
 
     // 5. Keep the process alive until interrupted
     yield* Effect.async<void, never>(() => {

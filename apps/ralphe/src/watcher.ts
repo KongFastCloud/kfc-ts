@@ -1,5 +1,5 @@
 import os from "node:os"
-import { Console, Effect } from "effect"
+import { Effect } from "effect"
 import { FatalError } from "./errors.js"
 import { loadConfig } from "./config.js"
 import { runTask } from "./runTask.js"
@@ -46,18 +46,18 @@ export const watch = (
   const workDir = opts?.workDir ?? process.cwd()
 
   return Effect.gen(function* () {
-    yield* Console.log(`Beads watcher starting (worker: ${workerId})`)
+    yield* Effect.logInfo(`Beads watcher starting`)
 
     // Startup recovery: handle stale claimed tasks
     const recovered = yield* recoverStaleTasks(workerId)
     if (recovered > 0) {
-      yield* Console.log(`Recovered ${recovered} stale task(s) from previous run`)
+      yield* Effect.logInfo(`Recovered ${recovered} stale task(s) from previous run`)
     }
 
     // Dirty-worktree guard: pause automatic pickup until the working tree is clean
     const dirty = yield* isWorktreeDirty()
     if (dirty) {
-      yield* Console.log("Worktree has uncommitted changes — pausing automatic pickup.")
+      yield* Effect.logWarning("Worktree has uncommitted changes — pausing automatic pickup.")
       yield* Effect.iterate(true as boolean, {
         while: (isDirty) => isDirty,
         body: () =>
@@ -66,7 +66,7 @@ export const watch = (
             return yield* isWorktreeDirty()
           }),
       })
-      yield* Console.log("Worktree is clean — resuming automatic pickup.")
+      yield* Effect.logDebug("Worktree is clean — resuming automatic pickup.")
     }
 
     let tasksProcessed = 0
@@ -79,7 +79,7 @@ export const watch = (
 
           // Check task limit
           if (maxTasks !== undefined && tasksProcessed >= maxTasks) {
-            yield* Console.log(`Reached task limit (${maxTasks}). Stopping.`)
+            yield* Effect.logInfo(`Reached task limit (${maxTasks}). Stopping.`)
             return false
           }
 
@@ -92,69 +92,79 @@ export const watch = (
           }
 
           const issue = ready[0]!
-          yield* Console.log(`\nFound ready task: ${issue.id} — ${issue.title}`)
+          yield* Effect.logInfo(`Found ready task: ${issue.id} — ${issue.title}`)
 
           // Claim atomically
           const claimed = yield* claimTask(issue.id)
           if (!claimed) {
-            yield* Console.log(`Task ${issue.id} already claimed by another worker. Skipping.`)
+            yield* Effect.logDebug(`Task ${issue.id} already claimed by another worker. Skipping.`)
             return true
           }
 
-          yield* Console.log(`Claimed task: ${issue.id}`)
+          yield* Effect.logInfo(`Claimed task: ${issue.id}`)
 
-          // Read existing metadata before overwriting to capture previous error
-          const existingMeta = yield* Effect.either(readMetadata(issue.id))
-          const previousError = existingMeta._tag === "Right" ? existingMeta.right?.error : undefined
+          // Process task with annotations and span
+          const processTask = Effect.gen(function* () {
+            // Read existing metadata before overwriting to capture previous error
+            const existingMeta = yield* Effect.either(readMetadata(issue.id))
+            const previousError = existingMeta._tag === "Right" ? existingMeta.right?.error : undefined
 
-          // Write initial metadata
-          const startedAt = new Date().toISOString()
-          const startMetadata: BeadsMetadata = {
-            engine: config.engine,
-            workerId,
-            timestamp: startedAt,
-            startedAt,
-          }
-          yield* writeMetadata(issue.id, startMetadata)
+            // Write initial metadata
+            const startedAt = new Date().toISOString()
+            const startMetadata: BeadsMetadata = {
+              engine: config.engine,
+              workerId,
+              timestamp: startedAt,
+              startedAt,
+            }
+            yield* writeMetadata(issue.id, startMetadata)
 
-          // Build prompt and execute
-          let prompt = buildPromptFromIssue(issue)
-          if (previousError) {
-            prompt += `\n\n## Previous Error\n${previousError}`
-          }
-          const result = yield* runTask(prompt, config, { issueId: issue.id })
+            // Build prompt and execute
+            let prompt = buildPromptFromIssue(issue)
+            if (previousError) {
+              prompt += `\n\n## Previous Error\n${previousError}`
+            }
+            const result = yield* runTask(prompt, config, { issueId: issue.id })
 
-          // Write final metadata with resume token
-          const finishedAt = new Date().toISOString()
-          const finalMetadata: BeadsMetadata = {
-            engine: result.engine,
-            resumeToken: result.resumeToken,
-            workerId,
-            timestamp: finishedAt,
-            startedAt,
-            finishedAt,
-          }
+            // Write final metadata with resume token
+            const finishedAt = new Date().toISOString()
+            const finalMetadata: BeadsMetadata = {
+              engine: result.engine,
+              resumeToken: result.resumeToken,
+              workerId,
+              timestamp: finishedAt,
+              startedAt,
+              finishedAt,
+            }
 
-          // Close with appropriate outcome
-          if (result.success) {
-            yield* writeMetadata(issue.id, finalMetadata)
-            yield* closeTaskSuccess(issue.id)
-            yield* Console.log(`Task ${issue.id} completed successfully.`)
-          } else {
-            // Exhausted failure: keep task open, remove eligibility, mark error
-            yield* markTaskExhaustedFailure(
-              issue.id,
-              result.error ?? "execution failed",
-              finalMetadata,
-            )
-            yield* Console.log(`Task ${issue.id} exhausted all retries — marked as error (task remains open).`)
-          }
+            // Close with appropriate outcome
+            if (result.success) {
+              yield* writeMetadata(issue.id, finalMetadata)
+              yield* closeTaskSuccess(issue.id)
+              yield* Effect.logInfo(`Task completed successfully.`)
+            } else {
+              // Exhausted failure: keep task open, remove eligibility, mark error
+              yield* markTaskExhaustedFailure(
+                issue.id,
+                result.error ?? "execution failed",
+                finalMetadata,
+              )
+              yield* Effect.logWarning(`Task exhausted all retries — marked as error (task remains open).`)
+            }
+          }).pipe(
+            Effect.annotateLogs({ taskId: issue.id, issueTitle: issue.title }),
+            Effect.withLogSpan("task"),
+          )
+
+          yield* processTask
 
           tasksProcessed++
           return true
         }),
     })
 
-    yield* Console.log("Beads watcher stopped.")
-  })
+    yield* Effect.logInfo("Beads watcher stopped.")
+  }).pipe(
+    Effect.annotateLogs({ workerId }),
+  )
 }
