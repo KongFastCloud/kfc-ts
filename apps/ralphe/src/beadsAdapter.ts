@@ -423,15 +423,13 @@ export type TaskAction = "mark-ready"
  */
 const MARK_READY_ELIGIBLE: ReadonlySet<WatchTaskStatus> = new Set([
   "backlog",
-  "queued",
   "blocked",
-  "active",
   "error",
 ])
 
 /**
  * Return available manual actions for a task.
- * Currently only "mark-ready" is supported, and only for non-done issues.
+ * Currently only "mark-ready" is supported, and only for backlog/blocked/error tasks.
  */
 export function getAvailableActions(task: WatchTask): TaskAction[] {
   if (MARK_READY_ELIGIBLE.has(task.status)) {

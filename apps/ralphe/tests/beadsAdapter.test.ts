@@ -503,9 +503,10 @@ describe("getAvailableActions", () => {
     expect(actions).toContain("mark-ready")
   })
 
-  test("queued tasks expose mark-ready action", () => {
+  test("queued tasks do not expose mark-ready action", () => {
     const actions = getAvailableActions(makeTask("queued"))
-    expect(actions).toContain("mark-ready")
+    expect(actions).not.toContain("mark-ready")
+    expect(actions).toEqual([])
   })
 
   test("blocked tasks expose mark-ready action", () => {
@@ -513,14 +514,16 @@ describe("getAvailableActions", () => {
     expect(actions).toContain("mark-ready")
   })
 
-  test("active tasks expose mark-ready action", () => {
+  test("active tasks do not expose mark-ready action", () => {
     const actions = getAvailableActions(makeTask("active"))
-    expect(actions).toContain("mark-ready")
+    expect(actions).not.toContain("mark-ready")
+    expect(actions).toEqual([])
   })
 
-  test("active tasks with owner expose mark-ready action", () => {
+  test("active tasks with owner do not expose mark-ready action", () => {
     const actions = getAvailableActions(makeTask("active", { owner: "worker-1" }))
-    expect(actions).toContain("mark-ready")
+    expect(actions).not.toContain("mark-ready")
+    expect(actions).toEqual([])
   })
 
   test("error tasks expose mark-ready action", () => {
