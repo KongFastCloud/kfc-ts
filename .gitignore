@@ -40,6 +40,7 @@ npm-debug.log*
 
 # Local ralphe config
 .ralphe/config.json
+.ralphe/logs/
 
 # Local PRDs
 prd/
