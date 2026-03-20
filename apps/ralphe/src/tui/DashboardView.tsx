@@ -5,7 +5,9 @@
  * (backlog, queued, blocked, active, error) and a bottom
  * table for done tasks. The active table shows Label while the
  * done table shows a compact Completed datetime instead.
- * Shared columns: ID, Title (clipped), Status, Priority, Duration.
+ * Shared columns: ID, Title (clipped), Status, Duration.
+ * The active table also shows Label and Priority; the done table
+ * replaces both with a wider Completed column.
  */
 
 import type { ReactNode } from "react"
@@ -56,6 +58,8 @@ const COL = {
   label: 14,
   priority: 5,
   duration: 10,
+  /** Width of the Completed column in the done table (label 14 + priority 5 + separator 3). */
+  completedDone: 22,
   /** Title takes remaining space — computed dynamically. */
 } as const
 
@@ -247,7 +251,7 @@ function DashboardSectionTitle({ title }: { title: string }): ReactNode {
 // ---------------------------------------------------------------------------
 
 function DashboardTableHeader({ titleWidth, variant }: { titleWidth: number; variant: TableVariant }): ReactNode {
-  const fourthCol = variant === "done" ? "Completed" : "Label"
+  const isDone = variant === "done"
   return (
     <box
       style={{
@@ -266,8 +270,9 @@ function DashboardTableHeader({ titleWidth, variant }: { titleWidth: number; var
         <span fg={colors.fg.muted}>
           {pad("Title", titleWidth)}
           {pad("Status", COL.status)}
-          {pad(fourthCol, COL.label)}
-          {pad("Pri", COL.priority)}
+          {isDone
+            ? pad("Completed", COL.completedDone)
+            : `${pad("Label", COL.label)}${pad("Pri", COL.priority)}`}
           {pad("Duration", COL.duration)}
         </span>
       </text>
@@ -300,9 +305,10 @@ function DashboardRow({
   const idStr = formatIdCell(task.id)
   const titleStr = pad(truncate(task.title, titleWidth - 1), titleWidth)
   const statusStr = pad(`${indicator} ${task.status}`, COL.status)
+  const isDone = variant === "done"
   const fourthColStr =
-    variant === "done"
-      ? pad(truncate(formatCompletedAt(task.closedAt), COL.label - 1), COL.label)
+    isDone
+      ? pad(truncate(formatCompletedAt(task.closedAt), COL.completedDone - 1), COL.completedDone)
       : isMarkingReady
         ? pad("...", COL.label)
         : pad(
@@ -311,10 +317,12 @@ function DashboardRow({
               : "—",
             COL.label,
           )
-  const priorityStr = pad(
-    task.priority !== undefined ? `P${task.priority}` : "—",
-    COL.priority,
-  )
+  const priorityStr = isDone
+    ? ""
+    : pad(
+        task.priority !== undefined ? `P${task.priority}` : "—",
+        COL.priority,
+      )
   const durationStr = pad(computeDuration(task), COL.duration)
 
   const idColor = effectiveDimmed ? colors.fg.dim : colors.fg.muted
@@ -554,10 +562,17 @@ export function DashboardView({
   const { active, done: unsortedDone } = partitionTasks(tasks)
   const done = sortDoneTasks(unsortedDone)
 
-  // Compute dynamic title column width from available terminal space
-  const fixedColumnsWidth =
+  // Compute dynamic title column width from available terminal space.
+  // The done table omits the priority column, replacing label + priority with
+  // a single wider completed column — but the total fixed width is the same
+  // (completedDone === label + priority + separator gap absorbed), so a single
+  // fixedColumnsWidth works for both tables.
+  const activeFixedWidth =
     COL.id + COL.idTitleSep + COL.status + COL.label + COL.priority + COL.duration + 4 // +4 for padding/border
-  const titleWidth = Math.max(10, terminalWidth - fixedColumnsWidth)
+  const doneFixedWidth =
+    COL.id + COL.idTitleSep + COL.status + COL.completedDone + COL.duration + 4
+  const activeTitleWidth = Math.max(10, terminalWidth - activeFixedWidth)
+  const doneTitleWidth = Math.max(10, terminalWidth - doneFixedWidth)
 
   return (
     <box
@@ -572,7 +587,7 @@ export function DashboardView({
         tasks={active}
         selectedIndex={focusedTable === "active" ? activeSelectedIndex : -1}
         scrollOffset={activeScrollOffset}
-        titleWidth={titleWidth}
+        titleWidth={activeTitleWidth}
         flexGrow={1}
         borderColor={
           focusedTable === "active"
@@ -588,7 +603,7 @@ export function DashboardView({
         tasks={done}
         selectedIndex={focusedTable === "done" ? doneSelectedIndex : -1}
         scrollOffset={doneScrollOffset}
-        titleWidth={titleWidth}
+        titleWidth={doneTitleWidth}
         flexGrow={1}
         borderColor={
           focusedTable === "done"
