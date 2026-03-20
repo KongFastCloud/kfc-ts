@@ -1,11 +1,12 @@
 /**
- * ABOUTME: Tests for the dashboard partitioning logic.
+ * ABOUTME: Tests for the dashboard partitioning logic and row-count derivation.
  * Verifies that tasks are correctly split into non-done and done buckets,
- * preserving original ordering within each bucket.
+ * preserving original ordering within each bucket, and that measured box
+ * heights are correctly converted to visible row counts.
  */
 
 import { describe, it, expect } from "bun:test"
-import { partitionTasks, sortDoneTasks, formatCompletedAt, formatIdCell } from "../src/tui/DashboardView.js"
+import { partitionTasks, sortDoneTasks, formatCompletedAt, formatIdCell, TABLE_CHROME_LINES, deriveVisibleRowCount } from "../src/tui/DashboardView.js"
 import type { WatchTask } from "../src/beadsAdapter.js"
 
 function makeTask(id: string, status: WatchTask["status"]): WatchTask {
@@ -264,5 +265,53 @@ describe("formatCompletedAt", () => {
     const noon = new Date(2026, 5, 10, 12, 30) // Jun 10, 2026 12:30 local
     const result = formatCompletedAt(noon.toISOString())
     expect(result).toContain("12:30 PM")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// deriveVisibleRowCount — height-to-row-count derivation
+// ---------------------------------------------------------------------------
+
+describe("deriveVisibleRowCount", () => {
+  it("subtracts TABLE_CHROME_LINES from measured height", () => {
+    // Normal case: 20 lines measured → 20 - 4 = 16 data rows
+    expect(deriveVisibleRowCount(20)).toBe(20 - TABLE_CHROME_LINES)
+  })
+
+  it("returns 0 when measured height is 0", () => {
+    expect(deriveVisibleRowCount(0)).toBe(0)
+  })
+
+  it("returns 0 when measured height equals TABLE_CHROME_LINES", () => {
+    // Exactly enough for chrome, no room for data rows
+    expect(deriveVisibleRowCount(TABLE_CHROME_LINES)).toBe(0)
+  })
+
+  it("returns 0 when measured height is less than TABLE_CHROME_LINES", () => {
+    expect(deriveVisibleRowCount(1)).toBe(0)
+    expect(deriveVisibleRowCount(2)).toBe(0)
+    expect(deriveVisibleRowCount(3)).toBe(0)
+  })
+
+  it("returns 1 when measured height is one more than TABLE_CHROME_LINES", () => {
+    expect(deriveVisibleRowCount(TABLE_CHROME_LINES + 1)).toBe(1)
+  })
+
+  it("handles large heights correctly", () => {
+    expect(deriveVisibleRowCount(100)).toBe(96)
+    expect(deriveVisibleRowCount(500)).toBe(496)
+  })
+
+  it("clamps negative measured heights to 0", () => {
+    // Defensive: negative heights should not produce negative row counts
+    expect(deriveVisibleRowCount(-1)).toBe(0)
+    expect(deriveVisibleRowCount(-10)).toBe(0)
+  })
+})
+
+describe("TABLE_CHROME_LINES", () => {
+  it("accounts for border-top, border-bottom, section title, and column header", () => {
+    // border top (1) + border bottom (1) + section title (1) + column header (1) = 4
+    expect(TABLE_CHROME_LINES).toBe(4)
   })
 })

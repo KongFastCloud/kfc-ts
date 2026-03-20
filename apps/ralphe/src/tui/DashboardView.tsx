@@ -383,7 +383,7 @@ function DashboardTable({
     const node = boxRef.current?.getLayoutNode()
     if (!node) return
     const measuredHeight = Math.floor(node.getComputedHeight())
-    const count = Math.max(0, measuredHeight - TABLE_CHROME_LINES)
+    const count = deriveVisibleRowCount(measuredHeight)
     if (count !== visibleRowCount) {
       setVisibleRowCount(count)
       onVisibleRowCountChange?.(count)
@@ -492,7 +492,15 @@ function useDurationTick(tasks: WatchTask[]): void {
  * Per-table chrome overhead: border top (1) + border bottom (1) + section
  * title (1) + column header (1) = 4 lines consumed before any data rows.
  */
-const TABLE_CHROME_LINES = 4
+export const TABLE_CHROME_LINES = 4
+
+/**
+ * Derive the number of visible data rows from a measured box height.
+ * Subtracts the fixed chrome overhead and clamps to zero.
+ */
+export function deriveVisibleRowCount(measuredHeight: number): number {
+  return Math.max(0, measuredHeight - TABLE_CHROME_LINES)
+}
 
 // ---------------------------------------------------------------------------
 // DashboardView (exported)
