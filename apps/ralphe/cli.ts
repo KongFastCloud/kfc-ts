@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import { Args, Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
-import { Console, Effect } from "effect"
+import { Console, Effect, Layer } from "effect"
+import { AppLoggerLayer } from "./src/logger.js"
 import { checkbox, select, input } from "@inquirer/prompts"
 import { FatalError } from "./src/errors.js"
 import { loadConfig, saveConfig, resolveRunConfig, type GitMode, type RalpheConfig } from "./src/config.js"
@@ -233,7 +234,7 @@ const cli = Command.run(ralphe, {
 export { resolveRunConfig }
 
 export const runCli = (argv: string[]) =>
-  cli(argv).pipe(Effect.provide(BunContext.layer), BunRuntime.runMain)
+  cli(argv).pipe(Effect.provide(Layer.merge(BunContext.layer, AppLoggerLayer)), BunRuntime.runMain)
 
 if (import.meta.main) {
   runCli(process.argv)
