@@ -221,6 +221,8 @@ export const markTaskExhaustedFailure = (
   metadata: BeadsMetadata,
 ): Effect.Effect<void, FatalError> =>
   Effect.gen(function* () {
+    // Ensure the task is open so the TUI derives error status correctly
+    yield* reopenTask(id)
     // Persist failure context in metadata (includes resume token for manual retry)
     yield* writeMetadata(id, metadata)
     // Remove automatic eligibility
@@ -318,8 +320,6 @@ export const recoverStaleTasks = (
 
     for (const issue of stale) {
       yield* Console.log(`Recovering stale task: ${issue.id} (${issue.title})`)
-      // Move from in_progress back to open so the issue is no longer active
-      yield* reopenTask(issue.id)
       // Clear stale assignee/claim residue
       yield* clearAssignee(issue.id)
       // Apply error state: remove ready label, add error label, persist metadata & notes
