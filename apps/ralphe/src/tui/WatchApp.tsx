@@ -14,6 +14,7 @@ import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
 import { getAvailableActions } from "../beadsAdapter.js"
 import { markTaskReady } from "../beads.js"
 import { Effect } from "effect"
+import type { RalpheConfig, GitMode } from "../config.js"
 import type { WorkerStatus } from "../tuiWorker.js"
 import { DashboardView, partitionTasks } from "./DashboardView.js"
 import {
@@ -74,26 +75,60 @@ export interface WatchAppProps {
   initialError?: string | undefined
   /** Current worker status (idle/running). */
   workerStatus?: WorkerStatus | undefined
+  /** Current ralphe config for header display. */
+  config?: RalpheConfig | undefined
 }
 
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
+const gitModeLabel: Record<GitMode, string> = {
+  none: "none",
+  commit: "commit",
+  commit_and_push: "push",
+  commit_and_push_and_wait_ci: "ci",
+}
+
+function formatConfigSummary(config: RalpheConfig): string {
+  return [
+    config.engine,
+    `${config.maxAttempts} attempts`,
+    `${config.checks.length} checks`,
+    gitModeLabel[config.git.mode],
+    config.report,
+  ].join(" │ ")
+}
+
 function WatchHeader({
   totalTasks,
   lastRefreshed,
   error,
   workerStatus,
+  config,
 }: {
   totalTasks: number
   lastRefreshed: Date | null
   error: string | undefined
   workerStatus?: WorkerStatus | undefined
+  config?: RalpheConfig | undefined
 }): ReactNode {
+  const { width: termWidth } = useTerminalDimensions()
+
   const timeStr = lastRefreshed
     ? lastRefreshed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
     : "—"
+
+  // Measure whether config section fits.
+  // Left section: "◉ ralphe watch" = ~14 chars + possible error
+  // Right section: worker status + tasks + time ≈ varies, estimate ~30
+  // Config section: the formatted string
+  // Padding: 2 (paddingLeft+Right) + gaps
+  const configStr = config ? formatConfigSummary(config) : null
+  const leftMinWidth = 15 + (error ? Math.min(error.length + 3, 63) : 0)
+  const rightMinWidth = 30
+  const configWidth = configStr ? configStr.length + 4 : 0 // +4 for surrounding gaps
+  const showConfig = configStr != null && termWidth >= leftMinWidth + configWidth + rightMinWidth
 
   return (
     <box
@@ -119,6 +154,9 @@ function WatchHeader({
           </text>
         )}
       </box>
+      {showConfig && (
+        <text fg={colors.fg.muted}>{configStr}</text>
+      )}
       <box style={{ flexDirection: "row", gap: 2 }}>
         {workerStatus && (
           <text>
@@ -477,6 +515,7 @@ export function WatchApp({
   onQuit,
   initialError,
   workerStatus,
+  config,
 }: WatchAppProps): ReactNode {
   const { width } = useTerminalDimensions()
   const [tasks, setTasks] = useState<WatchTask[]>(initialTasks)
@@ -638,6 +677,7 @@ export function WatchApp({
         lastRefreshed={lastRefreshed}
         error={error}
         workerStatus={workerStatus}
+        config={config}
       />
 
       <box
