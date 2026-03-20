@@ -400,6 +400,7 @@ function DashboardTable({
         width: "100%",
         flexGrow,
         flexShrink: 0,
+        flexBasis: 0,
         minHeight: 5,
         flexDirection: "column",
         backgroundColor: colors.bg.primary,
