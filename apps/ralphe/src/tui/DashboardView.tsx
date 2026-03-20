@@ -348,7 +348,7 @@ function DashboardRow({
         <span fg={colors.border.normal}>{ID_TITLE_SEP}</span>
         <span fg={titleColor}>{titleStr}</span>
         <span fg={sColor}>{statusStr}</span>
-        <span fg={isDone ? colors.accent.secondary : isMarkingReady ? colors.fg.dim : colors.status.success}>{fourthColStr}</span>
+        <span fg={isDone ? colors.accent.secondary : isMarkingReady ? colors.status.warning : colors.status.success}>{fourthColStr}</span>
         <span fg={colors.fg.secondary}>{priorityStr}</span>
         <span fg={task.status === "active" || !effectiveDimmed ? colors.status.info : colors.fg.dim}>{durationStr}</span>
       </text>
