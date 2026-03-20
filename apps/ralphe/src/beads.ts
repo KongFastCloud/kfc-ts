@@ -23,6 +23,8 @@ export interface BeadsMetadata {
   readonly startedAt?: string | undefined
   /** ISO-8601 timestamp captured when the latest run finishes (done or error). */
   readonly finishedAt?: string | undefined
+  /** Error message when the task exhausted all retries. */
+  readonly error?: string | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -224,15 +226,11 @@ export const markTaskExhaustedFailure = (
     // Ensure the task is open so the TUI derives error status correctly
     yield* reopenTask(id)
     // Persist failure context in metadata (includes resume token for manual retry)
-    yield* writeMetadata(id, metadata)
+    yield* writeMetadata(id, { ...metadata, error: reason })
     // Remove automatic eligibility
     yield* removeLabel(id, "ready")
     // Apply the error label so operators and TUI can identify the failure
     yield* addLabel(id, "error")
-    // Preserve the failure reason in the task notes for human investigation
-    yield* runBd(["update", id, "--append-note", `Exhausted failure: ${reason}`]).pipe(
-      Effect.map(() => undefined),
-    )
   })
 
 /**

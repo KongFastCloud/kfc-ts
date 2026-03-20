@@ -62,6 +62,8 @@ export interface WatchTask {
   readonly startedAt?: string | undefined
   /** ISO-8601 timestamp when the latest run finished (from ralphe metadata). */
   readonly finishedAt?: string | undefined
+  /** Error message from the last failed run (from ralphe metadata). */
+  readonly error?: string | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +91,7 @@ interface BdIssueJson {
     ralphe?: {
       startedAt?: string
       finishedAt?: string
+      error?: string
     } | string
   }
   dependencies?: Array<{
@@ -217,6 +220,7 @@ function mapStatus(
 interface RalpheTimingMeta {
   readonly startedAt?: string | undefined
   readonly finishedAt?: string | undefined
+  readonly error?: string | undefined
 }
 
 /**
@@ -236,6 +240,7 @@ function normalizeRalpheMeta(
     return {
       startedAt: typeof ralphe.startedAt === "string" ? ralphe.startedAt : undefined,
       finishedAt: typeof ralphe.finishedAt === "string" ? ralphe.finishedAt : undefined,
+      error: typeof ralphe.error === "string" ? ralphe.error : undefined,
     }
   }
 
@@ -248,6 +253,7 @@ function normalizeRalpheMeta(
         return {
           startedAt: typeof obj.startedAt === "string" ? obj.startedAt : undefined,
           finishedAt: typeof obj.finishedAt === "string" ? obj.finishedAt : undefined,
+          error: typeof obj.error === "string" ? obj.error : undefined,
         }
       }
     } catch {
@@ -342,6 +348,7 @@ function bdIssueToWatchTask(
     closeReason: item.close_reason,
     startedAt: timing?.startedAt,
     finishedAt: timing?.finishedAt,
+    error: timing?.error,
   }
 }
 
