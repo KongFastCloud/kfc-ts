@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { RalpheConfig } from "../src/config.js"
-import { resolveRunConfig } from "../cli.js"
+import { resolveRunConfig, type RalpheConfig } from "../src/config.js"
 
 const baseConfig: RalpheConfig = {
   engine: "claude",

@@ -4,7 +4,7 @@ import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Console, Effect } from "effect"
 import { checkbox, select, input } from "@inquirer/prompts"
 import { FatalError } from "./src/errors.js"
-import { loadConfig, saveConfig, type GitMode, type RalpheConfig } from "./src/config.js"
+import { loadConfig, saveConfig, resolveRunConfig, type GitMode, type RalpheConfig } from "./src/config.js"
 import { detectProject } from "./src/detect.js"
 import { installGlobalSkill } from "./src/skill.js"
 import { runTask } from "./src/runTask.js"
@@ -239,16 +239,7 @@ const cli = Command.run(ralphe, {
   version: "0.0.1",
 })
 
-export const resolveRunConfig = (
-  cfg: RalpheConfig,
-  gitModeOverride?: GitMode,
-): RalpheConfig => {
-  const resolvedGitMode = gitModeOverride ?? cfg.git.mode
-  return {
-    ...cfg,
-    git: { mode: resolvedGitMode },
-  }
-}
+export { resolveRunConfig }
 
 export const runCli = (argv: string[]) =>
   cli(argv).pipe(Effect.provide(BunContext.layer), BunRuntime.runMain)

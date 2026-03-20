@@ -9,7 +9,7 @@ export { Engine } from "./engine/Engine.js"
 export type { AgentResult } from "./engine/Engine.js"
 export { ClaudeEngineLayer } from "./engine/ClaudeEngine.js"
 export { CodexEngineLayer } from "./engine/CodexEngine.js"
-export { loadConfig, saveConfig, getConfigPath } from "./config.js"
+export { loadConfig, saveConfig, getConfigPath, resolveRunConfig } from "./config.js"
 export type { RalpheConfig } from "./config.js"
 export { detectProject } from "./detect.js"
 export { gitCommit, gitPush, gitCommitAndPush, gitWaitForCi } from "./git.js"
@@ -30,6 +30,8 @@ export {
   claimTask,
   closeTaskSuccess,
   closeTaskFailure,
+  markTaskReady,
+  markTaskExhaustedFailure,
   writeMetadata,
   queryStaleClaimed,
   recoverStaleTasks,

@@ -102,3 +102,18 @@ export const saveConfig = (config: RalpheConfig, workDir = process.cwd()): void 
     JSON.stringify(config, null, 2) + "\n",
   )
 }
+
+/**
+ * Apply a CLI git-mode override to a config, returning a new config.
+ * When no override is provided the original config is returned as-is.
+ */
+export const resolveRunConfig = (
+  cfg: RalpheConfig,
+  gitModeOverride?: GitMode,
+): RalpheConfig => {
+  const resolvedGitMode = gitModeOverride ?? cfg.git.mode
+  return {
+    ...cfg,
+    git: { mode: resolvedGitMode },
+  }
+}
