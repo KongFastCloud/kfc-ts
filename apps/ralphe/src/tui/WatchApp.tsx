@@ -15,7 +15,7 @@ import { getAvailableActions } from "../beadsAdapter.js"
 import { markTaskReady } from "../beads.js"
 import { Effect } from "effect"
 import type { WorkerStatus } from "../tuiWorker.js"
-import { DashboardView, partitionTasks, computeVisibleRowCounts } from "./DashboardView.js"
+import { DashboardView, partitionTasks } from "./DashboardView.js"
 import {
   initialDashboardFocusState,
   toggleFocusedTable,
@@ -448,7 +448,7 @@ export function WatchApp({
   initialError,
   workerStatus,
 }: WatchAppProps): ReactNode {
-  const { width, height } = useTerminalDimensions()
+  const { width } = useTerminalDimensions()
   const [tasks, setTasks] = useState<WatchTask[]>(initialTasks)
   const [error, setError] = useState<string | undefined>(initialError)
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(
@@ -461,8 +461,9 @@ export function WatchApp({
   const [focusState, setFocusState] = useState(initialDashboardFocusState)
   const { focusedTable, activeSelectedIndex, doneSelectedIndex, activeScrollOffset, doneScrollOffset, viewMode } = focusState
 
-  // Derive visible row capacities from terminal height
-  const { activeVisibleRows, doneVisibleRows } = computeVisibleRowCounts(height)
+  // Measured visible row counts from DashboardTable (updated via callbacks)
+  const [activeVisibleRows, setActiveVisibleRows] = useState(0)
+  const [doneVisibleRows, setDoneVisibleRows] = useState(0)
 
   // Partition once for use in handlers and render
   const { active: activeTasks, done: doneTasks } = partitionTasks(tasks)
@@ -627,6 +628,8 @@ export function WatchApp({
             activeScrollOffset={activeScrollOffset}
             doneScrollOffset={doneScrollOffset}
             terminalWidth={width}
+            onActiveVisibleRowCountChange={setActiveVisibleRows}
+            onDoneVisibleRowCountChange={setDoneVisibleRows}
           />
         )}
       </box>

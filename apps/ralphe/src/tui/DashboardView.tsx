@@ -357,6 +357,7 @@ function DashboardTable({
   flexGrow,
   borderColor,
   variant,
+  onVisibleRowCountChange,
 }: {
   title: string
   tasks: WatchTask[]
@@ -366,6 +367,7 @@ function DashboardTable({
   flexGrow: number
   borderColor: string
   variant: TableVariant
+  onVisibleRowCountChange?: (count: number) => void
 }): ReactNode {
   const boxRef = useRef<BoxRenderable>(null)
   const [visibleRowCount, setVisibleRowCount] = useState(0)
@@ -374,7 +376,11 @@ function DashboardTable({
     const node = boxRef.current?.getLayoutNode()
     if (!node) return
     const measuredHeight = Math.floor(node.getComputedHeight())
-    setVisibleRowCount(Math.max(0, measuredHeight - TABLE_CHROME_LINES))
+    const count = Math.max(0, measuredHeight - TABLE_CHROME_LINES)
+    if (count !== visibleRowCount) {
+      setVisibleRowCount(count)
+      onVisibleRowCountChange?.(count)
+    }
   })
 
   // Render only the visible window of rows
@@ -480,29 +486,6 @@ function useDurationTick(tasks: WatchTask[]): void {
  */
 const TABLE_CHROME_LINES = 4
 
-/**
- * Compute the visible row capacity for each dashboard table given the total
- * terminal height. The active table uses flexGrow 2 and the done table uses
- * flexGrow 1, so the available dashboard area is split 2:1.
- *
- * Subtracts 2 for the application header and footer, then subtracts per-table
- * chrome (border + section title + column header) from each table's share.
- *
- * Exported for testing.
- */
-export function computeVisibleRowCounts(terminalHeight: number): {
-  activeVisibleRows: number
-  doneVisibleRows: number
-} {
-  const dashboardHeight = Math.max(0, terminalHeight - 2) // header + footer
-  const activeTableHeight = Math.floor((dashboardHeight * 2) / 3)
-  const doneTableHeight = dashboardHeight - activeTableHeight
-  return {
-    activeVisibleRows: Math.max(0, activeTableHeight - TABLE_CHROME_LINES),
-    doneVisibleRows: Math.max(0, doneTableHeight - TABLE_CHROME_LINES),
-  }
-}
-
 // ---------------------------------------------------------------------------
 // DashboardView (exported)
 // ---------------------------------------------------------------------------
@@ -523,6 +506,10 @@ export interface DashboardViewProps {
   /** Scroll offset (first visible row) for the done table. */
   doneScrollOffset: number
   terminalWidth: number
+  /** Callback when the active table's measured visible row count changes. */
+  onActiveVisibleRowCountChange?: (count: number) => void
+  /** Callback when the done table's measured visible row count changes. */
+  onDoneVisibleRowCountChange?: (count: number) => void
 }
 
 /**
@@ -538,6 +525,8 @@ export function DashboardView({
   activeScrollOffset,
   doneScrollOffset,
   terminalWidth,
+  onActiveVisibleRowCountChange,
+  onDoneVisibleRowCountChange,
 }: DashboardViewProps): ReactNode {
   // Drive a one-second re-render while any active task needs a live duration.
   useDurationTick(tasks)
@@ -571,6 +560,7 @@ export function DashboardView({
             : colors.border.normal
         }
         variant="active"
+        onVisibleRowCountChange={onActiveVisibleRowCountChange}
       />
       <DashboardTable
         title="Done"
@@ -585,6 +575,7 @@ export function DashboardView({
             : colors.border.normal
         }
         variant="done"
+        onVisibleRowCountChange={onDoneVisibleRowCountChange}
       />
     </box>
   )
