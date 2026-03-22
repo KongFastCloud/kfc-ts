@@ -79,12 +79,24 @@ function makeController(overrides?: Partial<TuiWatchControllerOptions>): TuiWatc
   })
 }
 
+/** Flush pending microtasks so the consumer fiber can advance. */
+const flush = () => new Promise<void>((r) => setTimeout(r, 0))
+
+/** Wait for a condition with a timeout. */
+async function waitFor(fn: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now()
+  while (!fn()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out")
+    await new Promise((r) => setTimeout(r, 10))
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 describe("TuiWatchController", () => {
-  test("initial state has idle worker and empty tasks", () => {
+  test("initial state has idle worker, empty tasks, and empty markReadyPendingIds", () => {
     const ctrl = makeController()
     const state = ctrl.getState()
 
@@ -92,6 +104,7 @@ describe("TuiWatchController", () => {
     expect(state.latestTasks).toEqual([])
     expect(state.refreshError).toBeUndefined()
     expect(state.lastRefreshed).toBeNull()
+    expect(state.markReadyPendingIds.size).toBe(0)
 
     void ctrl.stop()
   })
@@ -297,6 +310,142 @@ describe("TuiWatchController", () => {
     expect(tasks).toEqual(mockTasks)
     expect(result).toBe("hello")
 
+    await ctrl.stop()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Mark-ready Effect-native queue tests
+// ---------------------------------------------------------------------------
+
+describe("TuiWatchController — mark-ready queue", () => {
+  test("enqueueMarkReady() processes items through the Effect-native queue", async () => {
+    markReadyCalls = []
+    const ctrl = makeController()
+    await ctrl.startMarkReadyConsumer()
+
+    ctrl.enqueueMarkReady("T-1", ["bug"])
+    await waitFor(() => markReadyCalls.length >= 1)
+
+    expect(markReadyCalls).toEqual([{ id: "T-1", labels: ["bug"] }])
+
+    await ctrl.stop()
+  })
+
+  test("queue preserves FIFO ordering", async () => {
+    markReadyCalls = []
+    const ctrl = makeController()
+    await ctrl.startMarkReadyConsumer()
+
+    ctrl.enqueueMarkReady("A", ["x"])
+    ctrl.enqueueMarkReady("B", ["y"])
+    ctrl.enqueueMarkReady("C", ["z"])
+
+    await waitFor(() => markReadyCalls.length >= 3)
+
+    expect(markReadyCalls.map((c) => c.id)).toEqual(["A", "B", "C"])
+
+    await ctrl.stop()
+  })
+
+  test("duplicate task IDs are rejected (queued)", async () => {
+    markReadyCalls = []
+    const ctrl = makeController()
+    await ctrl.startMarkReadyConsumer()
+
+    // Enqueue three items, with B duplicated
+    ctrl.enqueueMarkReady("A", ["x"])
+    ctrl.enqueueMarkReady("B", ["y"])
+    ctrl.enqueueMarkReady("B", ["y2"]) // duplicate — should be rejected
+
+    await waitFor(() => markReadyCalls.length >= 2)
+    // Give a bit more time to ensure no extra call comes
+    await flush()
+
+    expect(markReadyCalls.map((c) => c.id)).toEqual(["A", "B"])
+
+    await ctrl.stop()
+  })
+
+  test("pendingIds tracks queued and in-flight items", async () => {
+    markReadyCalls = []
+    const ctrl = makeController()
+    await ctrl.startMarkReadyConsumer()
+
+    ctrl.enqueueMarkReady("A", [])
+    ctrl.enqueueMarkReady("B", [])
+    ctrl.enqueueMarkReady("C", [])
+
+    // Immediately after enqueue, all IDs should be pending
+    const pending = ctrl.getState().markReadyPendingIds
+    expect(pending.has("A")).toBe(true)
+    expect(pending.has("B")).toBe(true)
+    expect(pending.has("C")).toBe(true)
+
+    // Wait for all to complete
+    await waitFor(() => markReadyCalls.length >= 3)
+    // Give state a moment to update
+    await flush()
+    await new Promise((r) => setTimeout(r, 50))
+
+    const pendingAfter = ctrl.getState().markReadyPendingIds
+    expect(pendingAfter.size).toBe(0)
+
+    await ctrl.stop()
+  })
+
+  test("pendingIds shrinks as items complete", async () => {
+    markReadyCalls = []
+    const ctrl = makeController()
+    await ctrl.startMarkReadyConsumer()
+
+    ctrl.enqueueMarkReady("A", [])
+
+    // Wait for A to complete
+    await waitFor(() => markReadyCalls.length >= 1)
+    await flush()
+    await new Promise((r) => setTimeout(r, 50))
+
+    expect(ctrl.getState().markReadyPendingIds.has("A")).toBe(false)
+
+    await ctrl.stop()
+  })
+
+  test("enqueueMarkReady is a no-op before startMarkReadyConsumer", async () => {
+    markReadyCalls = []
+    const ctrl = makeController()
+
+    // Enqueue before consumer is started — should be silently dropped
+    ctrl.enqueueMarkReady("X", [])
+    expect(ctrl.getState().markReadyPendingIds.size).toBe(0)
+
+    await ctrl.stop()
+  })
+
+  test("startMarkReadyConsumer() is idempotent", async () => {
+    const ctrl = makeController()
+    await ctrl.startMarkReadyConsumer()
+    await ctrl.startMarkReadyConsumer() // Should not create a second consumer
+
+    markReadyCalls = []
+    ctrl.enqueueMarkReady("A", [])
+    await waitFor(() => markReadyCalls.length >= 1)
+
+    // Only one call — not duplicated by a second consumer
+    expect(markReadyCalls).toHaveLength(1)
+
+    await ctrl.stop()
+  })
+
+  test("stop() shuts down the queue cleanly", async () => {
+    markReadyCalls = []
+    const ctrl = makeController()
+    await ctrl.startMarkReadyConsumer()
+
+    ctrl.enqueueMarkReady("A", [])
+    await waitFor(() => markReadyCalls.length >= 1)
+
+    // stop() should not throw
     await ctrl.stop()
   })
 })

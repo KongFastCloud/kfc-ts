@@ -4,12 +4,17 @@
  * single ManagedRuntime configured with TuiLoggerLayer, ensuring consistent
  * logging and eliminating scattered bare Effect.runPromise calls.
  *
+ * Mark-ready operations are serialized through an Effect-native Queue owned
+ * by the controller. The queue preserves FIFO ordering and non-blocking
+ * enqueue semantics. A consumer fiber drains the queue inside the managed
+ * runtime, ensuring consistent logging and error handling.
+ *
  * React and OpenTUI remain adapter consumers of controller state and commands.
  * Promise-returning UI callbacks delegate through the controller's runtime.
  */
 
 import os from "node:os"
-import { Effect, ManagedRuntime, type Layer } from "effect"
+import { Effect, ManagedRuntime, Queue, type Layer } from "effect"
 import type { WatchTask } from "./beadsAdapter.js"
 import { queryAllTasks } from "./beadsAdapter.js"
 import { markTaskReady } from "./beads.js"
@@ -21,6 +26,12 @@ import { loadConfig } from "./config.js"
 // Types
 // ---------------------------------------------------------------------------
 
+/** A mark-ready queue item — the task ID and its current labels. */
+export interface MarkReadyQueueItem {
+  readonly id: string
+  readonly labels: string[]
+}
+
 /**
  * Observable snapshot of the controller's state.
  * UI components read this to render; the controller is the single owner.
@@ -30,6 +41,8 @@ export interface TuiWatchControllerState {
   readonly latestTasks: WatchTask[]
   readonly refreshError: string | undefined
   readonly lastRefreshed: Date | null
+  /** IDs of tasks currently queued or in-flight for mark-ready. */
+  readonly markReadyPendingIds: ReadonlySet<string>
 }
 
 export interface TuiWatchControllerOptions {
@@ -59,7 +72,13 @@ export interface TuiWatchController {
   initialLoad(): Promise<void>
   /** Refresh the task list. Returns updated tasks. */
   refresh(): Promise<WatchTask[]>
-  /** Mark a task as ready. */
+  /**
+   * Enqueue a mark-ready action into the Effect-native serialized queue.
+   * Non-blocking and synchronous — safe to call from React callbacks.
+   * Duplicate task IDs (already queued or in-flight) are silently rejected.
+   */
+  enqueueMarkReady(id: string, labels: string[]): void
+  /** Mark a task as ready (direct, non-queued). */
   markReady(id: string, labels: string[]): Promise<void>
   /**
    * Run an arbitrary Effect through the controller's scoped runtime.
@@ -71,6 +90,11 @@ export interface TuiWatchController {
   // -- Lifecycle ------------------------------------------------------------
   /** Start the worker loop. */
   startWorker(): void
+  /**
+   * Start the mark-ready consumer fiber. Must be called (and awaited) before
+   * enqueueMarkReady is used — typically as part of the TUI startup sequence.
+   */
+  startMarkReadyConsumer(): Promise<void>
   /** Start the periodic UI data refresh timer. */
   startPeriodicRefresh(): void
   /** Stop the worker, periodic refresh, and dispose the managed runtime. */
@@ -117,6 +141,10 @@ export function createTuiWatchController(
   let periodicTimer: ReturnType<typeof setInterval> | null = null
   let refreshInFlight = false
 
+  // -- Mark-ready queue state -----------------------------------------------
+  let markReadyQueue: Queue.Queue<MarkReadyQueueItem> | null = null
+  let markReadyPendingIds = new Set<string>()
+
   const listeners: Array<() => void> = []
 
   const notifyListeners = () => {
@@ -145,7 +173,7 @@ export function createTuiWatchController(
 
   const controller: TuiWatchController = {
     getState(): TuiWatchControllerState {
-      return { workerStatus, latestTasks, refreshError, lastRefreshed }
+      return { workerStatus, latestTasks, refreshError, lastRefreshed, markReadyPendingIds }
     },
 
     async initialLoad(): Promise<void> {
@@ -178,6 +206,17 @@ export function createTuiWatchController(
       } finally {
         refreshInFlight = false
       }
+    },
+
+    enqueueMarkReady(id: string, labels: string[]): void {
+      if (!markReadyQueue) return // Consumer not started yet
+      if (markReadyPendingIds.has(id)) return // Duplicate rejection
+      markReadyPendingIds = new Set([...markReadyPendingIds, id])
+      notifyListeners()
+      // Queue.offer on an unbounded queue always succeeds immediately.
+      // We run it through the managed runtime to stay within the scoped
+      // Effect context — no bare default runtime escape hatch.
+      void managedRuntime.runPromise(Queue.offer(markReadyQueue, { id, labels }))
     },
 
     async markReady(id: string, labels: string[]): Promise<void> {
@@ -216,6 +255,51 @@ export function createTuiWatchController(
       )
     },
 
+    async startMarkReadyConsumer(): Promise<void> {
+      if (markReadyQueue !== null) return // Already started
+
+      // Create the unbounded Effect Queue through the managed runtime.
+      markReadyQueue = await managedRuntime.runPromise(
+        Queue.unbounded<MarkReadyQueueItem>(),
+      )
+
+      const queue = markReadyQueue
+
+      // Fork the consumer as a daemon fiber on the managed runtime so it
+      // inherits the TUI logger layer and survives the parent fiber's
+      // completion. The fiber loops forever: take → process → refresh → repeat.
+      // Queue.shutdown() during stop() will interrupt the Queue.take, ending
+      // the loop cleanly.
+      void managedRuntime.runPromise(
+        Effect.forkDaemon(
+          Effect.forever(
+            Effect.gen(function* () {
+              const item = yield* Queue.take(queue)
+
+              // Execute mark-ready through the scoped runtime's layer.
+              // Errors are silently swallowed — drain continues.
+              yield* Effect.catchAll(
+                markTaskReady(item.id, item.labels),
+                () => Effect.void,
+              )
+
+              // Remove from pending set and notify UI.
+              markReadyPendingIds = new Set(
+                [...markReadyPendingIds].filter((pid) => pid !== item.id),
+              )
+              notifyListeners()
+
+              // Trigger a refresh so the task list updates after mark-ready.
+              // Fire-and-forget — matches the current onDrain behavior.
+              void controller.refresh().catch(() => {
+                // Refresh failure is non-fatal; the periodic timer will retry.
+              })
+            }),
+          ),
+        ),
+      )
+    },
+
     startPeriodicRefresh(): void {
       if (periodicTimer !== null) return
       if (refreshIntervalMs <= 0) return
@@ -233,6 +317,14 @@ export function createTuiWatchController(
       }
       workerHandle?.stop()
       workerHandle = null
+
+      // Shut down the mark-ready queue — this interrupts the consumer fiber's
+      // Queue.take, causing the forever loop to exit cleanly.
+      if (markReadyQueue !== null) {
+        await managedRuntime.runPromise(Queue.shutdown(markReadyQueue))
+        markReadyQueue = null
+      }
+
       await managedRuntime.dispose()
     },
 

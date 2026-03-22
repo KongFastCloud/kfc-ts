@@ -15,7 +15,6 @@ import { getAvailableActions } from "../beadsAdapter.js"
 import type { RalpheConfig, GitMode } from "../config.js"
 import type { WorkerStatus } from "../tuiWorker.js"
 import { DashboardView, partitionTasks, formatCompletedAt, formatDuration } from "./DashboardView.js"
-import { useMarkReadyQueue } from "./useMarkReadyQueue.js"
 import {
   initialDashboardFocusState,
   toggleFocusedTable,
@@ -29,6 +28,9 @@ import {
 // ---------------------------------------------------------------------------
 // Theme (inline subset — avoids coupling to ralph-tui's theme package)
 // ---------------------------------------------------------------------------
+
+/** Stable empty set to avoid re-renders when no pending IDs are provided. */
+const emptySet: ReadonlySet<string> = new Set()
 
 const colors = {
   bg: { primary: "#1a1b26", secondary: "#24283b", tertiary: "#2f3449", highlight: "#3d4259" },
@@ -80,11 +82,15 @@ export interface WatchAppProps {
   /** Current ralphe config for header display. */
   config?: RalpheConfig | undefined
   /**
-   * Optional scoped runner for mark-ready operations.
-   * When provided, routes mark-ready through the controller's runtime
-   * instead of bare Effect.runPromise.
+   * Enqueue a mark-ready action into the controller's Effect-native queue.
+   * Synchronous and non-blocking. Duplicate task IDs are silently rejected.
    */
-  onMarkReady?: ((id: string, labels: string[]) => Promise<void>) | undefined
+  onEnqueueMarkReady?: ((id: string, labels: string[]) => void) | undefined
+  /**
+   * Set of task IDs currently queued or in-flight for mark-ready.
+   * Provided by the controller's queue state for loading indicators.
+   */
+  markReadyPendingIds?: ReadonlySet<string> | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -554,7 +560,8 @@ export function WatchApp({
   onQuit,
   workerStatus,
   config,
-  onMarkReady,
+  onEnqueueMarkReady,
+  markReadyPendingIds: markReadyPendingIdsProp,
 }: WatchAppProps): ReactNode {
   const { width } = useTerminalDimensions()
 
@@ -595,13 +602,9 @@ export function WatchApp({
     })
   }, [onRefresh])
 
-  // Mark-ready queue (non-blocking, FIFO)
-  // When onMarkReady is provided (from the controller), route through the
-  // scoped runtime instead of bare Effect.runPromise.
-  const { enqueue: enqueueMarkReady, pendingIds: markingReadyIds } = useMarkReadyQueue(
-    doRefresh,
-    onMarkReady ? { runMarkReady: onMarkReady } : undefined,
-  )
+  // Mark-ready pending IDs from the controller's Effect-native queue.
+  // Falls back to an empty set when the controller does not provide one.
+  const markingReadyIds = markReadyPendingIdsProp ?? emptySet
 
   // Keyboard handler — delegates to pure state transitions from dashboardFocus.ts
   const handleKeyboard = useCallback(
@@ -662,13 +665,14 @@ export function WatchApp({
           break
 
         case "m":
-          // Mark Ready action — enqueue into non-blocking FIFO queue
+          // Mark Ready action — enqueue into the controller's Effect-native queue
           if (
+            onEnqueueMarkReady &&
             selectedTask &&
             getAvailableActions(selectedTask).includes("mark-ready") &&
             !markingReadyIds.has(selectedTask.id)
           ) {
-            enqueueMarkReady({ id: selectedTask.id, labels: selectedTask.labels ?? [] })
+            onEnqueueMarkReady(selectedTask.id, selectedTask.labels ?? [])
           }
           break
 
@@ -676,7 +680,7 @@ export function WatchApp({
           break
       }
     },
-    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh, selectedTask, activeVisibleRows, doneVisibleRows, markingReadyIds, enqueueMarkReady],
+    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh, selectedTask, activeVisibleRows, doneVisibleRows, markingReadyIds, onEnqueueMarkReady],
   )
 
   useKeyboard(handleKeyboard)
@@ -715,7 +719,7 @@ export function WatchApp({
             activeScrollOffset={activeScrollOffset}
             doneScrollOffset={doneScrollOffset}
             terminalWidth={width}
-            markingReadyIds={markingReadyIds}
+            markingReadyIds={markingReadyIds as Set<string>}
             onActiveVisibleRowCountChange={setActiveVisibleRows}
             onDoneVisibleRowCountChange={setDoneVisibleRows}
           />

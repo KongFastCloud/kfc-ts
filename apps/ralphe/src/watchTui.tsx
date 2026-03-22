@@ -10,7 +10,9 @@
  *
  * All watch-mode Effect operations are funnelled through the
  * controller's ManagedRuntime to guarantee consistent TUI logging
- * and eliminate scattered bare Effect.runPromise calls.
+ * and eliminate scattered bare Effect.runPromise calls. Mark-ready
+ * operations are serialized through an Effect-native queue owned
+ * by the controller.
  */
 
 import { createCliRenderer } from "@opentui/core"
@@ -45,7 +47,7 @@ export interface WatchTuiOptions {
  * 2. Creates a TuiWatchController that owns the scoped TUI runtime.
  * 3. Loads initial tasks through the controller's runtime.
  * 4. Creates an OpenTUI renderer and mounts WatchApp.
- * 5. Starts the controller's worker loop and periodic refresh.
+ * 5. Starts the controller's worker loop, mark-ready consumer, and periodic refresh.
  * 6. Blocks until the user quits (Ctrl-C / q).
  */
 export const launchWatchTui = (
@@ -69,7 +71,11 @@ export const launchWatchTui = (
     // 3. Initial load — runs through the controller's scoped runtime
     yield* Effect.promise(() => controller.initialLoad())
 
-    // 4. Create renderer and render
+    // 4. Start the mark-ready consumer fiber (must happen before first render
+    //    so that enqueueMarkReady is safe to call from React callbacks).
+    yield* Effect.promise(() => controller.startMarkReadyConsumer())
+
+    // 5. Create renderer and render
     const renderer = yield* Effect.promise(() => createCliRenderer())
     const root = createRoot(renderer)
 
@@ -83,7 +89,8 @@ export const launchWatchTui = (
           error={state.refreshError}
           lastRefreshed={state.lastRefreshed}
           onRefresh={() => controller.refresh().then(() => {})}
-          onMarkReady={(id, labels) => controller.markReady(id, labels)}
+          onEnqueueMarkReady={(id, labels) => controller.enqueueMarkReady(id, labels)}
+          markReadyPendingIds={state.markReadyPendingIds}
           workerStatus={state.workerStatus}
           config={config}
         />,
@@ -93,7 +100,7 @@ export const launchWatchTui = (
     // Subscribe to controller state changes → re-render
     controller.onStateChange(rerender)
 
-    // 5. Start the in-process worker and periodic refresh via the controller
+    // 6. Start the in-process worker and periodic refresh via the controller
     controller.startWorker()
     controller.startPeriodicRefresh()
 
@@ -102,7 +109,7 @@ export const launchWatchTui = (
 
     yield* Effect.logInfo(`Watch TUI started. Press 'q' to quit.`)
 
-    // 6. Keep the process alive until interrupted
+    // 7. Keep the process alive until interrupted
     yield* Effect.async<void, never>(() => {
       // This Effect never resolves — the TUI owns the process lifecycle.
       // process.exit() is called from WatchApp's quit handler.
