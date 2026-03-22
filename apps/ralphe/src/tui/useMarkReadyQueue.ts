@@ -1,6 +1,10 @@
 /**
  * ABOUTME: React hook wrapper for the mark-ready FIFO queue engine.
  * Wires MarkReadyQueueEngine to React state and the beads markTaskReady Effect.
+ *
+ * Accepts an optional `runMarkReady` override so callers can route mark-ready
+ * operations through a scoped runtime (e.g. the TuiWatchController) instead
+ * of the default bare Effect.runPromise path.
  */
 
 import { useState, useCallback, useRef } from "react"
@@ -23,9 +27,25 @@ export interface UseMarkReadyQueueResult {
   readonly pendingIds: Set<string>
 }
 
-export function useMarkReadyQueue(doRefresh: () => void): UseMarkReadyQueueResult {
+export interface UseMarkReadyQueueOptions {
+  /**
+   * Custom runner for mark-ready operations. When provided, this is used
+   * instead of the default bare `Effect.runPromise(markTaskReady(...))`.
+   * This allows the hook to route operations through a scoped runtime
+   * such as the TuiWatchController's ManagedRuntime.
+   */
+  readonly runMarkReady?: (id: string, labels: string[]) => Promise<void>
+}
+
+export function useMarkReadyQueue(
+  doRefresh: () => void,
+  options?: UseMarkReadyQueueOptions,
+): UseMarkReadyQueueResult {
   const doRefreshRef = useRef(doRefresh)
   doRefreshRef.current = doRefresh
+
+  const runMarkReadyRef = useRef(options?.runMarkReady)
+  runMarkReadyRef.current = options?.runMarkReady
 
   // Trigger re-renders when queue state changes so pendingIds stays fresh.
   const [, setTick] = useState(0)
@@ -33,7 +53,11 @@ export function useMarkReadyQueue(doRefresh: () => void): UseMarkReadyQueueResul
   const engineRef = useRef<MarkReadyQueueEngine | null>(null)
   if (engineRef.current === null) {
     engineRef.current = new MarkReadyQueueEngine(
-      (id, labels) => Effect.runPromise(markTaskReady(id, labels)),
+      (id, labels) => {
+        const custom = runMarkReadyRef.current
+        if (custom) return custom(id, labels)
+        return Effect.runPromise(markTaskReady(id, labels))
+      },
       () => doRefreshRef.current(),
       () => setTick((t) => t + 1),
     )

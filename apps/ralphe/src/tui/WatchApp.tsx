@@ -76,6 +76,12 @@ export interface WatchAppProps {
   workerStatus?: WorkerStatus | undefined
   /** Current ralphe config for header display. */
   config?: RalpheConfig | undefined
+  /**
+   * Optional scoped runner for mark-ready operations.
+   * When provided, routes mark-ready through the controller's runtime
+   * instead of bare Effect.runPromise.
+   */
+  onMarkReady?: ((id: string, labels: string[]) => Promise<void>) | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -545,6 +551,7 @@ export function WatchApp({
   initialError,
   workerStatus,
   config,
+  onMarkReady,
 }: WatchAppProps): ReactNode {
   const { width } = useTerminalDimensions()
   const [tasks, setTasks] = useState<WatchTask[]>(initialTasks)
@@ -594,7 +601,12 @@ export function WatchApp({
   }, [onRefresh, activeVisibleRows, doneVisibleRows])
 
   // Mark-ready queue (non-blocking, FIFO)
-  const { enqueue: enqueueMarkReady, pendingIds: markingReadyIds } = useMarkReadyQueue(doRefresh)
+  // When onMarkReady is provided (from the controller), route through the
+  // scoped runtime instead of bare Effect.runPromise.
+  const { enqueue: enqueueMarkReady, pendingIds: markingReadyIds } = useMarkReadyQueue(
+    doRefresh,
+    onMarkReady ? { runMarkReady: onMarkReady } : undefined,
+  )
 
   // Periodic auto-refresh
   useEffect(() => {
