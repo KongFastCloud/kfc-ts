@@ -13,7 +13,7 @@
  */
 
 import { describe, test, expect, beforeAll, beforeEach } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Logger, ManagedRuntime } from "effect"
 import type { BeadsIssue, BeadsMetadata } from "../src/beads.js"
 import type { TaskResult } from "../src/runTask.js"
 import type { RalpheConfig } from "../src/config.js"
@@ -22,8 +22,9 @@ import type {
   WorkerLogEntry,
   TuiWorkerCallbacks,
   TuiWorkerDeps,
+  TuiWorkerHandle,
 } from "../src/tuiWorker.js"
-import { startTuiWorker as realStartTuiWorker } from "../src/tuiWorker.js"
+import { forkTuiWorker } from "../src/tuiWorker.js"
 import { processClaimedTask, type WatchWorkflowDeps } from "../src/watchWorkflow.js"
 
 // ---------------------------------------------------------------------------
@@ -63,7 +64,17 @@ let worktreeDirty = false
 // Module setup
 // ---------------------------------------------------------------------------
 
-let startTuiWorker: typeof import("../src/tuiWorker.js").startTuiWorker
+/** Minimal no-op logger layer for tests — no stderr, no file I/O. */
+const TestLayer = Logger.replace(Logger.defaultLogger, Logger.make(() => {}))
+
+/**
+ * Fork the worker on an explicit test runtime. Every test gets its own
+ * ManagedRuntime, making runtime ownership visible and honest.
+ */
+let startWorker: (
+  callbacks: TuiWorkerCallbacks,
+  opts?: { pollIntervalMs?: number; workerId?: string },
+) => Promise<TuiWorkerHandle>
 
 const baseConfig: RalpheConfig = {
   engine: "claude",
@@ -160,11 +171,19 @@ function makeWorkerDeps(): TuiWorkerDeps {
 }
 
 beforeAll(async () => {
-  startTuiWorker = (callbacks, opts) =>
-    realStartTuiWorker(callbacks, {
+  startWorker = async (callbacks, opts) => {
+    const runtime = ManagedRuntime.make(TestLayer)
+    const handle = await forkTuiWorker(runtime, callbacks, {
       ...opts,
       deps: makeWorkerDeps(),
     })
+    return {
+      stop: async () => {
+        await handle.stop()
+        await runtime.dispose()
+      },
+    }
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -238,14 +257,14 @@ describe("restart recovery: startup ordering", () => {
     readyQueue = []
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-startup-order",
     })
 
     // Wait for at least one poll to occur
     await waitFor(() => calls.filter((c) => c.op === "queryQueued").length >= 1)
-    worker.stop()
+    await worker.stop()
 
     const recoveryIdx = calls.findIndex((c) => c.op === "recoverStaleTasks")
     const firstPollIdx = calls.findIndex((c) => c.op === "queryQueued")
@@ -260,13 +279,13 @@ describe("restart recovery: startup ordering", () => {
     claimResults.set("new-1", true)
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-recovery-before-claim",
     })
 
     await waitFor(() => calls.some((c) => c.op === "claimTask"))
-    worker.stop()
+    await worker.stop()
 
     const recoveryIdx = calls.findIndex((c) => c.op === "recoverStaleTasks")
     const firstClaimIdx = calls.findIndex((c) => c.op === "claimTask")
@@ -280,13 +299,13 @@ describe("restart recovery: startup ordering", () => {
     readyQueue = []
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-dirty-order",
     })
 
     await waitFor(() => calls.filter((c) => c.op === "queryQueued").length >= 1)
-    worker.stop()
+    await worker.stop()
 
     const recoveryIdx = calls.findIndex((c) => c.op === "recoverStaleTasks")
     const dirtyCheckIdx = calls.findIndex((c) => c.op === "isWorktreeDirty")
@@ -306,13 +325,13 @@ describe("restart recovery: stale-task recovery regardless of workerId", () => {
     readyQueue = []
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "worker-B",
     })
 
     await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "orphan-1"))
-    worker.stop()
+    await worker.stop()
 
     // The orphaned task was recovered even though the current worker is different
     const recoverCall = calls.find(
@@ -331,7 +350,7 @@ describe("restart recovery: stale-task recovery regardless of workerId", () => {
     readyQueue = []
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "worker-current",
     })
@@ -339,7 +358,7 @@ describe("restart recovery: stale-task recovery regardless of workerId", () => {
     await waitFor(() =>
       calls.filter((c) => c.op === "markTaskExhaustedFailure").length >= 3,
     )
-    worker.stop()
+    await worker.stop()
 
     // All three stale tasks were recovered
     const recoveredIds = calls
@@ -356,7 +375,7 @@ describe("restart recovery: stale-task recovery regardless of workerId", () => {
     readyQueue = []
 
     const helpers = makeCallbacks()
-    const worker = startTuiWorker(helpers.callbacks, {
+    const worker = await startWorker(helpers.callbacks, {
       pollIntervalMs: 30,
       workerId: "test-recovery-cb",
     })
@@ -364,7 +383,7 @@ describe("restart recovery: stale-task recovery regardless of workerId", () => {
     await waitFor(() => calls.some((c) => c.op === "recoverStaleTasks"))
     // Give the callback a tick to fire
     await new Promise((r) => setTimeout(r, 50))
-    worker.stop()
+    await worker.stop()
 
     expect(helpers.taskCompleteCount).toBeGreaterThanOrEqual(1)
   })
@@ -376,13 +395,13 @@ describe("restart recovery: recovered issue state is open + error", () => {
     readyQueue = []
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-state-check",
     })
 
     await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "state-1"))
-    worker.stop()
+    await worker.stop()
 
     // markTaskExhaustedFailure was called (open + error)
     expect(
@@ -405,7 +424,7 @@ describe("restart recovery: recovered issue state is open + error", () => {
     readyQueue = []
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-meta-recover",
     })
@@ -413,7 +432,7 @@ describe("restart recovery: recovered issue state is open + error", () => {
     await waitFor(() =>
       calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "meta-recover-1"),
     )
-    worker.stop()
+    await worker.stop()
 
     const recoverCall = calls.find(
       (c) => c.op === "markTaskExhaustedFailure" && c.id === "meta-recover-1",
@@ -428,13 +447,13 @@ describe("restart recovery: recovered issue state is open + error", () => {
     readyQueue = []
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-reopen",
     })
 
     await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "reopen-1"))
-    worker.stop()
+    await worker.stop()
 
     // reopenTask was called before markTaskExhaustedFailure
     const reopenIdx = calls.findIndex((c) => c.op === "reopenTask" && c.id === "reopen-1")
@@ -449,13 +468,13 @@ describe("restart recovery: recovered issue state is open + error", () => {
     readyQueue = []
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-clear-assignee",
     })
 
     await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "assignee-1"))
-    worker.stop()
+    await worker.stop()
 
     // clearAssignee was called before markTaskExhaustedFailure
     const clearIdx = calls.findIndex((c) => c.op === "clearAssignee" && c.id === "assignee-1")
@@ -470,13 +489,13 @@ describe("restart recovery: recovered issue state is open + error", () => {
     readyQueue = []
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-per-issue-order",
     })
 
     await waitFor(() => calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "order-1"))
-    worker.stop()
+    await worker.stop()
 
     const reopenIdx = calls.findIndex((c) => c.op === "reopenTask" && c.id === "order-1")
     const clearIdx = calls.findIndex((c) => c.op === "clearAssignee" && c.id === "order-1")
@@ -495,14 +514,14 @@ describe("restart recovery: recovered issue state is open + error", () => {
     readyOneShot = false // Keep returning empty queue
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-no-ghost",
     })
 
     // Wait for several poll cycles after recovery
     await waitFor(() => calls.filter((c) => c.op === "queryQueued").length >= 3)
-    worker.stop()
+    await worker.stop()
 
     // No claim calls should have been made (recovered task is not re-picked-up)
     expect(calls.some((c) => c.op === "claimTask")).toBe(false)
@@ -513,7 +532,7 @@ describe("restart recovery: recovered issue state is open + error", () => {
     readyQueue = []
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-reason",
     })
@@ -521,7 +540,7 @@ describe("restart recovery: recovered issue state is open + error", () => {
     await waitFor(() =>
       calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "reason-1"),
     )
-    worker.stop()
+    await worker.stop()
 
     const recoverCall = calls.find(
       (c) => c.op === "markTaskExhaustedFailure" && c.id === "reason-1",
@@ -538,14 +557,14 @@ describe("dirty worktree: pauses automatic pickup", () => {
     readyOneShot = false
 
     const { callbacks, logs } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-dirty-pause",
     })
 
     // Let the dirty-check loop run a few iterations
     await waitFor(() => calls.filter((c) => c.op === "isWorktreeDirty").length >= 3)
-    worker.stop()
+    await worker.stop()
 
     // No claims should have been made — the worker is paused
     expect(calls.some((c) => c.op === "claimTask")).toBe(false)
@@ -563,14 +582,14 @@ describe("dirty worktree: pauses automatic pickup", () => {
     readyQueue = []
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-dirty-recovery",
     })
 
     // Wait for at least one dirty check (which means recovery has already run)
     await waitFor(() => calls.filter((c) => c.op === "isWorktreeDirty").length >= 1)
-    worker.stop()
+    await worker.stop()
 
     // Recovery ran before the dirty-worktree check
     expect(calls.some((c) => c.op === "recoverStaleTasks")).toBe(true)
@@ -589,13 +608,13 @@ describe("dirty worktree: clean state allows normal polling", () => {
     readyQueue = []
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-clean-proceed",
     })
 
     await waitFor(() => calls.some((c) => c.op === "queryQueued"))
-    worker.stop()
+    await worker.stop()
 
     // Dirty-worktree gate passed: recovery → dirty-check → poll started
     // (full claim→execute→close lifecycle is owned by watchWorkflow/watchLifecycle)
@@ -612,7 +631,7 @@ describe("dirty worktree: clean state allows normal polling", () => {
     readyOneShot = true
 
     const { callbacks, logs } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-resume-after-clean",
     })
@@ -625,7 +644,7 @@ describe("dirty worktree: clean state allows normal polling", () => {
 
     // Now polling should resume and pick up work
     await waitFor(() => calls.some((c) => c.op === "claimTask" && c.id === "resume-1"))
-    worker.stop()
+    await worker.stop()
 
     // Verify the pause happened
     expect(logs.some((l) => l.message.includes("pausing automatic pickup"))).toBe(true)
@@ -640,13 +659,13 @@ describe("dirty worktree: clean state allows normal polling", () => {
     readyQueue = []
 
     const { callbacks, logs } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-clean-no-pause-log",
     })
 
     await waitFor(() => calls.filter((c) => c.op === "queryQueued").length >= 1)
-    worker.stop()
+    await worker.stop()
 
     // No pause message should appear
     expect(logs.some((l) => l.message.includes("pausing automatic pickup"))).toBe(false)
@@ -661,13 +680,13 @@ describe("restart recovery: combined recovery + dirty-worktree + polling", () =>
     claimResults.set("full-new-1", true)
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-full-sequence",
     })
 
     await waitFor(() => calls.some((c) => c.op === "claimTask" && c.id === "full-new-1"))
-    worker.stop()
+    await worker.stop()
 
     // Verify startup ordering: recovery → markExhausted → dirtyCheck → poll → claim
     // (claim→execute→close lifecycle ordering is owned by watchWorkflow/watchLifecycle)
@@ -693,14 +712,14 @@ describe("restart recovery: combined recovery + dirty-worktree + polling", () =>
     claimResults.set("full-blocked-1", true)
 
     const { callbacks } = makeCallbacks()
-    const worker = startTuiWorker(callbacks, {
+    const worker = await startWorker(callbacks, {
       pollIntervalMs: 30,
       workerId: "test-full-dirty",
     })
 
     // Let the dirty loop tick a few times
     await waitFor(() => calls.filter((c) => c.op === "isWorktreeDirty").length >= 2)
-    worker.stop()
+    await worker.stop()
 
     // Recovery happened
     expect(

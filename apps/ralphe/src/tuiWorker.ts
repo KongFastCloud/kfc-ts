@@ -1,9 +1,14 @@
 /**
  * ABOUTME: Effect-native TUI worker — fiber-based poll→claim→execute loop.
- * Runs as an interruptible Effect inside the TUI controller's scoped runtime,
- * replacing the previous detached async loop with boolean-flag shutdown.
+ * Runs as an interruptible Effect inside an explicitly provided runtime.
  *
- * Lifecycle is managed through fiber interruption: the controller forks this
+ * The TUI controller forks tuiWorkerEffect on its controller-owned
+ * ManagedRuntime so worker-path logging inherits the TUI-safe logger.
+ * Tests and other call sites use forkTuiWorker with their own runtime.
+ * There is no default-runtime fallback — every call site must supply a
+ * runtime, making ownership visible and honest.
+ *
+ * Lifecycle is managed through fiber interruption: the caller forks this
  * Effect as a daemon fiber, and scope disposal or explicit Fiber.interrupt
  * cleanly stops the worker.
  *
@@ -12,7 +17,7 @@
  */
 
 import os from "node:os"
-import { Effect, Fiber } from "effect"
+import { Effect, Fiber, ManagedRuntime } from "effect"
 import { loadConfig } from "./config.js"
 import { queryQueued } from "./beadsAdapter.js"
 import {
@@ -252,36 +257,38 @@ export const tuiWorkerEffect = (
 }
 
 // ---------------------------------------------------------------------------
-// Backward-compatible wrapper
+// Explicit-runtime worker launcher
 // ---------------------------------------------------------------------------
 
+/** Handle returned by {@link forkTuiWorker} for stopping the worker. */
+export interface TuiWorkerHandle {
+  /** Interrupt the worker fiber. The caller is responsible for disposing the runtime. */
+  stop: () => Promise<void>
+}
+
 /**
- * Start the Effect-based TUI worker and return an imperative stop handle.
+ * Fork the TUI worker as a daemon fiber on an **explicitly provided** runtime
+ * and return an imperative stop handle.
  *
- * Internally forks tuiWorkerEffect as a fiber using Effect.runFork on the
- * **default runtime**. This is a low-level convenience for headless or test
- * contexts where a managed runtime is not available.
+ * Every call site must supply its own `ManagedRuntime`, making runtime
+ * ownership visible and honest. The TUI controller passes its controller-owned
+ * runtime (with TuiLoggerLayer); tests pass a minimal test runtime.
  *
- * The TUI controller does NOT use this helper — it forks tuiWorkerEffect
- * directly on its controller-owned ManagedRuntime so that all worker-path
- * Effect logging inherits the TUI-safe logger configuration. If you are
- * adding a new TUI-mode call site, prefer forking tuiWorkerEffect on the
- * controller's managed runtime instead of calling this function.
+ * There is no default-runtime fallback — if you don't have a runtime, create
+ * one with the layer you need.
  */
-export function startTuiWorker(
+export async function forkTuiWorker(
+  runtime: ManagedRuntime.ManagedRuntime<never, never>,
   callbacks: TuiWorkerCallbacks,
   opts?: TuiWorkerOptions,
-): { stop: () => void } {
-  // Fork the Effect-based worker immediately using the default runtime.
-  // The fiber starts running right away, matching the old fire-and-forget
-  // async loop behavior.
-  const fiber = Effect.runFork(tuiWorkerEffect(callbacks, opts))
+): Promise<TuiWorkerHandle> {
+  const fiber = await runtime.runPromise(
+    Effect.forkDaemon(tuiWorkerEffect(callbacks, opts)),
+  )
 
   return {
-    stop: () => {
-      // Interrupt the fiber — non-blocking, the interrupt is delivered
-      // at the next Effect operator (sleep, yield*, etc.).
-      Effect.runFork(Fiber.interrupt(fiber))
+    stop: async () => {
+      await runtime.runPromise(Fiber.interrupt(fiber))
     },
   }
 }
