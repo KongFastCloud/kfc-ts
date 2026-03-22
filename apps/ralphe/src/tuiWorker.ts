@@ -2,24 +2,21 @@
  * ABOUTME: In-TUI single-worker execution controller.
  * Runs a serialized poll→claim→execute→close loop inside the TUI process,
  * streaming logs and state updates to the UI via callbacks.
+ *
+ * Delegates core task lifecycle (metadata I/O, execution, finalization) to
+ * the shared watchWorkflow so domain logic is not duplicated.
  */
 
 import os from "node:os"
 import { Effect } from "effect"
 import { loadConfig } from "./config.js"
-import { runTask, type TaskResult } from "./runTask.js"
 import { queryQueued } from "./beadsAdapter.js"
 import {
   claimTask,
-  closeTaskSuccess,
-  writeMetadata,
-  readMetadata,
-  buildPromptFromIssue,
   recoverStaleTasks,
-  markTaskExhaustedFailure,
-  type BeadsMetadata,
 } from "./beads.js"
 import { isWorktreeDirty } from "./git.js"
+import { processClaimedTask, type ProcessTaskResult } from "./watchWorkflow.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -68,6 +65,10 @@ export interface TuiWorkerOptions {
  *
  * Returns a stop function that cleanly shuts down the worker after the
  * current task (if any) finishes.
+ *
+ * The core task lifecycle (metadata I/O, execution, finalization) is
+ * delegated to the shared processClaimedTask workflow. TUI-specific
+ * orchestration (callbacks, state transitions, stop flag) lives here.
  */
 export function startTuiWorker(
   callbacks: TuiWorkerCallbacks,
@@ -151,85 +152,26 @@ export function startTuiWorker(
         log(`Claimed task: ${issue.id}`, issue.id)
         setState("running", issue.id)
 
-        // Read existing metadata before overwriting to capture previous error
-        let previousError: string | undefined
-        try {
-          const existingMeta = await Effect.runPromise(readMetadata(issue.id))
-          previousError = existingMeta?.error
-        } catch (e) {
-          log(`Failed to read metadata for ${issue.id}: ${e instanceof Error ? e.message : String(e)}`, issue.id)
-        }
-
-        // Write initial metadata
-        const startedAt = new Date().toISOString()
-        const startMetadata: BeadsMetadata = {
-          engine: config.engine,
-          workerId,
-          timestamp: startedAt,
-          startedAt,
-        }
-        try {
-          await Effect.runPromise(writeMetadata(issue.id, startMetadata))
-        } catch (e) {
-          log(`Failed to write metadata for ${issue.id}: ${e instanceof Error ? e.message : String(e)}`, issue.id)
-        }
-
-        // Build prompt and execute
-        let prompt = buildPromptFromIssue(issue)
-        if (previousError) {
-          prompt += `\n\n## Previous Error\n${previousError}`
-        }
+        // Delegate to the shared task lifecycle workflow
         log(`Executing task ${issue.id}...`, issue.id)
-
-        let result: TaskResult
+        let result: ProcessTaskResult
         try {
           result = await Effect.runPromise(
-            runTask(prompt, config),
+            processClaimedTask(issue, config, workerId),
           )
         } catch (e) {
-          // runTask catches its own errors and returns TaskResult,
+          // processClaimedTask catches its own errors via runTask,
           // but guard against unexpected throws
           log(`Task ${issue.id} threw unexpectedly: ${e instanceof Error ? e.message : String(e)}`, issue.id)
-          result = {
-            success: false,
-            engine: config.engine,
-            error: e instanceof Error ? e.message : String(e),
-          }
-        }
-
-        // Write final metadata and finalize
-        const finishedAt = new Date().toISOString()
-        const finalMetadata: BeadsMetadata = {
-          engine: result.engine,
-          resumeToken: result.resumeToken,
-          workerId,
-          timestamp: finishedAt,
-          startedAt,
-          finishedAt,
+          setState("idle")
+          callbacks.onTaskComplete()
+          continue
         }
 
         if (result.success) {
-          try {
-            await Effect.runPromise(writeMetadata(issue.id, finalMetadata))
-            await Effect.runPromise(closeTaskSuccess(issue.id))
-            log(`Task ${issue.id} completed successfully`, issue.id)
-          } catch (e) {
-            log(`Failed to close task ${issue.id} as success: ${e instanceof Error ? e.message : String(e)}`, issue.id)
-          }
+          log(`Task ${issue.id} completed successfully`, issue.id)
         } else {
-          // Exhausted failure: keep task open, remove eligibility, mark error
-          try {
-            await Effect.runPromise(
-              markTaskExhaustedFailure(
-                issue.id,
-                result.error ?? "execution failed",
-                finalMetadata,
-              ),
-            )
-            log(`Task ${issue.id} exhausted all retries — marked as error (task remains open)`, issue.id)
-          } catch (e) {
-            log(`Failed to mark task ${issue.id} as error: ${e instanceof Error ? e.message : String(e)}`, issue.id)
-          }
+          log(`Task ${issue.id} exhausted all retries — marked as error (task remains open)`, issue.id)
         }
 
         setState("idle")
