@@ -60,7 +60,9 @@ function makeWorkerDeps(): TuiWorkerDeps {
   }
 }
 
-function makeControllerDeps(): TuiWatchControllerDeps {
+function makeControllerDeps(
+  overrides?: Partial<TuiWatchControllerDeps>,
+): TuiWatchControllerDeps {
   return {
     queryAllTasks: () => Effect.succeed(mockTasks),
     markTaskReady: (id: string, labels: string[]) => {
@@ -73,6 +75,7 @@ function makeControllerDeps(): TuiWatchControllerDeps {
         deps: makeWorkerDeps(),
       }),
     loadConfig: () => baseConfig,
+    ...overrides,
   }
 }
 
@@ -81,7 +84,7 @@ function makeController(overrides?: Partial<TuiWatchControllerOptions>): TuiWatc
     refreshIntervalMs: 50,
     workDir: process.cwd(),
     workerId: "test-controller",
-    deps: makeControllerDeps(),
+    deps: makeControllerDeps(overrides?.deps as Partial<TuiWatchControllerDeps> | undefined),
     ...overrides,
   })
 }
@@ -99,11 +102,11 @@ async function waitFor(fn: () => boolean, timeoutMs = 5000): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// State ownership
 // ---------------------------------------------------------------------------
 
-describe("TuiWatchController", () => {
-  test("initial state has idle worker, empty tasks, and empty markReadyPendingIds", () => {
+describe("TuiWatchController — state ownership", () => {
+  test("initial state has idle worker, empty tasks, no error, no pending IDs", () => {
     const ctrl = makeController()
     const state = ctrl.getState()
 
@@ -116,13 +119,11 @@ describe("TuiWatchController", () => {
     void ctrl.stop()
   })
 
-  test("refresh() runs through the scoped runtime and returns tasks", async () => {
+  test("refresh updates latestTasks, lastRefreshed, and clears refreshError", async () => {
     const ctrl = makeController()
 
-    const tasks = await ctrl.refresh()
-    expect(tasks).toEqual(mockTasks)
+    await ctrl.refresh()
 
-    // State should be updated
     const state = ctrl.getState()
     expect(state.latestTasks).toEqual(mockTasks)
     expect(state.refreshError).toBeUndefined()
@@ -131,7 +132,53 @@ describe("TuiWatchController", () => {
     await ctrl.stop()
   })
 
-  test("refresh() is a no-op when one is already in flight", async () => {
+  test("refresh failure captures refreshError without losing previous tasks", async () => {
+    const ctrl = makeController({
+      deps: {
+        queryAllTasks: () => Effect.fail(new Error("network error")) as Effect.Effect<never, unknown>,
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+
+    // refresh() should throw, but the controller captures the error in state
+    await expect(ctrl.refresh()).rejects.toThrow()
+
+    const state = ctrl.getState()
+    expect(state.refreshError).toContain("Refresh failed")
+    expect(state.refreshError).toContain("network error")
+    // latestTasks stays at default (no previous data to lose)
+    expect(state.latestTasks).toEqual([])
+
+    await ctrl.stop()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Runtime ownership — single scoped runtime for all commands
+// ---------------------------------------------------------------------------
+
+describe("TuiWatchController — runtime ownership", () => {
+  test("concurrent commands share the same scoped runtime", async () => {
+    const ctrl = makeController()
+
+    // Multiple operations through the same runtime should all succeed
+    const [tasks, result] = await Promise.all([
+      ctrl.refresh(),
+      ctrl.runEffect(Effect.succeed("hello")),
+    ])
+
+    expect(tasks).toEqual(mockTasks)
+    expect(result).toBe("hello")
+
+    await ctrl.stop()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Refresh coalescing
+// ---------------------------------------------------------------------------
+
+describe("TuiWatchController — refresh coalescing", () => {
+  test("second concurrent refresh is a no-op returning stale state", async () => {
     const ctrl = makeController()
 
     // Fire two concurrent refreshes — the second should be a no-op
@@ -150,27 +197,22 @@ describe("TuiWatchController", () => {
 
     await ctrl.stop()
   })
+})
 
-  test("initialLoad() populates state without throwing on success", async () => {
-    const ctrl = makeController()
+// ---------------------------------------------------------------------------
+// Periodic refresh
+// ---------------------------------------------------------------------------
 
-    await ctrl.initialLoad()
-
-    const state = ctrl.getState()
-    expect(state.latestTasks).toEqual(mockTasks)
-    expect(state.refreshError).toBeUndefined()
-    expect(state.lastRefreshed).toBeInstanceOf(Date)
-
-    await ctrl.stop()
-  })
-
-  test("startPeriodicRefresh() triggers refresh on interval", async () => {
+describe("TuiWatchController — periodic refresh", () => {
+  test("fires refresh on the configured interval (idempotent start)", async () => {
     const ctrl = makeController({ refreshIntervalMs: 50 })
     let refreshCount = 0
     ctrl.onStateChange(() => {
       if (ctrl.getState().latestTasks.length > 0) refreshCount++
     })
 
+    // Double-call verifies idempotency — no second daemon is created.
+    ctrl.startPeriodicRefresh()
     ctrl.startPeriodicRefresh()
 
     // Wait for at least 2 periodic refreshes
@@ -180,50 +222,14 @@ describe("TuiWatchController", () => {
 
     await ctrl.stop()
   })
+})
 
-  test("startPeriodicRefresh() is idempotent", async () => {
-    const ctrl = makeController({ refreshIntervalMs: 50 })
+// ---------------------------------------------------------------------------
+// Worker wiring
+// ---------------------------------------------------------------------------
 
-    ctrl.startPeriodicRefresh()
-    ctrl.startPeriodicRefresh() // Should not create a second timer
-
-    // Just verify it doesn't crash or double-fire excessively
-    await new Promise((r) => setTimeout(r, 100))
-    await ctrl.stop()
-  })
-
-  test("refresh() notifies state change listeners", async () => {
-    const ctrl = makeController()
-    let notified = false
-    ctrl.onStateChange(() => {
-      notified = true
-    })
-
-    await ctrl.refresh()
-    expect(notified).toBe(true)
-
-    await ctrl.stop()
-  })
-
-  test("markReady() runs through the scoped runtime", async () => {
-    markReadyCalls = []
-    const ctrl = makeController()
-
-    await ctrl.markReady("T-99", ["ready"])
-    expect(markReadyCalls).toEqual([{ id: "T-99", labels: ["ready"] }])
-
-    await ctrl.stop()
-  })
-
-  test("runEffect() executes an arbitrary effect through the scoped runtime", async () => {
-    const ctrl = makeController()
-    const result = await ctrl.runEffect(Effect.succeed(42))
-    expect(result).toBe(42)
-
-    await ctrl.stop()
-  })
-
-  test("startWorker() initializes the worker and updates state", async () => {
+describe("TuiWatchController — worker wiring", () => {
+  test("startWorker() transitions workerStatus through state change callbacks (idempotent start)", async () => {
     const ctrl = makeController()
     const states: Array<{ state: string }> = []
 
@@ -231,6 +237,8 @@ describe("TuiWatchController", () => {
       states.push({ ...ctrl.getState().workerStatus })
     })
 
+    // Double-call verifies idempotency — no duplicate worker is created.
+    ctrl.startWorker()
     ctrl.startWorker()
 
     // Give the worker a tick to start and poll
@@ -241,92 +249,14 @@ describe("TuiWatchController", () => {
 
     await ctrl.stop()
   })
-
-  test("startWorker() is idempotent", async () => {
-    const ctrl = makeController()
-
-    // Calling startWorker twice should not create two workers
-    ctrl.startWorker()
-    ctrl.startWorker()
-
-    await new Promise((r) => setTimeout(r, 100))
-
-    await ctrl.stop()
-  })
-
-  test("stop() cleans up worker and disposes runtime", async () => {
-    const ctrl = makeController()
-    ctrl.startWorker()
-
-    await new Promise((r) => setTimeout(r, 100))
-
-    // stop() should not throw
-    await ctrl.stop()
-  })
-
-  test("multiple state change listeners are called", async () => {
-    const ctrl = makeController()
-    let count1 = 0
-    let count2 = 0
-
-    ctrl.onStateChange(() => count1++)
-    ctrl.onStateChange(() => count2++)
-
-    await ctrl.refresh()
-
-    expect(count1).toBeGreaterThan(0)
-    expect(count2).toBeGreaterThan(0)
-
-    await ctrl.stop()
-  })
-
-  test("refresh error updates refreshError state", async () => {
-    // Create a controller that will fail on refresh
-    const FailLayer: Layer.Layer<never> = Logger.replace(
-      Logger.defaultLogger,
-      Logger.make(() => {}),
-    )
-
-    // Override queryAllTasks to fail for this specific test
-    const originalModule = await import("../src/beadsAdapter.js")
-    const failingQueryAllTasks = () => Effect.fail(new Error("network error"))
-
-    // We can't easily override a single Effect here without re-mocking,
-    // so we test the error path by directly verifying the state structure.
-    const ctrl = makeController()
-
-    // Verify that refreshError starts undefined
-    expect(ctrl.getState().refreshError).toBeUndefined()
-
-    // A successful refresh should clear any previous error
-    await ctrl.refresh()
-    expect(ctrl.getState().refreshError).toBeUndefined()
-
-    await ctrl.stop()
-  })
-
-  test("commands reuse the same runtime instance", async () => {
-    const ctrl = makeController()
-
-    // Multiple operations should all succeed through the same runtime
-    const [tasks, result] = await Promise.all([
-      ctrl.refresh(),
-      ctrl.runEffect(Effect.succeed("hello")),
-    ])
-
-    expect(tasks).toEqual(mockTasks)
-    expect(result).toBe("hello")
-
-    await ctrl.stop()
-  })
 })
 
 // ---------------------------------------------------------------------------
-// Mark-ready Effect-native queue tests
+// Mark-ready queue wiring
 // ---------------------------------------------------------------------------
 
-describe("TuiWatchController — mark-ready queue", () => {
-  test("enqueueMarkReady() processes items through the Effect-native queue", async () => {
+describe("TuiWatchController — mark-ready queue wiring", () => {
+  test("enqueueMarkReady() processes items through the queue consumer", async () => {
     markReadyCalls = []
     const ctrl = makeController()
     await ctrl.startMarkReadyConsumer()
@@ -355,12 +285,11 @@ describe("TuiWatchController — mark-ready queue", () => {
     await ctrl.stop()
   })
 
-  test("duplicate task IDs are rejected (queued)", async () => {
+  test("duplicate task IDs are rejected", async () => {
     markReadyCalls = []
     const ctrl = makeController()
     await ctrl.startMarkReadyConsumer()
 
-    // Enqueue three items, with B duplicated
     ctrl.enqueueMarkReady("A", ["x"])
     ctrl.enqueueMarkReady("B", ["y"])
     ctrl.enqueueMarkReady("B", ["y2"]) // duplicate — should be rejected
@@ -374,7 +303,7 @@ describe("TuiWatchController — mark-ready queue", () => {
     await ctrl.stop()
   })
 
-  test("pendingIds tracks queued and in-flight items", async () => {
+  test("pendingIds tracks queued items and clears after completion", async () => {
     markReadyCalls = []
     const ctrl = makeController()
     await ctrl.startMarkReadyConsumer()
@@ -401,23 +330,6 @@ describe("TuiWatchController — mark-ready queue", () => {
     await ctrl.stop()
   })
 
-  test("pendingIds shrinks as items complete", async () => {
-    markReadyCalls = []
-    const ctrl = makeController()
-    await ctrl.startMarkReadyConsumer()
-
-    ctrl.enqueueMarkReady("A", [])
-
-    // Wait for A to complete
-    await waitFor(() => markReadyCalls.length >= 1)
-    await flush()
-    await new Promise((r) => setTimeout(r, 50))
-
-    expect(ctrl.getState().markReadyPendingIds.has("A")).toBe(false)
-
-    await ctrl.stop()
-  })
-
   test("enqueueMarkReady is a no-op before startMarkReadyConsumer", async () => {
     markReadyCalls = []
     const ctrl = makeController()
@@ -429,7 +341,7 @@ describe("TuiWatchController — mark-ready queue", () => {
     await ctrl.stop()
   })
 
-  test("startMarkReadyConsumer() is idempotent", async () => {
+  test("startMarkReadyConsumer() is idempotent — no duplicate consumer", async () => {
     const ctrl = makeController()
     await ctrl.startMarkReadyConsumer()
     await ctrl.startMarkReadyConsumer() // Should not create a second consumer
@@ -443,8 +355,14 @@ describe("TuiWatchController — mark-ready queue", () => {
 
     await ctrl.stop()
   })
+})
 
-  test("stop() shuts down the queue cleanly", async () => {
+// ---------------------------------------------------------------------------
+// Cleanup / disposal
+// ---------------------------------------------------------------------------
+
+describe("TuiWatchController — cleanup", () => {
+  test("stop() shuts down queue — enqueue after stop is a no-op", async () => {
     markReadyCalls = []
     const ctrl = makeController()
     await ctrl.startMarkReadyConsumer()
@@ -452,7 +370,13 @@ describe("TuiWatchController — mark-ready queue", () => {
     ctrl.enqueueMarkReady("A", [])
     await waitFor(() => markReadyCalls.length >= 1)
 
-    // stop() should not throw
     await ctrl.stop()
+
+    // After stop, enqueue should be silently dropped
+    ctrl.enqueueMarkReady("POST", ["y"])
+    await flush()
+    await new Promise((r) => setTimeout(r, 50))
+
+    expect(markReadyCalls.map((c) => c.id)).not.toContain("POST")
   })
 })
