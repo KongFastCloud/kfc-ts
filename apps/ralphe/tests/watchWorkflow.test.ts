@@ -1,6 +1,18 @@
 /**
- * ABOUTME: Tests for the shared watch-task workflow (processClaimedTask + pollClaimAndProcess).
- * Verifies the canonical task lifecycle without relying on headless or TUI-specific orchestration.
+ * ABOUTME: Canonical lifecycle contract for watch-task processing.
+ *
+ * This is the authoritative test surface for processClaimedTask and
+ * pollClaimAndProcess behavior. Higher-layer tests (worker, controller)
+ * should NOT re-prove the behaviors owned here; they should instead focus
+ * on orchestration concerns unique to their layer.
+ *
+ * Owned contracts:
+ *  1. Success lifecycle — operation ordering, metadata writes, close
+ *  2. Failure lifecycle — exhausted-failure marking, no close, default reason
+ *  3. Metadata timing  — startedAt/finishedAt semantics for both outcomes
+ *  4. Previous-error prompt — inclusion, omission, read-before-write ordering
+ *  5. Poll outcomes     — NoneReady, ClaimContention, Processed discrimination
+ *  6. Operation ordering — full sequence for poll→claim→lifecycle→finalize
  */
 
 import { describe, test, expect, beforeEach } from "bun:test"
@@ -117,8 +129,10 @@ function makeIssue(id: string, title = `Task ${id}`): BeadsIssue {
 }
 
 // ===========================================================================
-// processClaimedTask
+// processClaimedTask — canonical single-task lifecycle
 // ===========================================================================
+
+// ---- Contract 1: success lifecycle ----------------------------------------
 
 describe("processClaimedTask: success lifecycle", () => {
   test("successful task reads metadata, writes start/final, and closes", async () => {
@@ -184,6 +198,8 @@ describe("processClaimedTask: success lifecycle", () => {
   })
 })
 
+// ---- Contract 2: failure lifecycle -----------------------------------------
+
 describe("processClaimedTask: failure lifecycle", () => {
   test("failed task is marked as exhausted failure", async () => {
     const issue = makeIssue("wf-fail-1")
@@ -233,7 +249,52 @@ describe("processClaimedTask: failure lifecycle", () => {
     const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
     expect(exhaustedCall?.reason).toContain("execution failed")
   })
+
+  test("failure operations execute in order: read → start-write → markExhausted (no close)", async () => {
+    const issue = makeIssue("wf-fail-order")
+    taskResult = { success: false, engine: "claude", error: "lint error" }
+
+    await Effect.runPromise(
+      processClaimedTask(issue, {
+        engine: "claude",
+        checks: [],
+        report: "none",
+        maxAttempts: 1,
+        git: { mode: "none" },
+      }, "worker-1", makeWorkflowDeps()),
+    )
+
+    const ops = calls.map((c) => c.op)
+    expect(ops).toEqual([
+      "readMetadata",
+      "writeMetadata",              // start metadata
+      "markTaskExhaustedFailure",   // finalize as exhausted (includes final metadata)
+    ])
+  })
+
+  test("exhausted failure metadata carries error field from task result", async () => {
+    const issue = makeIssue("wf-fail-err-meta")
+    taskResult = { success: false, engine: "claude", error: "type mismatch at line 42" }
+
+    await Effect.runPromise(
+      processClaimedTask(issue, {
+        engine: "claude",
+        checks: [],
+        report: "none",
+        maxAttempts: 1,
+        git: { mode: "none" },
+      }, "worker-1", makeWorkflowDeps()),
+    )
+
+    const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
+    expect(exhaustedCall?.metadata?.startedAt).toBeTruthy()
+    expect(exhaustedCall?.metadata?.finishedAt).toBeTruthy()
+    expect(exhaustedCall?.metadata?.workerId).toBe("worker-1")
+    expect(exhaustedCall?.metadata?.engine).toBe("claude")
+  })
 })
+
+// ---- Contract 4: previous-error prompt behavior ---------------------------
 
 describe("processClaimedTask: previous error propagation", () => {
   test("previous error is included in prompt", async () => {
@@ -328,6 +389,8 @@ describe("processClaimedTask: previous error propagation", () => {
   })
 })
 
+// ---- Contract 3: metadata timing ------------------------------------------
+
 describe("processClaimedTask: metadata timing", () => {
   test("start metadata has startedAt but no finishedAt", async () => {
     const issue = makeIssue("wf-timing-1")
@@ -379,8 +442,10 @@ describe("processClaimedTask: metadata timing", () => {
 })
 
 // ===========================================================================
-// pollClaimAndProcess
+// pollClaimAndProcess — canonical poll→claim→process cycle
 // ===========================================================================
+
+// ---- Contract 5: poll outcomes --------------------------------------------
 
 describe("pollClaimAndProcess: poll outcomes", () => {
   test("returns NoneReady when queue is empty", async () => {
@@ -447,6 +512,8 @@ describe("pollClaimAndProcess: poll outcomes", () => {
   })
 })
 
+// ---- Contract 6: operation ordering ---------------------------------------
+
 describe("pollClaimAndProcess: operation ordering", () => {
   test("operations execute in correct order: query → claim → read → write → execute → write → close", async () => {
     readyQueue = [makeIssue("poll-order")]
@@ -467,6 +534,29 @@ describe("pollClaimAndProcess: operation ordering", () => {
     expect(readIdx).toBeLessThan(firstWriteIdx)
     expect(firstWriteIdx).toBeLessThan(closeIdx)
   })
+
+  test("failure path: query → claim → read → write → markExhausted (no close)", async () => {
+    readyQueue = [makeIssue("poll-fail-order")]
+    claimResults.set("poll-fail-order", true)
+    taskResult = { success: false, engine: "claude", error: "build broke" }
+
+    await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1", makeWorkflowDeps()))
+
+    const ops = calls.map((c) => c.op)
+    const queryIdx = ops.indexOf("queryQueued")
+    const claimIdx = ops.indexOf("claimTask")
+    const readIdx = ops.indexOf("readMetadata")
+    const firstWriteIdx = ops.indexOf("writeMetadata")
+    const exhaustedIdx = ops.indexOf("markTaskExhaustedFailure")
+
+    expect(queryIdx).toBeLessThan(claimIdx)
+    expect(claimIdx).toBeLessThan(readIdx)
+    expect(readIdx).toBeLessThan(firstWriteIdx)
+    expect(firstWriteIdx).toBeLessThan(exhaustedIdx)
+
+    // No close calls on failure path
+    expect(ops).not.toContain("closeTaskSuccess")
+  })
 })
 
 describe("pollClaimAndProcess: prompt building", () => {
@@ -484,5 +574,23 @@ describe("pollClaimAndProcess: prompt building", () => {
     expect(runTaskCalls.length).toBe(1)
     expect(runTaskCalls[0]!.prompt).toContain("Add user authentication")
     expect(runTaskCalls[0]!.prompt).toContain("Implement OAuth2 login flow")
+  })
+
+  test("prompt includes previous error when metadata has error field", async () => {
+    readyQueue = [makeIssue("poll-prev-err", "Retry task")]
+    claimResults.set("poll-prev-err", true)
+    taskResult = { success: true, engine: "claude" }
+    previousMetadata = {
+      engine: "claude",
+      workerId: "old-worker",
+      timestamp: "2026-03-19T10:00:00Z",
+      error: "ReferenceError: foo is not defined",
+    }
+
+    await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1", makeWorkflowDeps()))
+
+    expect(runTaskCalls.length).toBe(1)
+    expect(runTaskCalls[0]!.prompt).toContain("## Previous Error")
+    expect(runTaskCalls[0]!.prompt).toContain("ReferenceError: foo is not defined")
   })
 })
