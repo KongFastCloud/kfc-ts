@@ -3,8 +3,12 @@
  * ABOUTME: Watch-mode TUI entrypoint.
  * Bootstraps the .beads database if missing, creates a
  * TuiWatchController for scoped runtime ownership, runs
- * initial task load through the controller, and renders the
- * WatchApp component. Periodic refresh, worker lifecycle, and
+ * initial task load through the controller, and mounts a
+ * single WatchSession boundary. The session component
+ * subscribes to controller state changes from inside React
+ * so updates flow through normal reconciliation — preserving
+ * local dashboard state (selection, scroll, view mode) across
+ * background refreshes. Periodic refresh, worker lifecycle, and
  * all refresh paths (initial, periodic, manual, post-task) are
  * managed by the controller.
  *
@@ -20,8 +24,7 @@ import { createRoot } from "@opentui/react"
 import { Effect, Layer } from "effect"
 import { FatalError } from "./errors.js"
 import { ensureBeadsDatabase } from "./beadsAdapter.js"
-import { WatchApp } from "./tui/WatchApp.js"
-import { loadConfig } from "./config.js"
+import { WatchSession } from "./tui/WatchSession.js"
 import { TuiLoggerLayer } from "./logger.js"
 import {
   createTuiWatchController,
@@ -46,7 +49,7 @@ export interface WatchTuiOptions {
  * 1. Ensures the .beads database exists (bootstrap if missing).
  * 2. Creates a TuiWatchController that owns the scoped TUI runtime.
  * 3. Loads initial tasks through the controller's runtime.
- * 4. Creates an OpenTUI renderer and mounts WatchApp.
+ * 4. Creates an OpenTUI renderer and mounts a single WatchSession boundary.
  * 5. Starts the controller's worker loop, mark-ready consumer, and periodic refresh.
  * 6. Blocks until the user quits (Ctrl-C / q).
  */
@@ -75,37 +78,20 @@ export const launchWatchTui = (
     //    so that enqueueMarkReady is safe to call from React callbacks).
     yield* Effect.promise(() => controller.startMarkReadyConsumer())
 
-    // 5. Create renderer and render
+    // 5. Create renderer and mount the session boundary once.
+    // WatchSession subscribes to controller state changes from inside React,
+    // so the app tree updates through normal reconciliation — local dashboard
+    // state (selection, scroll, view mode) is preserved across refreshes.
     const renderer = yield* Effect.promise(() => createCliRenderer())
     const root = createRoot(renderer)
 
-    // Re-render helper — reads latest state from the controller each time
-    const rerender = () => {
-      const config = loadConfig(workDir)
-      const state = controller.getState()
-      root.render(
-        <WatchApp
-          tasks={state.latestTasks}
-          error={state.refreshError}
-          lastRefreshed={state.lastRefreshed}
-          onRefresh={() => controller.refresh().then(() => {})}
-          onEnqueueMarkReady={(id, labels) => controller.enqueueMarkReady(id, labels)}
-          markReadyPendingIds={state.markReadyPendingIds}
-          workerStatus={state.workerStatus}
-          config={config}
-        />,
-      )
-    }
-
-    // Subscribe to controller state changes → re-render
-    controller.onStateChange(rerender)
+    root.render(
+      <WatchSession controller={controller} workDir={workDir} />,
+    )
 
     // 6. Start the in-process worker and periodic refresh via the controller
     controller.startWorker()
     controller.startPeriodicRefresh()
-
-    // Initial render
-    rerender()
 
     yield* Effect.logInfo(`Watch TUI started. Press 'q' to quit.`)
 

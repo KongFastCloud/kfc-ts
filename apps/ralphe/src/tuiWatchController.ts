@@ -127,6 +127,8 @@ export interface TuiWatchController {
   // -- Event subscription ---------------------------------------------------
   /** Register a callback invoked whenever controller state changes. */
   onStateChange(listener: () => void): void
+  /** Remove a previously registered state-change listener. */
+  removeStateChangeListener(listener: () => void): void
 }
 
 // ---------------------------------------------------------------------------
@@ -393,6 +395,11 @@ export function createTuiWatchController(
 
     onStateChange(listener: () => void): void {
       listeners.push(listener)
+    },
+
+    removeStateChangeListener(listener: () => void): void {
+      const idx = listeners.indexOf(listener)
+      if (idx !== -1) listeners.splice(idx, 1)
     },
   }
 
