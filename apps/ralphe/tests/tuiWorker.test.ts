@@ -408,4 +408,63 @@ describe("tuiWorker", () => {
     // Worker should log the exhausted failure
     expect(logs.some((l) => l.message.includes("exhausted"))).toBe(true)
   })
+
+  test("worker survives processClaimedTask defect and fires onTaskComplete", async () => {
+    resetStubs()
+    readyQueue = [{ id: "TASK-DEFECT", title: "Will throw" }]
+    claimResult = true
+    processError = new Error("unexpected null pointer")
+
+    const { states, logs, taskCompletions, callbacks } = makeCollectors()
+
+    const worker = await runWorker(callbacks, {
+      pollIntervalMs: 50,
+      workerId: "test-defect",
+    })
+
+    // Wait for the worker to log the unexpected failure
+    await waitFor(() => logs.some((l) => l.message.includes("unexpected null pointer")))
+    await worker.interrupt()
+
+    // Worker logged the defect with the original error message
+    expect(logs.some((l) => l.message.includes("threw unexpectedly") && l.message.includes("unexpected null pointer"))).toBe(true)
+
+    // Worker returned to idle after the defect
+    const lastState = states[states.length - 1]
+    expect(lastState?.state).toBe("idle")
+
+    // onTaskComplete still fires — the UI needs to know something happened
+    expect(taskCompletions.length).toBeGreaterThanOrEqual(1)
+
+    // Worker is still alive and stopped cleanly
+    expect(logs.some((l) => l.message === "Worker stopped")).toBe(true)
+  })
+
+  test("log entries during task execution carry the task ID", async () => {
+    resetStubs()
+    readyQueue = [{ id: "TASK-LOG-ID", title: "Log ID test" }]
+    claimResult = true
+
+    const { logs, callbacks } = makeCollectors()
+
+    const worker = await runWorker(callbacks, {
+      pollIntervalMs: 50,
+      workerId: "test-log-id",
+    })
+
+    // Wait for the task to complete
+    await waitFor(() => logs.some((l) => l.message.includes("completed successfully")))
+    await worker.interrupt()
+
+    // Logs about finding, claiming, and executing the task should carry its ID
+    const taskLogs = logs.filter((l) => l.taskId === "TASK-LOG-ID")
+    expect(taskLogs.length).toBeGreaterThanOrEqual(3) // found, claimed, executing/completed
+
+    // Startup and stopped logs should NOT carry a taskId
+    const startLog = logs.find((l) => l.message.includes("Worker starting"))
+    expect(startLog?.taskId).toBeUndefined()
+
+    const stoppedLog = logs.find((l) => l.message === "Worker stopped")
+    expect(stoppedLog?.taskId).toBeUndefined()
+  })
 })
