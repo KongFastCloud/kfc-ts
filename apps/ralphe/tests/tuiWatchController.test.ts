@@ -19,9 +19,15 @@ beforeAll(async () => {
   // Import real modules first so the spread preserves all exports.
   // This prevents SyntaxError ("Export named … not found") when Bun's
   // module mock leaks into other test files sharing the same CI process.
-  const realAdapter = await import("../src/beadsAdapter.js?real-tuiWatchController-adapter")
-  const realBeads = await import("../src/beads.js?real-tuiWatchController-beads")
-  const realGit = await import("../src/git.js?real-tuiWatchController-git")
+  const realAdapter = await import(
+    "../src/beadsAdapter.js?real-tuiWatchController-adapter" as string,
+  ) as typeof import("../src/beadsAdapter.js")
+  const realBeads = await import(
+    "../src/beads.js?real-tuiWatchController-beads" as string,
+  ) as typeof import("../src/beads.js")
+  const realGit = await import(
+    "../src/git.js?real-tuiWatchController-git" as string,
+  ) as typeof import("../src/git.js")
 
   // Mock beads adapter — spread real module to preserve exports like
   // parseBdTaskList and queryAllTasks that other test files may import.

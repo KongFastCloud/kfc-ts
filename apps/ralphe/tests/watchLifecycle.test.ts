@@ -54,11 +54,21 @@ beforeAll(async () => {
   // Import real modules first so the spread preserves all exports.
   // This prevents SyntaxError ("Export named … not found") when Bun's
   // module mock leaks into other test files sharing the same CI process.
-  const realAdapter = await import("../src/beadsAdapter.js?real-watchLifecycle-adapter")
-  const realBeads = await import("../src/beads.js?real-watchLifecycle-beads")
-  const realRunTask = await import("../src/runTask.js?real-watchLifecycle-runTask")
-  const realGit = await import("../src/git.js?real-watchLifecycle-git")
-  const realConfig = await import("../src/config.js?real-watchLifecycle-config")
+  const realAdapter = await import(
+    "../src/beadsAdapter.js?real-watchLifecycle-adapter" as string,
+  ) as typeof import("../src/beadsAdapter.js")
+  const realBeads = await import(
+    "../src/beads.js?real-watchLifecycle-beads" as string,
+  ) as typeof import("../src/beads.js")
+  const realRunTask = await import(
+    "../src/runTask.js?real-watchLifecycle-runTask" as string,
+  ) as typeof import("../src/runTask.js")
+  const realGit = await import(
+    "../src/git.js?real-watchLifecycle-git" as string,
+  ) as typeof import("../src/git.js")
+  const realConfig = await import(
+    "../src/config.js?real-watchLifecycle-config" as string,
+  ) as typeof import("../src/config.js")
 
   mock.module("../src/beadsAdapter.js", () => ({
     ...realAdapter,
