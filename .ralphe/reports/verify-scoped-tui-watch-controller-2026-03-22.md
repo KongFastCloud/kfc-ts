@@ -23,25 +23,27 @@ The scoped TUI watch controller runtime has been correctly implemented. All thre
 - A single `ManagedRuntime` is created once per controller instance (line 99: `ManagedRuntime.make(layer)`).
 - All Effect operations route through the internal `run()` helper which calls `managedRuntime.runPromise()`.
 - The `watchTui.tsx` entrypoint creates the controller with `TuiLoggerLayer` and wires `onRefresh` and `onMarkReady` callbacks through it.
-- `useMarkReadyQueue` accepts a `runMarkReady` override; `WatchApp.tsx` passes the controller's `markReady` method (line 608), ensuring the hook uses the scoped runtime. The bare `Effect.runPromise` fallback (line 59 of useMarkReadyQueue.ts) is only used when no controller override is provided.
+- `useMarkReadyQueue` accepts a `runMarkReady` override; `WatchApp.tsx` passes the controller's `markReady` method, ensuring the hook uses the scoped runtime.
 
 ### 3. Existing visible watch-mode behavior remains unchanged
 **PASS**
 
-- The controller is a transparent architectural boundary — UI components (WatchApp, DashboardView) receive the same props shape.
-- The `launchWatchTui` function still follows the same lifecycle: ensure DB → load tasks → create renderer → render WatchApp → start worker → block until quit.
+- The controller is a transparent architectural boundary — UI components receive the same props shape.
+- The `launchWatchTui` function still follows the same lifecycle: ensure DB -> load tasks -> create renderer -> render WatchApp -> start worker -> block until quit.
 - No UI redesign or public workflow changes were made.
 
 ## Test Results
 
-All 11 unit tests pass:
+All 11 controller unit tests pass. Full suite: 460/460 pass with 0 failures.
 
 ```
-bun test v1.3.11
+bun test v1.3.9
  11 pass
  0 fail
  16 expect() calls
-Ran 11 tests across 1 file. [639.00ms]
+Ran 11 tests across 1 file. [548.00ms]
+
+Full suite: 460 pass, 0 fail across 26 files. [4.92s]
 ```
 
 Tests cover:
@@ -71,3 +73,7 @@ TypeScript compilation passes with zero errors (`tsc --noEmit`).
 | `src/tui/WatchApp.tsx` | React consumer of controller state/commands |
 | `src/tui/useMarkReadyQueue.ts` | Hook with scoped runtime override support |
 | `tests/tuiWatchController.test.ts` | 11 unit tests |
+
+## Known Gaps (Non-blocking, per PRD)
+
+`tuiWorker.ts` still contains bare `Effect.runPromise` calls for startup recovery, dirty-worktree checks, and polling. The PRD identifies these as future cleanup targets for subsequent slices.

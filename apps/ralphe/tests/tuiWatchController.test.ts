@@ -23,10 +23,10 @@ beforeAll(async () => {
     queryQueued: () => Effect.succeed([]),
   }))
 
-  // Mock beads operations
-  const realBeads = await import("../src/beads.js")
+  // Mock beads operations — list all exports explicitly instead of spreading
+  // the real module namespace. Spreading ES module namespace objects can fail
+  // on some Bun/Linux environments due to mock.module timing vs ESM linking.
   mock.module("../src/beads.js", () => ({
-    ...realBeads,
     markTaskReady: (id: string, labels: string[]) => {
       markReadyCalls.push({ id, labels })
       return Effect.succeed(undefined)
@@ -34,6 +34,8 @@ beforeAll(async () => {
     recoverStaleTasks: () => Effect.succeed(0),
     claimTask: () => Effect.succeed(false),
     closeTaskSuccess: () => Effect.succeed(undefined),
+    closeTaskFailure: () => Effect.succeed(undefined),
+    markTaskExhaustedFailure: () => Effect.succeed(undefined),
     writeMetadata: () => Effect.succeed(undefined),
     readMetadata: () => Effect.succeed(undefined),
     buildPromptFromIssue: (issue: { title: string }) => issue.title,
