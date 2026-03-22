@@ -1,10 +1,12 @@
 /** @jsxImportSource @opentui/react */
 /**
  * ABOUTME: Watch-mode TUI entrypoint.
- * Initializes the OpenTUI renderer, loads Beads tasks,
- * bootstraps the .beads database if missing, creates a
- * TuiWatchController for scoped runtime ownership, and
- * renders the WatchApp component with periodic refresh.
+ * Bootstraps the .beads database if missing, creates a
+ * TuiWatchController for scoped runtime ownership, runs
+ * initial task load through the controller, and renders the
+ * WatchApp component. Periodic refresh, worker lifecycle, and
+ * all refresh paths (initial, periodic, manual, post-task) are
+ * managed by the controller.
  *
  * All watch-mode Effect operations are funnelled through the
  * controller's ManagedRuntime to guarantee consistent TUI logging
@@ -15,11 +17,7 @@ import { createCliRenderer } from "@opentui/core"
 import { createRoot } from "@opentui/react"
 import { Effect, Layer } from "effect"
 import { FatalError } from "./errors.js"
-import {
-  ensureBeadsDatabase,
-  queryAllTasks,
-  type WatchTask,
-} from "./beadsAdapter.js"
+import { ensureBeadsDatabase } from "./beadsAdapter.js"
 import { WatchApp } from "./tui/WatchApp.js"
 import { loadConfig } from "./config.js"
 import { TuiLoggerLayer } from "./logger.js"
@@ -44,10 +42,10 @@ export interface WatchTuiOptions {
  * Launch the watch-mode TUI.
  * This Effect:
  * 1. Ensures the .beads database exists (bootstrap if missing).
- * 2. Loads the initial task list.
- * 3. Creates a TuiWatchController that owns the scoped TUI runtime.
+ * 2. Creates a TuiWatchController that owns the scoped TUI runtime.
+ * 3. Loads initial tasks through the controller's runtime.
  * 4. Creates an OpenTUI renderer and mounts WatchApp.
- * 5. Starts the controller's worker loop.
+ * 5. Starts the controller's worker loop and periodic refresh.
  * 6. Blocks until the user quits (Ctrl-C / q).
  */
 export const launchWatchTui = (
@@ -62,27 +60,14 @@ export const launchWatchTui = (
     const dbMessage = yield* ensureBeadsDatabase(workDir)
     yield* Effect.logInfo(dbMessage)
 
-    // 2. Load initial tasks
-    let initialTasks: WatchTask[] = []
-    let initialError: string | undefined
-
-    const loadResult = yield* Effect.either(queryAllTasks(workDir))
-    if (loadResult._tag === "Right") {
-      initialTasks = loadResult.right
-    } else {
-      initialError = `Could not load tasks: ${loadResult.left.message}`
-      yield* Effect.logWarning(initialError)
-    }
-
-    // 3. Create the scoped controller — single runtime owner for the TUI session
+    // 2. Create the scoped controller — single runtime owner for the TUI session
     const controller: TuiWatchController = createTuiWatchController(
       runtimeLayer,
       { refreshIntervalMs, workDir },
     )
 
-    // Seed controller with initial tasks via its state
-    // (The controller's latestTasks start empty; the initial load runs in
-    //  the parent Effect scope before the controller is created.)
+    // 3. Initial load — runs through the controller's scoped runtime
+    yield* Effect.promise(() => controller.initialLoad())
 
     // 4. Create renderer and render
     const renderer = yield* Effect.promise(() => createCliRenderer())
@@ -94,11 +79,11 @@ export const launchWatchTui = (
       const state = controller.getState()
       root.render(
         <WatchApp
-          initialTasks={state.latestTasks.length > 0 ? state.latestTasks : initialTasks}
-          onRefresh={() => controller.refresh()}
+          tasks={state.latestTasks}
+          error={state.refreshError}
+          lastRefreshed={state.lastRefreshed}
+          onRefresh={() => controller.refresh().then(() => {})}
           onMarkReady={(id, labels) => controller.markReady(id, labels)}
-          refreshIntervalMs={refreshIntervalMs}
-          initialError={state.refreshError ?? initialError}
           workerStatus={state.workerStatus}
           config={config}
         />,
@@ -108,8 +93,9 @@ export const launchWatchTui = (
     // Subscribe to controller state changes → re-render
     controller.onStateChange(rerender)
 
-    // 5. Start the in-process worker via the controller
+    // 5. Start the in-process worker and periodic refresh via the controller
     controller.startWorker()
+    controller.startPeriodicRefresh()
 
     // Initial render
     rerender()

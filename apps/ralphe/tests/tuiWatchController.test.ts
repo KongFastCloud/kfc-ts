@@ -91,6 +91,7 @@ describe("TuiWatchController", () => {
     expect(state.workerStatus).toEqual({ state: "idle" })
     expect(state.latestTasks).toEqual([])
     expect(state.refreshError).toBeUndefined()
+    expect(state.lastRefreshed).toBeNull()
 
     void ctrl.stop()
   })
@@ -105,7 +106,69 @@ describe("TuiWatchController", () => {
     const state = ctrl.getState()
     expect(state.latestTasks).toEqual(mockTasks)
     expect(state.refreshError).toBeUndefined()
+    expect(state.lastRefreshed).toBeInstanceOf(Date)
 
+    await ctrl.stop()
+  })
+
+  test("refresh() is a no-op when one is already in flight", async () => {
+    const ctrl = makeController()
+
+    // Fire two concurrent refreshes — the second should be a no-op
+    const [tasks1, tasks2] = await Promise.all([
+      ctrl.refresh(),
+      ctrl.refresh(),
+    ])
+
+    expect(tasks1).toEqual(mockTasks)
+    // Second call returns the stale latestTasks (no-op path).
+    // Before first refresh completes, latestTasks is still [].
+    expect(tasks2).toEqual([])
+
+    // After both settle, state reflects the first refresh's result.
+    expect(ctrl.getState().latestTasks).toEqual(mockTasks)
+
+    await ctrl.stop()
+  })
+
+  test("initialLoad() populates state without throwing on success", async () => {
+    const ctrl = makeController()
+
+    await ctrl.initialLoad()
+
+    const state = ctrl.getState()
+    expect(state.latestTasks).toEqual(mockTasks)
+    expect(state.refreshError).toBeUndefined()
+    expect(state.lastRefreshed).toBeInstanceOf(Date)
+
+    await ctrl.stop()
+  })
+
+  test("startPeriodicRefresh() triggers refresh on interval", async () => {
+    const ctrl = makeController({ refreshIntervalMs: 50 })
+    let refreshCount = 0
+    ctrl.onStateChange(() => {
+      if (ctrl.getState().latestTasks.length > 0) refreshCount++
+    })
+
+    ctrl.startPeriodicRefresh()
+
+    // Wait for at least 2 periodic refreshes
+    await new Promise((r) => setTimeout(r, 150))
+
+    expect(refreshCount).toBeGreaterThanOrEqual(2)
+
+    await ctrl.stop()
+  })
+
+  test("startPeriodicRefresh() is idempotent", async () => {
+    const ctrl = makeController({ refreshIntervalMs: 50 })
+
+    ctrl.startPeriodicRefresh()
+    ctrl.startPeriodicRefresh() // Should not create a second timer
+
+    // Just verify it doesn't crash or double-fire excessively
+    await new Promise((r) => setTimeout(r, 100))
     await ctrl.stop()
   })
 

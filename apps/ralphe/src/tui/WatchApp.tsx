@@ -62,16 +62,19 @@ const taskStatusIndicator: Record<WatchTaskStatus, string> = {
 // ---------------------------------------------------------------------------
 
 export interface WatchAppProps {
-  /** Initial task list (populated before first render). */
-  initialTasks: WatchTask[]
-  /** Async callback to refresh the task list. */
-  onRefresh: () => Promise<WatchTask[]>
-  /** Refresh interval in milliseconds. 0 disables auto-refresh. */
-  refreshIntervalMs?: number
+  /** Current task list — projected from controller state. */
+  tasks: WatchTask[]
+  /** Current refresh error — projected from controller state. */
+  error: string | undefined
+  /** Timestamp of last successful refresh — projected from controller state. */
+  lastRefreshed: Date | null
+  /**
+   * Trigger a refresh. The controller owns task data and error state;
+   * this is a fire-and-forget command, not a data-fetching callback.
+   */
+  onRefresh: () => Promise<void>
   /** Callback when the user quits. */
   onQuit?: () => void
-  /** Optional error message to display. */
-  initialError?: string | undefined
   /** Current worker status (idle/running). */
   workerStatus?: WorkerStatus | undefined
   /** Current ralphe config for header display. */
@@ -544,22 +547,16 @@ function DetailPane({ task }: { task: WatchTask | null }): ReactNode {
 // ---------------------------------------------------------------------------
 
 export function WatchApp({
-  initialTasks,
+  tasks,
+  error,
+  lastRefreshed,
   onRefresh,
-  refreshIntervalMs = 10_000,
   onQuit,
-  initialError,
   workerStatus,
   config,
   onMarkReady,
 }: WatchAppProps): ReactNode {
   const { width } = useTerminalDimensions()
-  const [tasks, setTasks] = useState<WatchTask[]>(initialTasks)
-  const [error, setError] = useState<string | undefined>(initialError)
-  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(
-    initialTasks.length > 0 ? new Date() : null,
-  )
-  const refreshingRef = useRef(false)
 
   // Dashboard focus and per-table selection state (single source of truth)
   const [focusState, setFocusState] = useState(initialDashboardFocusState)
@@ -578,27 +575,25 @@ export function WatchApp({
       ? activeTasks[activeSelectedIndex] ?? null
       : doneTasks[doneSelectedIndex] ?? null
 
-  // Refresh callback — preserves focus, clamps per-table indices
-  const doRefresh = useCallback(async () => {
-    if (refreshingRef.current) return
-    refreshingRef.current = true
-    try {
-      const updated = await onRefresh()
-      setTasks(updated)
-      setError(undefined)
-      setLastRefreshed(new Date())
-      // Clamp each table's selection independently via pure state logic
-      const { active, done } = partitionTasks(updated)
+  // Clamp focus when tasks change (covers all refresh paths: initial,
+  // periodic, manual, and post-task).
+  const prevTasksRef = useRef(tasks)
+  useEffect(() => {
+    if (prevTasksRef.current !== tasks) {
+      prevTasksRef.current = tasks
+      const { active, done } = partitionTasks(tasks)
       setFocusState((prev) =>
         clampAfterRefresh(prev, active.length, done.length, activeVisibleRows, doneVisibleRows),
       )
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      setError(`Refresh failed: ${msg}`)
-    } finally {
-      refreshingRef.current = false
     }
-  }, [onRefresh, activeVisibleRows, doneVisibleRows])
+  }, [tasks, activeVisibleRows, doneVisibleRows])
+
+  // Trigger refresh — fire-and-forget; the controller owns task data.
+  const doRefresh = useCallback(() => {
+    void onRefresh().catch(() => {
+      // Error captured by controller in refreshError state.
+    })
+  }, [onRefresh])
 
   // Mark-ready queue (non-blocking, FIFO)
   // When onMarkReady is provided (from the controller), route through the
@@ -607,15 +602,6 @@ export function WatchApp({
     doRefresh,
     onMarkReady ? { runMarkReady: onMarkReady } : undefined,
   )
-
-  // Periodic auto-refresh
-  useEffect(() => {
-    if (refreshIntervalMs <= 0) return
-    const timer = setInterval(() => {
-      void doRefresh()
-    }, refreshIntervalMs)
-    return () => clearInterval(timer)
-  }, [refreshIntervalMs, doRefresh])
 
   // Keyboard handler — delegates to pure state transitions from dashboardFocus.ts
   const handleKeyboard = useCallback(
@@ -672,7 +658,7 @@ export function WatchApp({
           break
 
         case "r":
-          void doRefresh()
+          doRefresh()
           break
 
         case "m":

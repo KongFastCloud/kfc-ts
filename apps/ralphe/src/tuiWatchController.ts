@@ -29,6 +29,7 @@ export interface TuiWatchControllerState {
   readonly workerStatus: WorkerStatus
   readonly latestTasks: WatchTask[]
   readonly refreshError: string | undefined
+  readonly lastRefreshed: Date | null
 }
 
 export interface TuiWatchControllerOptions {
@@ -51,6 +52,11 @@ export interface TuiWatchController {
   getState(): TuiWatchControllerState
 
   // -- Commands (run through the scoped TUI runtime) ------------------------
+  /**
+   * Load initial tasks. Wraps refresh() with graceful error handling so that
+   * a load failure is captured in refreshError rather than thrown.
+   */
+  initialLoad(): Promise<void>
   /** Refresh the task list. Returns updated tasks. */
   refresh(): Promise<WatchTask[]>
   /** Mark a task as ready. */
@@ -65,7 +71,9 @@ export interface TuiWatchController {
   // -- Lifecycle ------------------------------------------------------------
   /** Start the worker loop. */
   startWorker(): void
-  /** Stop the worker and dispose the managed runtime. */
+  /** Start the periodic UI data refresh timer. */
+  startPeriodicRefresh(): void
+  /** Stop the worker, periodic refresh, and dispose the managed runtime. */
   stop(): Promise<void>
 
   // -- Event subscription ---------------------------------------------------
@@ -104,7 +112,10 @@ export function createTuiWatchController(
   let workerStatus: WorkerStatus = { state: "idle" }
   let latestTasks: WatchTask[] = []
   let refreshError: string | undefined
+  let lastRefreshed: Date | null = null
   let workerHandle: { stop: () => void } | null = null
+  let periodicTimer: ReturnType<typeof setInterval> | null = null
+  let refreshInFlight = false
 
   const listeners: Array<() => void> = []
 
@@ -134,14 +145,29 @@ export function createTuiWatchController(
 
   const controller: TuiWatchController = {
     getState(): TuiWatchControllerState {
-      return { workerStatus, latestTasks, refreshError }
+      return { workerStatus, latestTasks, refreshError, lastRefreshed }
+    },
+
+    async initialLoad(): Promise<void> {
+      try {
+        await controller.refresh()
+      } catch (e) {
+        // Capture as refreshError (already set by refresh()), but format
+        // specifically for the initial-load context if not already set.
+        const msg = e instanceof Error ? e.message : String(e)
+        refreshError = `Could not load tasks: ${msg}`
+        notifyListeners()
+      }
     },
 
     async refresh(): Promise<WatchTask[]> {
+      if (refreshInFlight) return latestTasks
+      refreshInFlight = true
       try {
         const tasks = await run(queryAllTasks(workDir))
         latestTasks = tasks
         refreshError = undefined
+        lastRefreshed = new Date()
         notifyListeners()
         return tasks
       } catch (e) {
@@ -149,6 +175,8 @@ export function createTuiWatchController(
         refreshError = `Refresh failed: ${msg}`
         notifyListeners()
         throw e
+      } finally {
+        refreshInFlight = false
       }
     },
 
@@ -188,7 +216,21 @@ export function createTuiWatchController(
       )
     },
 
+    startPeriodicRefresh(): void {
+      if (periodicTimer !== null) return
+      if (refreshIntervalMs <= 0) return
+      periodicTimer = setInterval(() => {
+        void controller.refresh().catch(() => {
+          // Non-fatal; error captured in refreshError state.
+        })
+      }, refreshIntervalMs)
+    },
+
     async stop(): Promise<void> {
+      if (periodicTimer !== null) {
+        clearInterval(periodicTimer)
+        periodicTimer = null
+      }
       workerHandle?.stop()
       workerHandle = null
       await managedRuntime.dispose()
