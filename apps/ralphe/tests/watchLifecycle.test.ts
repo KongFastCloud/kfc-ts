@@ -174,10 +174,10 @@ function makeIssue(id: string, title = `Task ${id}`): BeadsIssue {
   return { id, title, description: `Description for ${id}` }
 }
 
-/** Wait until a predicate becomes true or timeout. */
+/** Wait until a predicate becomes true or timeout. Default 5s for CI reliability. */
 async function waitFor(
   predicate: () => boolean,
-  timeoutMs = 2000,
+  timeoutMs = 5000,
   intervalMs = 20,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs

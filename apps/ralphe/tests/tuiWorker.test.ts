@@ -5,7 +5,8 @@
  * when adapter calls fail.
  *
  * All adapter and workflow boundaries are explicitly mocked — no test relies
- * on ambient environment state (missing .beads DB, unavailable bd CLI, etc.).
+ * on ambient environment state (missing .beads DB, unavailable bd CLI,
+ * filesystem config, etc.).
  */
 
 import { describe, test, expect, beforeAll, afterAll, mock } from "bun:test"
@@ -33,6 +34,16 @@ let queryQueuedError: Error | null = null
 
 /** Error to inject into claimTask. When set, claimTask will fail. */
 let claimTaskError: Error | null = null
+
+/** Controls the result of processClaimedTask. */
+let processResult: { success: boolean; engine: "claude" | "codex"; resumeToken?: string; error?: string } = {
+  success: true,
+  engine: "claude",
+  resumeToken: "tok",
+}
+
+/** Error to inject into processClaimedTask. When set, processClaimedTask will fail. */
+let processError: Error | null = null
 
 // ---------------------------------------------------------------------------
 // Module setup — explicit mocks for every external boundary
@@ -75,10 +86,23 @@ beforeAll(async () => {
     addComment: () => Effect.succeed(undefined),
   }))
 
-  // Mock watchWorkflow — processClaimedTask returns success by default
+  // Mock watchWorkflow — configurable processClaimedTask result
   mock.module("../src/watchWorkflow.js", () => ({
-    processClaimedTask: () =>
-      Effect.succeed({ success: true, engine: "claude", resumeToken: "tok" }),
+    processClaimedTask: () => {
+      if (processError) return Effect.fail(processError)
+      return Effect.succeed(processResult)
+    },
+  }))
+
+  // Mock config — no filesystem access; return deterministic defaults
+  mock.module("../src/config.js", () => ({
+    loadConfig: () => ({
+      engine: "claude" as const,
+      checks: [],
+      report: "none",
+      maxAttempts: 1,
+      git: { mode: "none" as const },
+    }),
   }))
 
   // @ts-expect-error Bun test isolation import suffix is runtime-only.
@@ -102,6 +126,8 @@ function resetStubs() {
   claimResult = true
   queryQueuedError = null
   claimTaskError = null
+  processResult = { success: true, engine: "claude", resumeToken: "tok" }
+  processError = null
 }
 
 /**
@@ -137,6 +163,21 @@ function makeCollectors() {
   return { logs, states, taskCompletions, callbacks }
 }
 
+/** Wait until a predicate becomes true or timeout. More reliable than fixed delays in CI. */
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 5000,
+  intervalMs = 10,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error("waitFor timed out")
+    }
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -151,8 +192,8 @@ describe("tuiWorker", () => {
       workerId: "test-interrupt",
     })
 
-    // Let the worker start and enter polling
-    await new Promise((r) => setTimeout(r, 100))
+    // Wait until the worker has started and entered polling
+    await waitFor(() => logs.some((l) => l.message.includes("polling for tasks")))
     await worker.interrupt()
 
     // Must have the starting and stopped bookend messages
@@ -169,7 +210,7 @@ describe("tuiWorker", () => {
       workerId: "test-log-shape",
     })
 
-    await new Promise((r) => setTimeout(r, 100))
+    await waitFor(() => logs.some((l) => l.message.includes("polling for tasks")))
     await worker.interrupt()
 
     expect(logs.length).toBeGreaterThanOrEqual(1)
@@ -190,7 +231,8 @@ describe("tuiWorker", () => {
       workerId: "test-idle",
     })
 
-    await new Promise((r) => setTimeout(r, 150))
+    // Wait until the worker has set state at least once
+    await waitFor(() => states.some((s) => s.state === "idle"))
     await worker.interrupt()
 
     // The worker should explicitly set state to idle after initialization
@@ -204,15 +246,19 @@ describe("tuiWorker", () => {
     readyQueue = [{ id: "TASK-1", title: "Do something" }]
     claimResult = true
 
-    const { states, logs, callbacks } = makeCollectors()
+    const { states, callbacks } = makeCollectors()
 
     const worker = await runWorker(callbacks, {
       pollIntervalMs: 50,
       workerId: "test-running",
     })
 
-    // Allow time for poll → claim → execute → complete
-    await new Promise((r) => setTimeout(r, 300))
+    // Wait for the full cycle: idle → running → idle (after task completes)
+    await waitFor(() => {
+      const stateNames = states.map((s) => s.state)
+      const runningIdx = stateNames.indexOf("running")
+      return runningIdx >= 0 && stateNames.indexOf("idle", runningIdx + 1) > runningIdx
+    })
     await worker.interrupt()
 
     // Must see idle → running → idle
@@ -237,7 +283,7 @@ describe("tuiWorker", () => {
       workerId: "custom-worker-42",
     })
 
-    await new Promise((r) => setTimeout(r, 100))
+    await waitFor(() => logs.some((l) => l.message.includes("custom-worker-42")))
     await worker.interrupt()
 
     const startLog = logs.find((l) => l.message.includes("custom-worker-42"))
@@ -255,8 +301,8 @@ describe("tuiWorker", () => {
       workerId: "test-adapter-error",
     })
 
-    // Let it poll and hit the error several times
-    await new Promise((r) => setTimeout(r, 250))
+    // Wait until the worker has logged the error at least once
+    await waitFor(() => logs.some((l) => l.message.includes("adapter connection refused")))
     await worker.interrupt()
 
     // Worker must still be alive — it logged the error and didn't crash
@@ -282,13 +328,40 @@ describe("tuiWorker", () => {
       workerId: "test-claim-error",
     })
 
-    await new Promise((r) => setTimeout(r, 250))
+    // Wait until the worker has logged the claim failure
+    await waitFor(() => logs.some((l) => l.message.includes("claim lock timeout")))
     await worker.interrupt()
 
     // Worker logged the claim failure
     expect(logs.some((l) => l.message.includes("claim lock timeout"))).toBe(true)
 
     // Worker did not transition to running (claim failed before that)
+    expect(states.some((s) => s.state === "running")).toBe(false)
+
+    // Worker is still alive and stopped cleanly
+    expect(logs.some((l) => l.message === "Worker stopped")).toBe(true)
+  })
+
+  test("claim contention: worker stays idle when another worker claims first", async () => {
+    resetStubs()
+    readyQueue = [{ id: "TASK-RACE", title: "Already claimed" }]
+    claimResult = false // another worker won the race
+
+    const { states, logs, callbacks } = makeCollectors()
+
+    const worker = await runWorker(callbacks, {
+      pollIntervalMs: 50,
+      workerId: "test-contention",
+    })
+
+    // Wait for the "already claimed" log message
+    await waitFor(() => logs.some((l) => l.message.includes("already claimed")))
+    await worker.interrupt()
+
+    // Worker should log the skip
+    expect(logs.some((l) => l.message.includes("already claimed") && l.message.includes("TASK-RACE"))).toBe(true)
+
+    // Worker must not have entered running state — it never owned the task
     expect(states.some((s) => s.state === "running")).toBe(false)
 
     // Worker is still alive and stopped cleanly
@@ -307,9 +380,32 @@ describe("tuiWorker", () => {
       workerId: "test-callback",
     })
 
-    await new Promise((r) => setTimeout(r, 300))
+    // Wait for the callback to fire
+    await waitFor(() => taskCompletions.length >= 1)
     await worker.interrupt()
 
     expect(taskCompletions.length).toBeGreaterThanOrEqual(1)
+  })
+
+  test("onTaskComplete fires for failed tasks too", async () => {
+    resetStubs()
+    readyQueue = [{ id: "TASK-FAIL-CB", title: "Will fail" }]
+    claimResult = true
+    processResult = { success: false, engine: "claude", error: "checks failed" }
+
+    const { taskCompletions, logs, callbacks } = makeCollectors()
+
+    const worker = await runWorker(callbacks, {
+      pollIntervalMs: 50,
+      workerId: "test-fail-callback",
+    })
+
+    // Wait for the callback to fire
+    await waitFor(() => taskCompletions.length >= 1)
+    await worker.interrupt()
+
+    expect(taskCompletions.length).toBeGreaterThanOrEqual(1)
+    // Worker should log the exhausted failure
+    expect(logs.some((l) => l.message.includes("exhausted"))).toBe(true)
   })
 })

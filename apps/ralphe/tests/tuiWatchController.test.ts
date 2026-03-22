@@ -82,8 +82,8 @@ function makeController(overrides?: Partial<TuiWatchControllerOptions>): TuiWatc
 /** Flush pending microtasks so the consumer fiber can advance. */
 const flush = () => new Promise<void>((r) => setTimeout(r, 0))
 
-/** Wait for a condition with a timeout. */
-async function waitFor(fn: () => boolean, timeoutMs = 2000): Promise<void> {
+/** Wait for a condition with a timeout. Default 5s for CI reliability. */
+async function waitFor(fn: () => boolean, timeoutMs = 5000): Promise<void> {
   const start = Date.now()
   while (!fn()) {
     if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out")
