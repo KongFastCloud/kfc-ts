@@ -587,8 +587,6 @@ function StatsFooter({ tasks }: { tasks: WatchTask[] }): ReactNode {
       <text fg={colors.status.info}>{day.count > 0 ? formatDuration(day.totalMs) : "—"}</text>
       <text fg={colors.fg.muted}> │ This week: </text>
       <text fg={colors.status.info}>{formatDuration(week.totalMs)}</text>
-      <text fg={colors.fg.muted}> │ </text>
-      <text fg={colors.status.info}>{week.count} done</text>
     </box>
   )
 }
