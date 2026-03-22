@@ -68,6 +68,8 @@ beforeAll(async () => {
   }))
 
   mock.module("../src/beads.js", () => ({
+    markTaskReady: () => Effect.succeed(undefined),
+
     claimTask: (id: string) =>
       Effect.succeed((() => {
         calls.push({ op: "claimTask", id })

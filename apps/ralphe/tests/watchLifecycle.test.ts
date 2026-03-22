@@ -62,6 +62,8 @@ beforeAll(async () => {
   }))
 
   mock.module("../src/beads.js", () => ({
+    markTaskReady: () => Effect.succeed(undefined),
+
     readMetadata: (id: string) => {
       calls.push({ op: "readMetadata", id })
       return Effect.succeed(previousMetadata)

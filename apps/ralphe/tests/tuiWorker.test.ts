@@ -22,6 +22,7 @@ beforeAll(async () => {
   }))
 
   mock.module("../src/beads.js", () => ({
+    markTaskReady: () => Effect.succeed(undefined),
     recoverStaleTasks: () => Effect.succeed(0),
     claimTask: () => Effect.succeed(false),
     closeTaskSuccess: () => Effect.succeed(undefined),
