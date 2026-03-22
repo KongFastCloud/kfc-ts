@@ -361,6 +361,148 @@ describe("clampAfterRefresh", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Refresh-preservation behavior contract
+// ---------------------------------------------------------------------------
+
+describe("refresh-preservation: detail view and clamp-on-invalid", () => {
+  const VIS = 5
+
+  it("preserves detail view when the selected task remains valid (active table)", () => {
+    const s = clampAfterRefresh(
+      stateWith({
+        focusedTable: "active",
+        viewMode: "detail",
+        activeSelectedIndex: 2,
+        activeScrollOffset: 0,
+      }),
+      5, 3, VIS, VIS,
+    )
+    expect(s.viewMode).toBe("detail")
+    expect(s.focusedTable).toBe("active")
+    expect(s.activeSelectedIndex).toBe(2)
+  })
+
+  it("preserves detail view when the selected task remains valid (done table)", () => {
+    const s = clampAfterRefresh(
+      stateWith({
+        focusedTable: "done",
+        viewMode: "detail",
+        doneSelectedIndex: 1,
+        doneScrollOffset: 0,
+      }),
+      5, 3, VIS, VIS,
+    )
+    expect(s.viewMode).toBe("detail")
+    expect(s.focusedTable).toBe("done")
+    expect(s.doneSelectedIndex).toBe(1)
+  })
+
+  it("clamps selection but preserves detail view when focused table shrinks (not empty)", () => {
+    const s = clampAfterRefresh(
+      stateWith({
+        focusedTable: "active",
+        viewMode: "detail",
+        activeSelectedIndex: 7,
+        activeScrollOffset: 3,
+      }),
+      4, 3, VIS, VIS,
+    )
+    expect(s.viewMode).toBe("detail")
+    expect(s.activeSelectedIndex).toBe(3)
+  })
+
+  it("falls back to dashboard when focused table (active) empties during detail view", () => {
+    const s = clampAfterRefresh(
+      stateWith({
+        focusedTable: "active",
+        viewMode: "detail",
+        activeSelectedIndex: 3,
+        activeScrollOffset: 1,
+      }),
+      0, 5, VIS, VIS,
+    )
+    expect(s.viewMode).toBe("dashboard")
+    expect(s.activeSelectedIndex).toBe(0)
+    expect(s.activeScrollOffset).toBe(0)
+  })
+
+  it("falls back to dashboard when focused table (done) empties during detail view", () => {
+    const s = clampAfterRefresh(
+      stateWith({
+        focusedTable: "done",
+        viewMode: "detail",
+        doneSelectedIndex: 2,
+        doneScrollOffset: 0,
+      }),
+      5, 0, VIS, VIS,
+    )
+    expect(s.viewMode).toBe("dashboard")
+    expect(s.doneSelectedIndex).toBe(0)
+    expect(s.doneScrollOffset).toBe(0)
+  })
+
+  it("does not change dashboard viewMode when focused table empties (was already dashboard)", () => {
+    const s = clampAfterRefresh(
+      stateWith({
+        focusedTable: "active",
+        viewMode: "dashboard",
+        activeSelectedIndex: 3,
+      }),
+      0, 5, VIS, VIS,
+    )
+    expect(s.viewMode).toBe("dashboard")
+  })
+
+  it("preserves dashboard context (focus, selection, scroll) when tasks are unchanged", () => {
+    const before = stateWith({
+      focusedTable: "done",
+      viewMode: "dashboard",
+      activeSelectedIndex: 4,
+      doneSelectedIndex: 2,
+      activeScrollOffset: 1,
+      doneScrollOffset: 0,
+    })
+    const s = clampAfterRefresh(before, 10, 5, VIS, VIS)
+    expect(s.focusedTable).toBe("done")
+    expect(s.viewMode).toBe("dashboard")
+    expect(s.activeSelectedIndex).toBe(4)
+    expect(s.doneSelectedIndex).toBe(2)
+    expect(s.activeScrollOffset).toBe(1)
+    expect(s.doneScrollOffset).toBe(0)
+  })
+
+  it("only clamps — never resets to 0 — when table shrinks but stays non-empty", () => {
+    const s = clampAfterRefresh(
+      stateWith({
+        focusedTable: "active",
+        viewMode: "dashboard",
+        activeSelectedIndex: 8,
+        activeScrollOffset: 5,
+      }),
+      6, 5, VIS, VIS,
+    )
+    // Selection clamps to last valid index (5), not reset to 0
+    expect(s.activeSelectedIndex).toBe(5)
+    expect(s.activeScrollOffset).toBe(1) // ensureVisible(max(0, 6-5)=1, 5, 5)=1
+  })
+
+  it("detail view survives multiple sequential refreshes with stable task list", () => {
+    let s = stateWith({
+      focusedTable: "active",
+      viewMode: "detail",
+      activeSelectedIndex: 3,
+      activeScrollOffset: 0,
+    })
+    // Simulate three refreshes with the same task count
+    for (let i = 0; i < 3; i++) {
+      s = clampAfterRefresh(s, 5, 3, VIS, VIS)
+    }
+    expect(s.viewMode).toBe("detail")
+    expect(s.activeSelectedIndex).toBe(3)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Integration scenarios
 // ---------------------------------------------------------------------------
 

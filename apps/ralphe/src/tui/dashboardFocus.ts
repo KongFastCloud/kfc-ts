@@ -193,8 +193,16 @@ export function clampAfterRefresh(
     doneVisibleRowCount,
   )
 
+  // If in detail view and the focused table is now empty, the selected task
+  // is no longer resolvable — fall back to dashboard view.
+  const focusedTableEmpty =
+    state.focusedTable === "active" ? activeCount === 0 : doneCount === 0
+  const viewMode =
+    state.viewMode === "detail" && focusedTableEmpty ? "dashboard" : state.viewMode
+
   return {
     ...state,
+    viewMode,
     activeSelectedIndex,
     doneSelectedIndex,
     activeScrollOffset: ensureVisible(activeScrollClamped, activeSelectedIndex, activeVisibleRowCount),
