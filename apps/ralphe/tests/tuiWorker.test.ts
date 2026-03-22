@@ -55,11 +55,11 @@ beforeAll(async () => {
   // Import real modules first so the spread preserves all exports.
   // This prevents SyntaxError ("Export named … not found") when Bun's
   // module mock leaks into other test files sharing the same CI process.
-  const realGit = await import("../src/git.js")
-  const realAdapter = await import("../src/beadsAdapter.js")
-  const realBeads = await import("../src/beads.js")
-  const realWorkflow = await import("../src/watchWorkflow.js")
-  const realConfig = await import("../src/config.js")
+  const realGit = await import("../src/git.js?real-tuiWorker-git")
+  const realAdapter = await import("../src/beadsAdapter.js?real-tuiWorker-adapter")
+  const realBeads = await import("../src/beads.js?real-tuiWorker-beads")
+  const realWorkflow = await import("../src/watchWorkflow.js?real-tuiWorker-workflow")
+  const realConfig = await import("../src/config.js?real-tuiWorker-config")
 
   // Mock git — only isWorktreeDirty matters; keep worktree clean.
   mock.module("../src/git.js", () => ({
