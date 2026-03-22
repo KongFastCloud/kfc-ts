@@ -53,6 +53,15 @@ export interface TuiWorkerOptions {
   readonly workerId?: string
   /** Working directory. Defaults to process.cwd(). */
   readonly workDir?: string
+  /**
+   * Optional scoped Effect runner that delegates through a managed runtime
+   * (e.g. the TUI controller's ManagedRuntime). When provided, all Effect
+   * executions inside the worker loop use this runner instead of bare
+   * Effect.runPromise, ensuring consistent logging and runtime configuration.
+   *
+   * Defaults to Effect.runPromise for backward compatibility.
+   */
+  readonly runEffect?: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>
 }
 
 // ---------------------------------------------------------------------------
@@ -77,6 +86,8 @@ export function startTuiWorker(
   const pollIntervalMs = opts?.pollIntervalMs ?? 10_000
   const workerId = opts?.workerId ?? `ralphe-${os.hostname()}`
   const workDir = opts?.workDir ?? process.cwd()
+  const run: <A, E>(effect: Effect.Effect<A, E>) => Promise<A> =
+    opts?.runEffect ?? (<A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect as Effect.Effect<A, never>))
   let stopped = false
   const log = (message: string, taskId?: string) => {
     callbacks.onLog({ timestamp: new Date(), message, taskId })
@@ -91,7 +102,7 @@ export function startTuiWorker(
 
     // Startup recovery
     try {
-      const recovered = await Effect.runPromise(recoverStaleTasks(workerId))
+      const recovered = await run(recoverStaleTasks(workerId))
       if (recovered > 0) {
         log(`Recovered ${recovered} stale task(s) from previous run`)
         callbacks.onTaskComplete()
@@ -102,12 +113,12 @@ export function startTuiWorker(
 
     // Dirty-worktree guard: pause automatic pickup until the working tree is clean
     try {
-      let dirty = await Effect.runPromise(isWorktreeDirty())
+      let dirty = await run(isWorktreeDirty())
       if (dirty) {
         log("Worktree has uncommitted changes — pausing automatic pickup.")
         while (dirty && !stopped) {
           await sleep(pollIntervalMs)
-          dirty = await Effect.runPromise(isWorktreeDirty())
+          dirty = await run(isWorktreeDirty())
         }
         if (!stopped) {
           log("Worktree is clean — resuming automatic pickup.")
@@ -125,7 +136,7 @@ export function startTuiWorker(
 
       try {
         // Poll for queued tasks (open + ready + not blocked)
-        const ready = await Effect.runPromise(queryQueued(workDir))
+        const ready = await run(queryQueued(workDir))
 
         if (ready.length === 0) {
           await sleep(pollIntervalMs)
@@ -138,7 +149,7 @@ export function startTuiWorker(
         // Claim atomically
         let claimed: boolean
         try {
-          claimed = await Effect.runPromise(claimTask(issue.id))
+          claimed = await run(claimTask(issue.id))
         } catch (e) {
           log(`Failed to claim task ${issue.id}: ${e instanceof Error ? e.message : String(e)}`, issue.id)
           continue
@@ -156,7 +167,7 @@ export function startTuiWorker(
         log(`Executing task ${issue.id}...`, issue.id)
         let result: ProcessTaskResult
         try {
-          result = await Effect.runPromise(
+          result = await run(
             processClaimedTask(issue, config, workerId),
           )
         } catch (e) {

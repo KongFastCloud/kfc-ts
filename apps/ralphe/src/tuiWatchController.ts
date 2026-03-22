@@ -183,6 +183,7 @@ export function createTuiWatchController(
           pollIntervalMs: refreshIntervalMs,
           workerId,
           workDir,
+          runEffect: run,
         },
       )
     },
