@@ -1,3 +1,10 @@
+/**
+ * ABOUTME: Tests for global skill installation.
+ * Owns the contract that getGlobalSkillTargets returns correct paths for
+ * claude and codex homes, and installGlobalSkill creates/replaces skill
+ * directories (including symlink-to-directory upgrades) with SKILL.md content.
+ */
+
 import { describe, test, expect, beforeEach, afterEach } from "bun:test"
 import fs from "node:fs"
 import os from "node:os"

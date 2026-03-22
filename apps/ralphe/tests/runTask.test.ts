@@ -1,3 +1,13 @@
+/**
+ * ABOUTME: Tests for run-task orchestration and comment formatting.
+ * Owns the agent → checks → loop composition pattern (success, retry with
+ * feedback, fatal propagation, resume token capture) and the format functions
+ * used in beads issue comments (formatSessionComment, formatCheckFailedComment,
+ * formatSuccessComment).
+ *
+ * Does NOT test git mode selection — that is owned by runTaskGitMode.test.ts.
+ */
+
 import { describe, test, expect } from "bun:test"
 import { Effect, Layer, pipe } from "effect"
 import { Engine, type AgentResult } from "../src/engine/Engine.js"

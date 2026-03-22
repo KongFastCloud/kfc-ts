@@ -1,3 +1,13 @@
+/**
+ * ABOUTME: Tests for config loading, saving, and git-mode parsing.
+ * Owns the contract that loadConfig returns correct defaults, merges partial
+ * files, rejects invalid JSON or unknown git modes, and picks up mutations
+ * on re-read. Also owns parseGitMode validation and saveConfig round-trip.
+ *
+ * Does NOT test CLI-level git mode override resolution — that is owned by
+ * runTaskGitMode.test.ts.
+ */
+
 import { describe, test, expect, beforeEach, afterEach } from "bun:test"
 import fs from "node:fs"
 import path from "node:path"

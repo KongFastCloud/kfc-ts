@@ -1,3 +1,13 @@
+/**
+ * ABOUTME: Tests for git mode resolution and post-loop git operation sequencing.
+ * Owns the contract that resolveGitMode applies CLI override precedence,
+ * executePostLoopGitOps executes the correct git operations in order for each
+ * mode (none/commit/commit_and_push/commit_and_push_and_wait_ci), and that
+ * failures short-circuit the pipeline correctly.
+ *
+ * Does NOT test actual git commands — those are owned by git.test.ts.
+ */
+
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { RalpheConfig } from "../src/config.js"

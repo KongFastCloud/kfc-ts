@@ -1,3 +1,10 @@
+/**
+ * ABOUTME: Tests for dashboard statistics computation.
+ * Owns the contract that computeDayTotal and computeWeekTotal correctly
+ * aggregate task durations by calendar boundaries, handling timezone offsets,
+ * missing timestamps, and edge cases like tasks spanning midnight.
+ */
+
 import { describe, it, expect } from "bun:test"
 import { computeDayTotal, computeWeekTotal } from "../src/tui/statsCompute.js"
 import type { WatchTask } from "../src/beadsAdapter.js"

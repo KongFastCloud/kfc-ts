@@ -1,3 +1,13 @@
+/**
+ * ABOUTME: Integration tests for git operations against real repositories.
+ * Owns gitCommit (hash return, no-op on clean tree), gitCommitAndPush
+ * (commit message from engine, push failure handling), and gitPush
+ * (remote/ref return with upstream tracking). Uses real git repos in tmpdir.
+ *
+ * Does NOT test git mode selection or post-loop git orchestration — those are
+ * owned by runTaskGitMode.test.ts.
+ */
+
 import { describe, test, expect, beforeEach, afterEach } from "bun:test"
 import { Effect, Layer } from "effect"
 import fs from "node:fs"

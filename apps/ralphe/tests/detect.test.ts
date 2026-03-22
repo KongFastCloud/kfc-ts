@@ -1,3 +1,10 @@
+/**
+ * ABOUTME: Tests for project detection and check command discovery.
+ * Owns the contract that detectProject identifies language, package manager,
+ * and available check commands from filesystem markers (package.json,
+ * tsconfig.json, lock files). Also verifies monorepo root-only behavior.
+ */
+
 import { describe, test, expect, beforeEach, afterEach } from "bun:test"
 import fs from "node:fs"
 import path from "node:path"

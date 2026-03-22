@@ -1,3 +1,12 @@
+/**
+ * ABOUTME: Tests for the beads adapter parsing and query layer.
+ * Owns the contract that parseBdTaskList correctly maps bd JSON to WatchTask
+ * (status mapping, metadata extraction, field defaults), beadsDatabaseExists
+ * detects the .beads directory, and getAvailableActions returns valid actions
+ * for task states. This is the primary parsing test surface — timing metadata
+ * passthrough is additionally covered by beadsAdapterTiming.test.ts.
+ */
+
 import { describe, test, expect } from "bun:test"
 import {
   parseBdTaskList,

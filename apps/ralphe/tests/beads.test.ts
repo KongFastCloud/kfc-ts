@@ -1,3 +1,10 @@
+/**
+ * ABOUTME: Tests for prompt construction from beads issues.
+ * Owns the contract that buildPromptFromIssue assembles title + optional
+ * sections (description, design, acceptance_criteria, notes) in order,
+ * omitting empty or missing fields. This shapes the prompt sent to the engine.
+ */
+
 import { describe, test, expect } from "bun:test"
 import type { BeadsIssue } from "../src/beads.js"
 

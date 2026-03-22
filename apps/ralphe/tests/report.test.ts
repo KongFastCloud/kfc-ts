@@ -1,3 +1,10 @@
+/**
+ * ABOUTME: Tests for the report generation step.
+ * Owns the contract that report() parses the engine JSON response for
+ * success/failure, yields CheckFailure on missing or invalid JSON blocks,
+ * and conditionally includes agent-browser instructions for browser mode.
+ */
+
 import { describe, test, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Engine, type AgentResult } from "../src/engine/Engine.js"

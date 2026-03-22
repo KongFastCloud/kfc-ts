@@ -1,3 +1,12 @@
+/**
+ * ABOUTME: Tests for the TUI watch controller orchestration layer.
+ * Owns the contract that createTuiWatchController correctly wires worker
+ * start/stop, task refresh, and mark-ready lifecycle through the controller
+ * interface. Exercises the controller's coordination of subsystems without
+ * re-proving worker internals (owned by tuiWorker.test.ts) or task processing
+ * (owned by watchWorkflow.test.ts).
+ */
+
 import { describe, test, expect, beforeEach } from "bun:test"
 import { Effect, Layer, Logger } from "effect"
 import type { RalpheConfig } from "../src/config.js"

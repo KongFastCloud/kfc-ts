@@ -1,3 +1,11 @@
+/**
+ * ABOUTME: Tests for the retry loop primitive.
+ * Owns the contract that loop retries on CheckFailure (passing feedback),
+ * converts CheckFailure to FatalError after max attempts, propagates
+ * FatalError immediately without retry, and fires onEvent callbacks at
+ * each lifecycle point.
+ */
+
 import { describe, test, expect } from "bun:test"
 import { Effect } from "effect"
 import { loop, type LoopEvent } from "../src/loop.js"

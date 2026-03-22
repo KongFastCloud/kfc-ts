@@ -1,3 +1,11 @@
+/**
+ * ABOUTME: Tests for logger layer routing.
+ * Owns the contract that TuiLoggerLayer writes JSON-lines to the log file
+ * and does NOT emit to stderr, while AppLoggerLayer writes to both file
+ * and stderr. These boundaries prevent TUI rendering corruption and ensure
+ * headless runs still get visible output.
+ */
+
 import { describe, test, expect, beforeEach, afterEach } from "bun:test"
 import { Effect } from "effect"
 import { AppLoggerLayer, TuiLoggerLayer } from "../src/logger.js"

@@ -1,3 +1,10 @@
+/**
+ * ABOUTME: Tests for the low-level command execution primitive.
+ * Owns the contract that cmd() succeeds with stdout on exit 0, returns a
+ * CheckFailure with exit code and captured stderr on non-zero exit. This is
+ * the foundational boundary used by checks, git, and other shell-out paths.
+ */
+
 import { describe, test, expect } from "bun:test"
 import { Effect } from "effect"
 import { cmd } from "../src/cmd.js"
