@@ -1,8 +1,12 @@
 /**
- * ABOUTME: Regression tests for restart recovery and dirty-worktree guard.
- * Verifies startup ordering (recovery → dirty-check → polling), stale-task
- * recovery regardless of original workerId, recovered issue state (open + error),
- * and paused/resumed pickup based on worktree cleanliness.
+ * ABOUTME: Recovery and dirty-worktree ownership tests.
+ * Owns startup-recovery ordering (recovery → dirty-check → polling), stale-task
+ * recovery regardless of original workerId, recovered issue state (open + error
+ * with reopen → clearAssignee → markExhausted ordering), and dirty-worktree
+ * pause/resume gating.
+ *
+ * Does NOT re-prove general task lifecycle (claim → execute → close) which is
+ * owned by watchWorkflow and watchLifecycle test suites.
  *
  * Uses local in-memory fakes for recovery/git/runTask boundaries while
  * exercising the real worker and watch workflow orchestration.
@@ -582,8 +586,7 @@ describe("dirty worktree: pauses automatic pickup", () => {
 describe("dirty worktree: clean state allows normal polling", () => {
   test("clean worktree allows polling to proceed after recovery", async () => {
     worktreeDirty = false // Clean
-    readyQueue = [makeIssue("clean-1")]
-    claimResults.set("clean-1", true)
+    readyQueue = []
 
     const { callbacks } = makeCallbacks()
     const worker = startTuiWorker(callbacks, {
@@ -591,16 +594,15 @@ describe("dirty worktree: clean state allows normal polling", () => {
       workerId: "test-clean-proceed",
     })
 
-    await waitFor(() => calls.some((c) => c.op === "closeTaskSuccess" && c.id === "clean-1"))
+    await waitFor(() => calls.some((c) => c.op === "queryQueued"))
     worker.stop()
 
-    // Full lifecycle completed: recovery → dirty-check → poll → claim → execute → close
+    // Dirty-worktree gate passed: recovery → dirty-check → poll started
+    // (full claim→execute→close lifecycle is owned by watchWorkflow/watchLifecycle)
     const ops = calls.map((c) => c.op)
     expect(ops).toContain("recoverStaleTasks")
     expect(ops).toContain("isWorktreeDirty")
     expect(ops).toContain("queryQueued")
-    expect(ops).toContain("claimTask")
-    expect(ops).toContain("closeTaskSuccess")
   })
 
   test("worktree becoming clean resumes polling after a pause", async () => {
@@ -621,16 +623,16 @@ describe("dirty worktree: clean state allows normal polling", () => {
     // Simulate the worktree being cleaned up
     worktreeDirty = false
 
-    // Now polling should resume and process the task
-    await waitFor(() => calls.some((c) => c.op === "closeTaskSuccess" && c.id === "resume-1"))
+    // Now polling should resume and pick up work
+    await waitFor(() => calls.some((c) => c.op === "claimTask" && c.id === "resume-1"))
     worker.stop()
 
     // Verify the pause happened
     expect(logs.some((l) => l.message.includes("pausing automatic pickup"))).toBe(true)
 
-    // Verify normal lifecycle completed after resuming
+    // Verify polling resumed — claim proves the dirty-worktree gate reopened
+    // (full claim→execute→close lifecycle is owned by watchWorkflow/watchLifecycle)
     expect(calls.some((c) => c.op === "claimTask" && c.id === "resume-1")).toBe(true)
-    expect(calls.some((c) => c.op === "closeTaskSuccess" && c.id === "resume-1")).toBe(true)
   })
 
   test("no dirty-worktree pause log when worktree is already clean", async () => {
@@ -664,10 +666,11 @@ describe("restart recovery: combined recovery + dirty-worktree + polling", () =>
       workerId: "test-full-sequence",
     })
 
-    await waitFor(() => calls.some((c) => c.op === "closeTaskSuccess" && c.id === "full-new-1"))
+    await waitFor(() => calls.some((c) => c.op === "claimTask" && c.id === "full-new-1"))
     worker.stop()
 
-    // Verify full ordering: recovery → markExhausted → dirtyCheck → poll → claim → close
+    // Verify startup ordering: recovery → markExhausted → dirtyCheck → poll → claim
+    // (claim→execute→close lifecycle ordering is owned by watchWorkflow/watchLifecycle)
     const recoveryIdx = calls.findIndex((c) => c.op === "recoverStaleTasks")
     const exhaustedIdx = calls.findIndex(
       (c) => c.op === "markTaskExhaustedFailure" && c.id === "full-stale-1",
@@ -675,14 +678,12 @@ describe("restart recovery: combined recovery + dirty-worktree + polling", () =>
     const dirtyCheckIdx = calls.findIndex((c) => c.op === "isWorktreeDirty")
     const pollIdx = calls.findIndex((c) => c.op === "queryQueued")
     const claimIdx = calls.findIndex((c) => c.op === "claimTask" && c.id === "full-new-1")
-    const closeIdx = calls.findIndex((c) => c.op === "closeTaskSuccess" && c.id === "full-new-1")
 
     expect(recoveryIdx).toBeGreaterThanOrEqual(0)
     expect(exhaustedIdx).toBeGreaterThan(recoveryIdx)
     expect(dirtyCheckIdx).toBeGreaterThan(exhaustedIdx)
     expect(pollIdx).toBeGreaterThan(dirtyCheckIdx)
     expect(claimIdx).toBeGreaterThan(pollIdx)
-    expect(closeIdx).toBeGreaterThan(claimIdx)
   })
 
   test("full startup sequence: recovery → dirty-check (dirty) → no poll", async () => {
