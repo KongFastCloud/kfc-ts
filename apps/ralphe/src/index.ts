@@ -40,7 +40,7 @@ export type { BeadsIssue, BeadsMetadata } from "./beads.js"
 export { queryQueued } from "./beadsAdapter.js"
 export { watch, defaultWorkerId } from "./watcher.js"
 export type { WatcherOptions } from "./watcher.js"
-export { startTuiWorker } from "./tuiWorker.js"
+export { tuiWorkerEffect, startTuiWorker } from "./tuiWorker.js"
 export type {
   WorkerState,
   WorkerStatus,

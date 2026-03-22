@@ -4,6 +4,12 @@
  * single ManagedRuntime configured with TuiLoggerLayer, ensuring consistent
  * logging and eliminating scattered bare Effect.runPromise calls.
  *
+ * The worker runs as Effect-managed orchestration (tuiWorkerEffect) via
+ * startTuiWorker, which internally forks the Effect-based worker as a fiber.
+ * The mark-ready consumer and periodic refresh run as daemon fibers inside
+ * the managed runtime. Shutdown is driven by fiber interruption, worker stop,
+ * and queue shutdown.
+ *
  * Mark-ready operations are serialized through an Effect-native Queue owned
  * by the controller. The queue preserves FIFO ordering and non-blocking
  * enqueue semantics. A consumer fiber drains the queue inside the managed
@@ -14,7 +20,7 @@
  */
 
 import os from "node:os"
-import { Effect, ManagedRuntime, Queue, type Layer } from "effect"
+import { Effect, Fiber, ManagedRuntime, Queue, type Layer } from "effect"
 import type { WatchTask } from "./beadsAdapter.js"
 import { queryAllTasks } from "./beadsAdapter.js"
 import { markTaskReady } from "./beads.js"
@@ -88,16 +94,22 @@ export interface TuiWatchController {
   runEffect<A, E>(effect: Effect.Effect<A, E>): Promise<A>
 
   // -- Lifecycle ------------------------------------------------------------
-  /** Start the worker loop. */
+  /**
+   * Start the worker loop. The worker runs as Effect-managed orchestration
+   * (tuiWorkerEffect) with fiber-based interruption for clean shutdown.
+   */
   startWorker(): void
   /**
    * Start the mark-ready consumer fiber. Must be called (and awaited) before
    * enqueueMarkReady is used — typically as part of the TUI startup sequence.
    */
   startMarkReadyConsumer(): Promise<void>
-  /** Start the periodic UI data refresh timer. */
+  /** Start the periodic UI data refresh as a daemon fiber. */
   startPeriodicRefresh(): void
-  /** Stop the worker, periodic refresh, and dispose the managed runtime. */
+  /**
+   * Stop the worker, interrupt refresh and mark-ready fibers, and dispose
+   * the managed runtime.
+   */
   stop(): Promise<void>
 
   // -- Event subscription ---------------------------------------------------
@@ -138,8 +150,10 @@ export function createTuiWatchController(
   let refreshError: string | undefined
   let lastRefreshed: Date | null = null
   let workerHandle: { stop: () => void } | null = null
-  let periodicTimer: ReturnType<typeof setInterval> | null = null
   let refreshInFlight = false
+
+  // -- Fiber handles -------------------------------------------------------
+  let refreshFiber: Fiber.RuntimeFiber<void, never> | null = null
 
   // -- Mark-ready queue state -----------------------------------------------
   let markReadyQueue: Queue.Queue<MarkReadyQueueItem> | null = null
@@ -230,9 +244,12 @@ export function createTuiWatchController(
     startWorker(): void {
       if (workerHandle !== null) return
 
+      // Start the Effect-based worker via startTuiWorker, which internally
+      // forks tuiWorkerEffect as a fiber. The worker's Effects are routed
+      // through the controller's managed runtime via runEffect.
       workerHandle = startTuiWorker(
         {
-          onStateChange: (status) => {
+          onStateChange: (status: WorkerStatus) => {
             workerStatus = status
             notifyListeners()
           },
@@ -301,22 +318,40 @@ export function createTuiWatchController(
     },
 
     startPeriodicRefresh(): void {
-      if (periodicTimer !== null) return
+      if (refreshFiber !== null) return
       if (refreshIntervalMs <= 0) return
-      periodicTimer = setInterval(() => {
-        void controller.refresh().catch(() => {
-          // Non-fatal; error captured in refreshError state.
-        })
-      }, refreshIntervalMs)
+
+      // Fork the periodic refresh as a daemon fiber instead of a setInterval.
+      // The fiber sleeps, then refreshes, forever — interrupted cleanly via
+      // Fiber.interrupt during stop() or runtime disposal.
+      void managedRuntime.runPromise(
+        Effect.gen(function* () {
+          refreshFiber = yield* Effect.forkDaemon(
+            Effect.forever(
+              Effect.gen(function* () {
+                yield* Effect.sleep(refreshIntervalMs)
+                yield* Effect.promise(() =>
+                  controller.refresh().catch(() => {
+                    // Non-fatal; error captured in refreshError state.
+                  }),
+                )
+              }),
+            ),
+          )
+        }),
+      )
     },
 
     async stop(): Promise<void> {
-      if (periodicTimer !== null) {
-        clearInterval(periodicTimer)
-        periodicTimer = null
-      }
+      // Stop the worker — internally interrupts the Effect-based worker fiber.
       workerHandle?.stop()
       workerHandle = null
+
+      // Interrupt the periodic refresh fiber.
+      if (refreshFiber !== null) {
+        await managedRuntime.runPromise(Fiber.interrupt(refreshFiber))
+        refreshFiber = null
+      }
 
       // Shut down the mark-ready queue — this interrupts the consumer fiber's
       // Queue.take, causing the forever loop to exit cleanly.

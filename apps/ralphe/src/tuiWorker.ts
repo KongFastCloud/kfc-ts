@@ -1,14 +1,18 @@
 /**
- * ABOUTME: In-TUI single-worker execution controller.
- * Runs a serialized poll→claim→execute→close loop inside the TUI process,
- * streaming logs and state updates to the UI via callbacks.
+ * ABOUTME: Effect-native TUI worker — fiber-based poll→claim→execute loop.
+ * Runs as an interruptible Effect inside the TUI controller's scoped runtime,
+ * replacing the previous detached async loop with boolean-flag shutdown.
+ *
+ * Lifecycle is managed through fiber interruption: the controller forks this
+ * Effect as a daemon fiber, and scope disposal or explicit Fiber.interrupt
+ * cleanly stops the worker.
  *
  * Delegates core task lifecycle (metadata I/O, execution, finalization) to
  * the shared watchWorkflow so domain logic is not duplicated.
  */
 
 import os from "node:os"
-import { Effect } from "effect"
+import { Effect, Fiber } from "effect"
 import { loadConfig } from "./config.js"
 import { queryQueued } from "./beadsAdapter.js"
 import {
@@ -16,7 +20,7 @@ import {
   recoverStaleTasks,
 } from "./beads.js"
 import { isWorktreeDirty } from "./git.js"
-import { processClaimedTask, type ProcessTaskResult } from "./watchWorkflow.js"
+import { processClaimedTask } from "./watchWorkflow.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,42 +57,32 @@ export interface TuiWorkerOptions {
   readonly workerId?: string
   /** Working directory. Defaults to process.cwd(). */
   readonly workDir?: string
-  /**
-   * Optional scoped Effect runner that delegates through a managed runtime
-   * (e.g. the TUI controller's ManagedRuntime). When provided, all Effect
-   * executions inside the worker loop use this runner instead of bare
-   * Effect.runPromise, ensuring consistent logging and runtime configuration.
-   *
-   * Defaults to Effect.runPromise for backward compatibility.
-   */
-  readonly runEffect?: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>
 }
 
 // ---------------------------------------------------------------------------
-// Worker controller
+// Effect-based worker
 // ---------------------------------------------------------------------------
 
 /**
- * Create and start a TUI worker that polls for ready tasks and executes them
- * one at a time, streaming logs and state updates to the UI.
+ * Effect-native TUI worker that polls for ready tasks and executes them
+ * one at a time, streaming state updates to the UI via callbacks.
  *
- * Returns a stop function that cleanly shuts down the worker after the
- * current task (if any) finishes.
+ * Designed to be forked as a daemon fiber inside the TUI controller's
+ * ManagedRuntime. Interruption (via Fiber.interrupt or scope disposal)
+ * cleanly stops the worker — no boolean flags needed.
  *
  * The core task lifecycle (metadata I/O, execution, finalization) is
  * delegated to the shared processClaimedTask workflow. TUI-specific
- * orchestration (callbacks, state transitions, stop flag) lives here.
+ * orchestration (callbacks, state transitions) lives here.
  */
-export function startTuiWorker(
+export const tuiWorkerEffect = (
   callbacks: TuiWorkerCallbacks,
   opts?: TuiWorkerOptions,
-): { stop: () => void } {
+): Effect.Effect<void, never> => {
   const pollIntervalMs = opts?.pollIntervalMs ?? 10_000
   const workerId = opts?.workerId ?? `ralphe-${os.hostname()}`
   const workDir = opts?.workDir ?? process.cwd()
-  const run: <A, E>(effect: Effect.Effect<A, E>) => Promise<A> =
-    opts?.runEffect ?? (<A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect as Effect.Effect<A, never>))
-  let stopped = false
+
   const log = (message: string, taskId?: string) => {
     callbacks.onLog({ timestamp: new Date(), message, taskId })
   }
@@ -97,67 +91,86 @@ export function startTuiWorker(
     callbacks.onStateChange({ state, currentTaskId: taskId })
   }
 
-  const workerLoop = async () => {
+  return Effect.gen(function* () {
     log(`Worker starting (id: ${workerId})`)
 
+    // -----------------------------------------------------------------------
     // Startup recovery
-    try {
-      const recovered = await run(recoverStaleTasks(workerId))
-      if (recovered > 0) {
-        log(`Recovered ${recovered} stale task(s) from previous run`)
-        callbacks.onTaskComplete()
-      }
-    } catch (e) {
-      log(`Recovery check failed: ${e instanceof Error ? e.message : String(e)}`)
-    }
-
-    // Dirty-worktree guard: pause automatic pickup until the working tree is clean
-    try {
-      let dirty = await run(isWorktreeDirty())
-      if (dirty) {
-        log("Worktree has uncommitted changes — pausing automatic pickup.")
-        while (dirty && !stopped) {
-          await sleep(pollIntervalMs)
-          dirty = await run(isWorktreeDirty())
+    // -----------------------------------------------------------------------
+    yield* Effect.catchAll(
+      Effect.gen(function* () {
+        const recovered = yield* recoverStaleTasks(workerId)
+        if (recovered > 0) {
+          log(`Recovered ${recovered} stale task(s) from previous run`)
+          callbacks.onTaskComplete()
         }
-        if (!stopped) {
+      }),
+      (e) =>
+        Effect.sync(() => {
+          log(`Recovery check failed: ${e instanceof Error ? e.message : String(e)}`)
+        }),
+    )
+
+    // -----------------------------------------------------------------------
+    // Dirty-worktree guard: pause automatic pickup until clean
+    // -----------------------------------------------------------------------
+    yield* Effect.catchAll(
+      Effect.gen(function* () {
+        const dirty = yield* isWorktreeDirty()
+        if (dirty) {
+          log("Worktree has uncommitted changes — pausing automatic pickup.")
+          yield* Effect.iterate(true as boolean, {
+            while: (isDirty) => isDirty,
+            body: () =>
+              Effect.gen(function* () {
+                yield* Effect.sleep(pollIntervalMs)
+                return yield* isWorktreeDirty()
+              }),
+          })
           log("Worktree is clean — resuming automatic pickup.")
         }
-      }
-    } catch (e) {
-      log(`Worktree check failed: ${e instanceof Error ? e.message : String(e)}`)
-    }
+      }),
+      (e) =>
+        Effect.sync(() => {
+          log(`Worktree check failed: ${e instanceof Error ? e.message : String(e)}`)
+        }),
+    )
 
     log("Worker ready, polling for tasks...")
     setState("idle")
 
-    while (!stopped) {
-      const config = loadConfig(workDir)
+    // -----------------------------------------------------------------------
+    // Main polling loop — runs forever until the fiber is interrupted
+    // -----------------------------------------------------------------------
+    yield* Effect.forever(
+      Effect.gen(function* () {
+        const config = loadConfig(workDir)
 
-      try {
         // Poll for queued tasks (open + ready + not blocked)
-        const ready = await run(queryQueued(workDir))
+        const ready = yield* queryQueued(workDir)
 
         if (ready.length === 0) {
-          await sleep(pollIntervalMs)
-          continue
+          yield* Effect.sleep(pollIntervalMs)
+          return
         }
 
         const issue = ready[0]!
         log(`Found ready task: ${issue.id} — ${issue.title}`, issue.id)
 
-        // Claim atomically
-        let claimed: boolean
-        try {
-          claimed = await run(claimTask(issue.id))
-        } catch (e) {
-          log(`Failed to claim task ${issue.id}: ${e instanceof Error ? e.message : String(e)}`, issue.id)
-          continue
+        // Claim atomically — use Either to handle claim failures inline
+        const claimResult = yield* Effect.either(claimTask(issue.id))
+        if (claimResult._tag === "Left") {
+          const e = claimResult.left
+          log(
+            `Failed to claim task ${issue.id}: ${e instanceof Error ? e.message : String(e)}`,
+            issue.id,
+          )
+          return
         }
 
-        if (!claimed) {
+        if (!claimResult.right) {
           log(`Task ${issue.id} already claimed by another worker, skipping`, issue.id)
-          continue
+          return
         }
 
         log(`Claimed task: ${issue.id}`, issue.id)
@@ -165,20 +178,24 @@ export function startTuiWorker(
 
         // Delegate to the shared task lifecycle workflow
         log(`Executing task ${issue.id}...`, issue.id)
-        let result: ProcessTaskResult
-        try {
-          result = await run(
-            processClaimedTask(issue, config, workerId),
-          )
-        } catch (e) {
+        const execResult = yield* Effect.either(
+          processClaimedTask(issue, config, workerId),
+        )
+
+        if (execResult._tag === "Left") {
           // processClaimedTask catches its own errors via runTask,
-          // but guard against unexpected throws
-          log(`Task ${issue.id} threw unexpectedly: ${e instanceof Error ? e.message : String(e)}`, issue.id)
+          // but guard against unexpected failures
+          const e = execResult.left
+          log(
+            `Task ${issue.id} threw unexpectedly: ${e instanceof Error ? e.message : String(e)}`,
+            issue.id,
+          )
           setState("idle")
           callbacks.onTaskComplete()
-          continue
+          return
         }
 
+        const result = execResult.right
         if (result.success) {
           log(`Task ${issue.id} completed successfully`, issue.id)
         } else {
@@ -187,31 +204,71 @@ export function startTuiWorker(
 
         setState("idle")
         callbacks.onTaskComplete()
-      } catch (e) {
-        // Top-level catch: adapter/engine errors should not crash the worker
-        log(`Worker error: ${e instanceof Error ? e.message : String(e)}`)
-        setState("idle")
-        await sleep(pollIntervalMs)
-      }
-    }
-
-    log("Worker stopped")
-  }
-
-  // Start the loop (fire-and-forget — runs async alongside the TUI)
-  void workerLoop()
-
-  return {
-    stop: () => {
-      stopped = true
-    },
-  }
+      }).pipe(
+        // Catch typed errors — adapter/engine errors should not crash the worker
+        Effect.catchAll((e) =>
+          Effect.gen(function* () {
+            log(`Worker error: ${e instanceof Error ? e.message : String(e)}`)
+            setState("idle")
+            yield* Effect.sleep(pollIntervalMs)
+          }),
+        ),
+        // Catch defects — unexpected throws should not crash the worker
+        Effect.catchAllDefect((defect) =>
+          Effect.gen(function* () {
+            log(`Worker error: ${defect instanceof Error ? defect.message : String(defect)}`)
+            setState("idle")
+            yield* Effect.sleep(pollIntervalMs)
+          }),
+        ),
+        // Interruptions propagate through — stopping the loop cleanly
+      ),
+    )
+  }).pipe(
+    Effect.interruptible,
+    Effect.ensuring(Effect.sync(() => log("Worker stopped"))),
+    Effect.annotateLogs({ workerId }),
+  )
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Backward-compatible wrapper
 // ---------------------------------------------------------------------------
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+/**
+ * Start the Effect-based TUI worker and return an imperative stop handle.
+ *
+ * Internally forks tuiWorkerEffect as a fiber using Effect.runFork.
+ * Stop is achieved by interrupting the fiber — the interrupt is delivered
+ * at the next Effect operator (sleep, yield*, etc.), cleanly stopping the
+ * poll loop.
+ *
+ * The controller and test suites use this as the primary worker entry point.
+ */
+export function startTuiWorker(
+  callbacks: TuiWorkerCallbacks,
+  opts?: TuiWorkerOptions & {
+    /**
+     * Optional scoped Effect runner that delegates through a managed runtime
+     * (e.g. the TUI controller's ManagedRuntime). When provided, all Effect
+     * executions inside the worker loop use this runner instead of bare
+     * Effect.runPromise, ensuring consistent logging and runtime configuration.
+     *
+     * Defaults to Effect.runPromise for backward compatibility.
+     */
+    readonly runEffect?: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>
+  },
+): { stop: () => void } {
+  // Fork the Effect-based worker immediately using the default runtime.
+  // The fiber starts running right away, matching the old fire-and-forget
+  // async loop behavior.
+  const fiber = Effect.runFork(tuiWorkerEffect(callbacks, opts))
+
+  return {
+    stop: () => {
+      // Interrupt the fiber — non-blocking, the interrupt is delivered
+      // at the next Effect operator (sleep, yield*, etc.).
+      Effect.runFork(Fiber.interrupt(fiber))
+    },
+  }
 }

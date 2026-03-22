@@ -1,16 +1,17 @@
 import { describe, test, expect, beforeAll, afterAll, mock } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Fiber, ManagedRuntime, Logger } from "effect"
 import type {
   WorkerStatus,
   WorkerLogEntry,
   TuiWorkerCallbacks,
+  TuiWorkerOptions,
 } from "../src/tuiWorker.js"
 
 // ---------------------------------------------------------------------------
-// Module setup — mock git to avoid dirty-worktree pause in tests
+// Module setup — mock git, beads, and beadsAdapter for deterministic tests
 // ---------------------------------------------------------------------------
 
-let startTuiWorker: typeof import("../src/tuiWorker.js").startTuiWorker
+let tuiWorkerEffect: typeof import("../src/tuiWorker.js").tuiWorkerEffect
 
 beforeAll(async () => {
   // Only mock isWorktreeDirty so the dirty-worktree guard doesn't block tests.
@@ -35,7 +36,7 @@ beforeAll(async () => {
   }))
 
   // @ts-expect-error Bun test isolation import suffix is runtime-only.
-  ;({ startTuiWorker } = await import("../src/tuiWorker.js?tuiWorker") as typeof import("../src/tuiWorker.js"))
+  ;({ tuiWorkerEffect } = await import("../src/tuiWorker.js?tuiWorker") as typeof import("../src/tuiWorker.js"))
 })
 
 afterAll(() => {
@@ -43,11 +44,38 @@ afterAll(() => {
 })
 
 // ---------------------------------------------------------------------------
-// Unit tests for worker types and stop behavior
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Minimal layer for testing — file-only logger replaced with a no-op. */
+const TestLayer = Logger.replace(Logger.defaultLogger, Logger.make(() => {}))
+
+/**
+ * Fork the Effect-based worker in a managed runtime and return a handle
+ * to interrupt it. Mirrors the controller's fiber-based lifecycle.
+ */
+async function runWorker(
+  callbacks: TuiWorkerCallbacks,
+  opts?: TuiWorkerOptions,
+): Promise<{ interrupt: () => Promise<void> }> {
+  const runtime = ManagedRuntime.make(TestLayer)
+  const fiber = await runtime.runPromise(
+    Effect.forkDaemon(tuiWorkerEffect(callbacks, opts)),
+  )
+  return {
+    interrupt: async () => {
+      await runtime.runPromise(Fiber.interrupt(fiber))
+      await runtime.dispose()
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests for worker types and fiber-based lifecycle
 // ---------------------------------------------------------------------------
 
 describe("tuiWorker", () => {
-  test("stop() prevents further polling", async () => {
+  test("interrupt stops the worker cleanly", async () => {
     const logs: WorkerLogEntry[] = []
     const states: WorkerStatus[] = []
 
@@ -57,9 +85,7 @@ describe("tuiWorker", () => {
       onTaskComplete: () => {},
     }
 
-    // Start with a very fast poll interval. The worker will fail on
-    // queryReady (no bd CLI available in test) but should not crash.
-    const worker = startTuiWorker(callbacks, {
+    const worker = await runWorker(callbacks, {
       pollIntervalMs: 50,
       workerId: "test-worker",
     })
@@ -67,15 +93,15 @@ describe("tuiWorker", () => {
     // Give it a tick to start
     await new Promise((r) => setTimeout(r, 100))
 
-    // Stop the worker
-    worker.stop()
+    // Interrupt the worker fiber
+    await worker.interrupt()
 
     // Worker should have logged at least the starting message
     expect(logs.length).toBeGreaterThanOrEqual(1)
     expect(logs[0]!.message).toContain("Worker starting")
 
-    // The stop function should be callable multiple times without error
-    worker.stop()
+    // Worker should have logged the stopped message via Effect.ensuring
+    expect(logs.some((l) => l.message === "Worker stopped")).toBe(true)
   })
 
   test("worker logs include timestamps", async () => {
@@ -87,13 +113,13 @@ describe("tuiWorker", () => {
       onTaskComplete: () => {},
     }
 
-    const worker = startTuiWorker(callbacks, {
+    const worker = await runWorker(callbacks, {
       pollIntervalMs: 50,
       workerId: "test-timestamps",
     })
 
     await new Promise((r) => setTimeout(r, 100))
-    worker.stop()
+    await worker.interrupt()
 
     for (const log of logs) {
       expect(log.timestamp).toBeInstanceOf(Date)
@@ -110,13 +136,13 @@ describe("tuiWorker", () => {
       onTaskComplete: () => {},
     }
 
-    const worker = startTuiWorker(callbacks, {
+    const worker = await runWorker(callbacks, {
       pollIntervalMs: 50,
       workerId: "test-idle",
     })
 
     await new Promise((r) => setTimeout(r, 500))
-    worker.stop()
+    await worker.interrupt()
 
     // Should have an idle state set (either from init or after error recovery)
     expect(states.some((s) => s.state === "idle")).toBe(true)
@@ -131,13 +157,13 @@ describe("tuiWorker", () => {
       onTaskComplete: () => {},
     }
 
-    const worker = startTuiWorker(callbacks, {
+    const worker = await runWorker(callbacks, {
       pollIntervalMs: 50,
       workerId: "custom-worker-42",
     })
 
     await new Promise((r) => setTimeout(r, 100))
-    worker.stop()
+    await worker.interrupt()
 
     const startLog = logs.find((l) => l.message.includes("custom-worker-42"))
     expect(startLog).toBeTruthy()
@@ -153,15 +179,14 @@ describe("tuiWorker", () => {
       onTaskComplete: () => {},
     }
 
-    // Worker will encounter errors (no bd CLI) but should stay alive
-    const worker = startTuiWorker(callbacks, {
+    const worker = await runWorker(callbacks, {
       pollIntervalMs: 50,
       workerId: "test-resilient",
     })
 
     // Let it poll a few times
     await new Promise((r) => setTimeout(r, 300))
-    worker.stop()
+    await worker.interrupt()
 
     // Worker should still be logging (didn't crash)
     expect(logs.length).toBeGreaterThanOrEqual(1)
