@@ -4,18 +4,23 @@
  * recovery regardless of original workerId, recovered issue state (open + error),
  * and paused/resumed pickup based on worktree cleanliness.
  *
- * Uses Bun module mocks following the same pattern as watchLifecycle.test.ts.
+ * Uses local in-memory fakes for recovery/git/runTask boundaries while
+ * exercising the real worker and watch workflow orchestration.
  */
 
-import { describe, test, expect, beforeAll, beforeEach, afterAll, mock } from "bun:test"
+import { describe, test, expect, beforeAll, beforeEach } from "bun:test"
 import { Effect } from "effect"
 import type { BeadsIssue, BeadsMetadata } from "../src/beads.js"
 import type { TaskResult } from "../src/runTask.js"
+import type { RalpheConfig } from "../src/config.js"
 import type {
   WorkerStatus,
   WorkerLogEntry,
   TuiWorkerCallbacks,
+  TuiWorkerDeps,
 } from "../src/tuiWorker.js"
+import { startTuiWorker as realStartTuiWorker } from "../src/tuiWorker.js"
+import { processClaimedTask, type WatchWorkflowDeps } from "../src/watchWorkflow.js"
 
 // ---------------------------------------------------------------------------
 // Configurable stubs — tests manipulate these before starting the worker
@@ -51,30 +56,34 @@ let staleTasks: BeadsIssue[] = []
 let worktreeDirty = false
 
 // ---------------------------------------------------------------------------
-// Module setup — install mocks lazily so they do not leak into other files
+// Module setup
 // ---------------------------------------------------------------------------
 
 let startTuiWorker: typeof import("../src/tuiWorker.js").startTuiWorker
 
-beforeAll(async () => {
-  // Import real modules first so the spread preserves all exports.
-  // This prevents SyntaxError ("Export named … not found") when Bun's
-  // module mock leaks into other test files sharing the same CI process.
-  const realAdapter = await import(
-    "../src/beadsAdapter.js?real-restartRecovery-adapter" as string,
-  ) as typeof import("../src/beadsAdapter.js")
-  const realBeads = await import(
-    "../src/beads.js?real-restartRecovery-beads" as string,
-  ) as typeof import("../src/beads.js")
-  const realRunTask = await import(
-    "../src/runTask.js?real-restartRecovery-runTask" as string,
-  ) as typeof import("../src/runTask.js")
-  const realConfig = await import(
-    "../src/config.js?real-restartRecovery-config" as string,
-  ) as typeof import("../src/config.js")
+const baseConfig: RalpheConfig = {
+  engine: "claude",
+  checks: [],
+  report: "none",
+  maxAttempts: 1,
+  git: { mode: "none" },
+}
 
-  mock.module("../src/beadsAdapter.js", () => ({
-    ...realAdapter,
+function makeWorkflowDeps(): WatchWorkflowDeps {
+  return {
+    loadConfig: () => baseConfig,
+    runTask: (prompt: string, _config: unknown, _opts?: unknown) => {
+      runTaskCalls.push({ prompt })
+      if (taskExecutionDelay > 0) {
+        return Effect.promise(
+          () =>
+            new Promise<TaskResult>((resolve) =>
+              setTimeout(() => resolve(taskResult), taskExecutionDelay),
+            ),
+        )
+      }
+      return Effect.succeed(taskResult)
+    },
     queryQueued: () =>
       Effect.succeed((() => {
         calls.push({ op: "queryQueued" })
@@ -82,61 +91,40 @@ beforeAll(async () => {
         if (readyOneShot) readyQueue = []
         return result
       })()),
-  }))
-
-  mock.module("../src/beads.js", () => ({
-    ...realBeads,
-    markTaskReady: () => Effect.succeed(undefined),
-
     claimTask: (id: string) =>
       Effect.succeed((() => {
         calls.push({ op: "claimTask", id })
         return claimResults.get(id) ?? true
       })()),
-
     closeTaskSuccess: (id: string, reason?: string) => {
       calls.push({ op: "closeTaskSuccess", id, reason })
       return Effect.succeed(undefined)
     },
-
-    closeTaskFailure: (id: string, reason: string) => {
-      calls.push({ op: "closeTaskFailure", id, reason })
-      return Effect.succeed(undefined)
-    },
-
-    markTaskExhaustedFailure: (id: string, reason: string, metadata: BeadsMetadata) => {
-      calls.push({ op: "markTaskExhaustedFailure", id, reason, metadata })
-      return Effect.succeed(undefined)
-    },
-
     writeMetadata: (id: string, metadata: BeadsMetadata) => {
       calls.push({ op: "writeMetadata", id, metadata })
       return Effect.succeed(undefined)
     },
-
     readMetadata: (id: string) => {
       calls.push({ op: "readMetadata", id })
       return Effect.succeed(undefined)
     },
-
-    reopenTask: (id: string) => {
-      calls.push({ op: "reopenTask", id })
+    buildPromptFromIssue: (issue: BeadsIssue) => {
+      const sections: string[] = [issue.title]
+      if (issue.description) sections.push(`\n## Description\n${issue.description}`)
+      return sections.join("\n")
+    },
+    markTaskExhaustedFailure: (id: string, reason: string, metadata: BeadsMetadata) => {
+      calls.push({ op: "markTaskExhaustedFailure", id, reason, metadata })
       return Effect.succeed(undefined)
     },
+  }
+}
 
-    clearAssignee: (id: string) => {
-      calls.push({ op: "clearAssignee", id })
-      return Effect.succeed(undefined)
-    },
-
-    /**
-     * Mock recoverStaleTasks that mirrors the production implementation:
-     * - Reads ALL stale in_progress issues (from `staleTasks` stub, which
-     *   simulates queryAllStaleInProgress — no workerId filtering).
-     * - For each stale issue, reopens it (status → open), clears assignee,
-     *   then pushes a markTaskExhaustedFailure call (error label + metadata).
-     * - Returns the count of recovered tasks.
-     */
+function makeWorkerDeps(): TuiWorkerDeps {
+  return {
+    loadConfig: () => baseConfig,
+    queryQueued: makeWorkflowDeps().queryQueued,
+    claimTask: makeWorkflowDeps().claimTask,
     recoverStaleTasks: (workerId: string) => {
       calls.push({ op: "recoverStaleTasks" })
       const tasks = [...staleTasks]
@@ -158,60 +146,21 @@ beforeAll(async () => {
       }
       return Effect.succeed(tasks.length)
     },
-
-    buildPromptFromIssue: (issue: BeadsIssue) => {
-      const sections: string[] = [issue.title]
-      if (issue.description) sections.push(`\n## Description\n${issue.description}`)
-      return sections.join("\n")
-    },
-
-    queryAllStaleInProgress: () => {
-      calls.push({ op: "queryAllStaleInProgress" })
-      return Effect.succeed([...staleTasks])
-    },
-
-    addComment: () => Effect.succeed(undefined),
-  }))
-
-  // Preserve real git exports so git.test.ts isn't broken by mock leakage.
-  const realGit = await import("../src/git.js")
-  mock.module("../src/git.js", () => ({
-    ...realGit,
     isWorktreeDirty: () => {
       calls.push({ op: "isWorktreeDirty" })
       return Effect.succeed(worktreeDirty)
     },
-  }))
+    processClaimedTask: (issue, config, workerId) =>
+      processClaimedTask(issue, config, workerId, makeWorkflowDeps()),
+  }
+}
 
-  mock.module("../src/runTask.js", () => ({
-    ...realRunTask,
-    runTask: (prompt: string, _config: unknown, _opts?: unknown) => {
-      runTaskCalls.push({ prompt })
-      if (taskExecutionDelay > 0) {
-        return Effect.promise(
-          () =>
-            new Promise<TaskResult>((resolve) =>
-              setTimeout(() => resolve(taskResult), taskExecutionDelay),
-            ),
-        )
-      }
-      return Effect.succeed(taskResult)
-    },
-  }))
-
-  mock.module("../src/config.js", () => ({
-    ...realConfig,
-    loadConfig: () => ({
-      engine: "claude" as const,
-      checks: [],
-      report: "none",
-      maxAttempts: 1,
-      git: { mode: "none" as const },
-    }),
-  }))
-
-  // @ts-expect-error Bun test isolation import suffix is runtime-only.
-  ;({ startTuiWorker } = await import("../src/tuiWorker.js?restartRecovery") as typeof import("../src/tuiWorker.js"))
+beforeAll(async () => {
+  startTuiWorker = (callbacks, opts) =>
+    realStartTuiWorker(callbacks, {
+      ...opts,
+      deps: makeWorkerDeps(),
+    })
 })
 
 // ---------------------------------------------------------------------------
@@ -274,10 +223,6 @@ beforeEach(() => {
   worktreeDirty = false
   calls = []
   runTaskCalls = []
-})
-
-afterAll(() => {
-  mock.restore()
 })
 
 // ===========================================================================

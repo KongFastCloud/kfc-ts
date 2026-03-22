@@ -4,20 +4,25 @@
  * idle/running state transitions, custom worker ID propagation, and resilience
  * when adapter calls fail.
  *
- * All adapter and workflow boundaries are explicitly mocked — no test relies
+ * Uses local deterministic fakes at the worker boundary — no test relies
  * on ambient environment state (missing .beads DB, unavailable bd CLI,
  * filesystem config, etc.).
  */
 
-import { describe, test, expect, beforeAll, afterAll, mock } from "bun:test"
+import { describe, test, expect } from "bun:test"
 import { Effect, Fiber, ManagedRuntime, Logger } from "effect"
+import type { RalpheConfig } from "../src/config.js"
+import { FatalError } from "../src/errors.js"
+import type { ProcessTaskResult } from "../src/watchWorkflow.js"
 import type {
   WorkerStatus,
   WorkerLogEntry,
   TuiWorkerCallbacks,
+  TuiWorkerDeps,
   TuiWorkerOptions,
 } from "../src/tuiWorker.js"
 import type { BeadsIssue } from "../src/beads.js"
+import { tuiWorkerEffect } from "../src/tuiWorker.js"
 
 // ---------------------------------------------------------------------------
 // Configurable stubs — tests set these before starting the worker
@@ -30,110 +35,59 @@ let readyQueue: BeadsIssue[] = []
 let claimResult = true
 
 /** Error to inject into queryQueued. When set, queryQueued will fail. */
-let queryQueuedError: Error | null = null
+let queryQueuedError: FatalError | null = null
 
 /** Error to inject into claimTask. When set, claimTask will fail. */
-let claimTaskError: Error | null = null
+let claimTaskError: FatalError | null = null
 
 /** Controls the result of processClaimedTask. */
-let processResult: { success: boolean; engine: "claude" | "codex"; resumeToken?: string; error?: string } = {
+let processResult: ProcessTaskResult = {
   success: true,
+  taskId: "stub-task",
   engine: "claude",
   resumeToken: "tok",
 }
 
 /** Error to inject into processClaimedTask. When set, processClaimedTask will fail. */
-let processError: Error | null = null
+let processError: FatalError | null = null
 
 // ---------------------------------------------------------------------------
-// Module setup — explicit mocks for every external boundary
+// Local dependency harness
 // ---------------------------------------------------------------------------
 
-let tuiWorkerEffect: typeof import("../src/tuiWorker.js").tuiWorkerEffect
+const baseConfig: RalpheConfig = {
+  engine: "claude",
+  checks: [],
+  report: "none",
+  maxAttempts: 1,
+  git: { mode: "none" },
+}
 
-beforeAll(async () => {
-  // Import real modules first so the spread preserves all exports.
-  // This prevents SyntaxError ("Export named … not found") when Bun's
-  // module mock leaks into other test files sharing the same CI process.
-  const realGit = await import(
-    "../src/git.js?real-tuiWorker-git" as string,
-  ) as typeof import("../src/git.js")
-  const realAdapter = await import(
-    "../src/beadsAdapter.js?real-tuiWorker-adapter" as string,
-  ) as typeof import("../src/beadsAdapter.js")
-  const realBeads = await import(
-    "../src/beads.js?real-tuiWorker-beads" as string,
-  ) as typeof import("../src/beads.js")
-  const realWorkflow = await import(
-    "../src/watchWorkflow.js?real-tuiWorker-workflow" as string,
-  ) as typeof import("../src/watchWorkflow.js")
-  const realConfig = await import(
-    "../src/config.js?real-tuiWorker-config" as string,
-  ) as typeof import("../src/config.js")
-
-  // Mock git — only isWorktreeDirty matters; keep worktree clean.
-  mock.module("../src/git.js", () => ({
-    ...realGit,
-    isWorktreeDirty: () => Effect.succeed(false),
-  }))
-
-  // Mock beadsAdapter — explicit control over queryQueued, preserve other exports.
-  mock.module("../src/beadsAdapter.js", () => ({
-    ...realAdapter,
+function makeWorkerDeps(): TuiWorkerDeps {
+  return {
+    loadConfig: () => baseConfig,
     queryQueued: () => {
       if (queryQueuedError) return Effect.fail(queryQueuedError)
       const result = [...readyQueue]
-      readyQueue = [] // one-shot: return queue then empty
+      readyQueue = []
       return Effect.succeed(result)
     },
-  }))
-
-  // Mock beads — deterministic, no-op implementations; preserve other exports.
-  mock.module("../src/beads.js", () => ({
-    ...realBeads,
-    markTaskReady: () => Effect.succeed(undefined),
-    recoverStaleTasks: () => Effect.succeed(0),
     claimTask: () => {
       if (claimTaskError) return Effect.fail(claimTaskError)
       return Effect.succeed(claimResult)
     },
-    closeTaskSuccess: () => Effect.succeed(undefined),
-    closeTaskFailure: () => Effect.succeed(undefined),
-    markTaskExhaustedFailure: () => Effect.succeed(undefined),
-    writeMetadata: () => Effect.succeed(undefined),
-    readMetadata: () => Effect.succeed(undefined),
-    buildPromptFromIssue: (issue: { title: string }) => issue.title,
-    addComment: () => Effect.succeed(undefined),
-  }))
-
-  // Mock watchWorkflow — configurable processClaimedTask result; preserve other exports.
-  mock.module("../src/watchWorkflow.js", () => ({
-    ...realWorkflow,
+    recoverStaleTasks: () => Effect.succeed(0),
+    isWorktreeDirty: () => Effect.succeed(false),
     processClaimedTask: () => {
       if (processError) return Effect.fail(processError)
       return Effect.succeed(processResult)
     },
-  }))
+  }
+}
 
-  // Mock config — no filesystem access; return deterministic defaults; preserve other exports.
-  mock.module("../src/config.js", () => ({
-    ...realConfig,
-    loadConfig: () => ({
-      engine: "claude" as const,
-      checks: [],
-      report: "none",
-      maxAttempts: 1,
-      git: { mode: "none" as const },
-    }),
-  }))
-
-  // @ts-expect-error Bun test isolation import suffix is runtime-only.
-  ;({ tuiWorkerEffect } = await import("../src/tuiWorker.js?tuiWorker") as typeof import("../src/tuiWorker.js"))
-})
-
-afterAll(() => {
-  mock.restore()
-})
+function makeFatalError(message: string): FatalError {
+  return new FatalError({ command: "test", message })
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -148,7 +102,7 @@ function resetStubs() {
   claimResult = true
   queryQueuedError = null
   claimTaskError = null
-  processResult = { success: true, engine: "claude", resumeToken: "tok" }
+  processResult = { success: true, taskId: "stub-task", engine: "claude", resumeToken: "tok" }
   processError = null
 }
 
@@ -162,7 +116,7 @@ async function runWorker(
 ): Promise<{ interrupt: () => Promise<void> }> {
   const runtime = ManagedRuntime.make(TestLayer)
   const fiber = await runtime.runPromise(
-    Effect.forkDaemon(tuiWorkerEffect(callbacks, opts)),
+    Effect.forkDaemon(tuiWorkerEffect(callbacks, { ...opts, deps: makeWorkerDeps() })),
   )
   return {
     interrupt: async () => {
@@ -314,7 +268,7 @@ describe("tuiWorker", () => {
 
   test("worker survives queryQueued adapter error and returns to idle", async () => {
     resetStubs()
-    queryQueuedError = new Error("adapter connection refused")
+    queryQueuedError = makeFatalError("adapter connection refused")
 
     const { states, logs, callbacks } = makeCollectors()
 
@@ -341,7 +295,7 @@ describe("tuiWorker", () => {
   test("worker survives claimTask failure and returns to idle", async () => {
     resetStubs()
     readyQueue = [{ id: "TASK-FAIL", title: "Will fail claim" }]
-    claimTaskError = new Error("claim lock timeout")
+    claimTaskError = makeFatalError("claim lock timeout")
 
     const { states, logs, callbacks } = makeCollectors()
 
@@ -413,7 +367,7 @@ describe("tuiWorker", () => {
     resetStubs()
     readyQueue = [{ id: "TASK-FAIL-CB", title: "Will fail" }]
     claimResult = true
-    processResult = { success: false, engine: "claude", error: "checks failed" }
+    processResult = { success: false, taskId: "TASK-FAIL-CB", engine: "claude", error: "checks failed" }
 
     const { taskCompletions, logs, callbacks } = makeCollectors()
 
@@ -435,7 +389,7 @@ describe("tuiWorker", () => {
     resetStubs()
     readyQueue = [{ id: "TASK-DEFECT", title: "Will throw" }]
     claimResult = true
-    processError = new Error("unexpected null pointer")
+    processError = makeFatalError("unexpected null pointer")
 
     const { states, logs, taskCompletions, callbacks } = makeCollectors()
 

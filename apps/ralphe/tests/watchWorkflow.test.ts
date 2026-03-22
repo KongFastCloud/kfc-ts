@@ -3,11 +3,18 @@
  * Verifies the canonical task lifecycle without relying on headless or TUI-specific orchestration.
  */
 
-import { describe, test, expect, beforeAll, beforeEach, afterAll, mock } from "bun:test"
+import { describe, test, expect, beforeEach } from "bun:test"
 import { Effect } from "effect"
 import type { BeadsIssue, BeadsMetadata } from "../src/beads.js"
+import type { RalpheConfig } from "../src/config.js"
 import type { TaskResult } from "../src/runTask.js"
-import type { ProcessTaskResult, PollResult } from "../src/watchWorkflow.js"
+import {
+  processClaimedTask,
+  pollClaimAndProcess,
+  type ProcessTaskResult,
+  type PollResult,
+  type WatchWorkflowDeps,
+} from "../src/watchWorkflow.js"
 
 // ---------------------------------------------------------------------------
 // Configurable stubs
@@ -36,104 +43,57 @@ let runTaskCalls: Array<{ prompt: string; issueId?: string }> = []
 let previousMetadata: BeadsMetadata | undefined = undefined
 
 // ---------------------------------------------------------------------------
-// Module setup
+// Local dependency harness
 // ---------------------------------------------------------------------------
 
-let processClaimedTask: typeof import("../src/watchWorkflow.js").processClaimedTask
-let pollClaimAndProcess: typeof import("../src/watchWorkflow.js").pollClaimAndProcess
+const baseConfig: RalpheConfig = {
+  engine: "claude",
+  checks: [],
+  report: "none",
+  maxAttempts: 1,
+  git: { mode: "none" },
+}
 
-beforeAll(async () => {
-  // Import real modules first so the spread preserves all exports.
-  // This prevents SyntaxError ("Export named … not found") when Bun's
-  // module mock leaks into other test files sharing the same CI process.
-  const realAdapter = await import(
-    "../src/beadsAdapter.js?real-watchWorkflow-adapter" as string,
-  ) as typeof import("../src/beadsAdapter.js")
-  const realBeads = await import(
-    "../src/beads.js?real-watchWorkflow-beads" as string,
-  ) as typeof import("../src/beads.js")
-  const realRunTask = await import(
-    "../src/runTask.js?real-watchWorkflow-runTask" as string,
-  ) as typeof import("../src/runTask.js")
-  const realConfig = await import(
-    "../src/config.js?real-watchWorkflow-config" as string,
-  ) as typeof import("../src/config.js")
-
-  mock.module("../src/beadsAdapter.js", () => ({
-    ...realAdapter,
+function makeWorkflowDeps(): WatchWorkflowDeps {
+  return {
+    loadConfig: () => baseConfig,
+    runTask: (prompt: string, _config: unknown, opts?: { issueId?: string }) => {
+      runTaskCalls.push({ prompt, issueId: opts?.issueId })
+      return Effect.succeed(taskResult)
+    },
     queryQueued: () =>
       Effect.succeed((() => {
         calls.push({ op: "queryQueued" })
         return [...readyQueue]
       })()),
-  }))
-
-  mock.module("../src/beads.js", () => ({
-    ...realBeads,
-    markTaskReady: () => Effect.succeed(undefined),
-
-    readMetadata: (id: string) => {
-      calls.push({ op: "readMetadata", id })
-      return Effect.succeed(previousMetadata)
-    },
-
     claimTask: (id: string) =>
       Effect.succeed((() => {
         calls.push({ op: "claimTask", id })
         return claimResults.get(id) ?? true
       })()),
-
     closeTaskSuccess: (id: string, reason?: string) => {
       calls.push({ op: "closeTaskSuccess", id, reason })
       return Effect.succeed(undefined)
     },
-
-    markTaskExhaustedFailure: (id: string, reason: string, metadata: BeadsMetadata) => {
-      calls.push({ op: "markTaskExhaustedFailure", id, reason, metadata })
-      return Effect.succeed(undefined)
-    },
-
     writeMetadata: (id: string, metadata: BeadsMetadata) => {
       calls.push({ op: "writeMetadata", id, metadata })
       return Effect.succeed(undefined)
     },
-
-    recoverStaleTasks: (_workerId: string) => {
-      calls.push({ op: "recoverStaleTasks" })
-      return Effect.succeed(0)
+    readMetadata: (id: string) => {
+      calls.push({ op: "readMetadata", id })
+      return Effect.succeed(previousMetadata)
     },
-
     buildPromptFromIssue: (issue: BeadsIssue) => {
       const sections: string[] = [issue.title]
       if (issue.description) sections.push(`\n## Description\n${issue.description}`)
       return sections.join("\n")
     },
-
-    addComment: () => Effect.succeed(undefined),
-  }))
-
-  mock.module("../src/runTask.js", () => ({
-    ...realRunTask,
-    runTask: (prompt: string, _config: unknown, opts?: { issueId?: string }) => {
-      runTaskCalls.push({ prompt, issueId: opts?.issueId })
-      return Effect.succeed(taskResult)
+    markTaskExhaustedFailure: (id: string, reason: string, metadata: BeadsMetadata) => {
+      calls.push({ op: "markTaskExhaustedFailure", id, reason, metadata })
+      return Effect.succeed(undefined)
     },
-  }))
-
-  mock.module("../src/config.js", () => ({
-    ...realConfig,
-    loadConfig: () => ({
-      engine: "claude" as const,
-      checks: [],
-      report: "none",
-      maxAttempts: 1,
-      git: { mode: "none" as const },
-    }),
-  }))
-
-  // @ts-expect-error Bun test isolation import suffix is runtime-only.
-  ;({ processClaimedTask, pollClaimAndProcess } = await import("../src/watchWorkflow.js?test") as typeof import("../src/watchWorkflow.js"))
-})
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -146,10 +106,6 @@ beforeEach(() => {
   previousMetadata = undefined
   calls = []
   runTaskCalls = []
-})
-
-afterAll(() => {
-  mock.restore()
 })
 
 // ---------------------------------------------------------------------------
@@ -176,7 +132,7 @@ describe("processClaimedTask: success lifecycle", () => {
         report: "none",
         maxAttempts: 1,
         git: { mode: "none" },
-      }, "worker-1"),
+      }, "worker-1", makeWorkflowDeps()),
     )
 
     expect(result.success).toBe(true)
@@ -220,7 +176,7 @@ describe("processClaimedTask: success lifecycle", () => {
         report: "none",
         maxAttempts: 1,
         git: { mode: "none" },
-      }, "worker-1"),
+      }, "worker-1", makeWorkflowDeps()),
     )
 
     expect(runTaskCalls.length).toBe(1)
@@ -240,7 +196,7 @@ describe("processClaimedTask: failure lifecycle", () => {
         report: "none",
         maxAttempts: 1,
         git: { mode: "none" },
-      }, "worker-1"),
+      }, "worker-1", makeWorkflowDeps()),
     )
 
     expect(result.success).toBe(false)
@@ -271,7 +227,7 @@ describe("processClaimedTask: failure lifecycle", () => {
         report: "none",
         maxAttempts: 1,
         git: { mode: "none" },
-      }, "worker-1"),
+      }, "worker-1", makeWorkflowDeps()),
     )
 
     const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
@@ -297,7 +253,7 @@ describe("processClaimedTask: previous error propagation", () => {
         report: "none",
         maxAttempts: 1,
         git: { mode: "none" },
-      }, "worker-1"),
+      }, "worker-1", makeWorkflowDeps()),
     )
 
     expect(runTaskCalls.length).toBe(1)
@@ -317,7 +273,7 @@ describe("processClaimedTask: previous error propagation", () => {
         report: "none",
         maxAttempts: 1,
         git: { mode: "none" },
-      }, "worker-1"),
+      }, "worker-1", makeWorkflowDeps()),
     )
 
     expect(runTaskCalls[0]!.prompt).not.toContain("## Previous Error")
@@ -339,7 +295,7 @@ describe("processClaimedTask: previous error propagation", () => {
         report: "none",
         maxAttempts: 1,
         git: { mode: "none" },
-      }, "worker-1"),
+      }, "worker-1", makeWorkflowDeps()),
     )
 
     expect(runTaskCalls[0]!.prompt).not.toContain("## Previous Error")
@@ -362,7 +318,7 @@ describe("processClaimedTask: previous error propagation", () => {
         report: "none",
         maxAttempts: 1,
         git: { mode: "none" },
-      }, "worker-1"),
+      }, "worker-1", makeWorkflowDeps()),
     )
 
     const readIdx = calls.findIndex((c) => c.op === "readMetadata")
@@ -384,7 +340,7 @@ describe("processClaimedTask: metadata timing", () => {
         report: "none",
         maxAttempts: 1,
         git: { mode: "none" },
-      }, "test-timing"),
+      }, "test-timing", makeWorkflowDeps()),
     )
 
     const metaCalls = calls.filter((c) => c.op === "writeMetadata")
@@ -411,7 +367,7 @@ describe("processClaimedTask: metadata timing", () => {
         report: "none",
         maxAttempts: 1,
         git: { mode: "none" },
-      }, "meta-worker"),
+      }, "meta-worker", makeWorkflowDeps()),
     )
 
     const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
@@ -430,7 +386,7 @@ describe("pollClaimAndProcess: poll outcomes", () => {
   test("returns NoneReady when queue is empty", async () => {
     readyQueue = []
 
-    const result = await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1"))
+    const result = await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1", makeWorkflowDeps()))
 
     expect(result._tag).toBe("NoneReady")
     expect(calls.some((c) => c.op === "queryQueued")).toBe(true)
@@ -441,7 +397,7 @@ describe("pollClaimAndProcess: poll outcomes", () => {
     readyQueue = [makeIssue("poll-contend")]
     claimResults.set("poll-contend", false)
 
-    const result = await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1"))
+    const result = await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1", makeWorkflowDeps()))
 
     expect(result._tag).toBe("ClaimContention")
     if (result._tag === "ClaimContention") {
@@ -455,7 +411,7 @@ describe("pollClaimAndProcess: poll outcomes", () => {
     claimResults.set("poll-ok", true)
     taskResult = { success: true, engine: "claude", resumeToken: "tok-123" }
 
-    const result = await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1"))
+    const result = await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1", makeWorkflowDeps()))
 
     expect(result._tag).toBe("Processed")
     if (result._tag === "Processed") {
@@ -478,7 +434,7 @@ describe("pollClaimAndProcess: poll outcomes", () => {
     claimResults.set("poll-fail", true)
     taskResult = { success: false, engine: "claude", error: "test error" }
 
-    const result = await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1"))
+    const result = await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1", makeWorkflowDeps()))
 
     expect(result._tag).toBe("Processed")
     if (result._tag === "Processed") {
@@ -497,7 +453,7 @@ describe("pollClaimAndProcess: operation ordering", () => {
     claimResults.set("poll-order", true)
     taskResult = { success: true, engine: "claude" }
 
-    await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1"))
+    await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1", makeWorkflowDeps()))
 
     const ops = calls.map((c) => c.op)
     const queryIdx = ops.indexOf("queryQueued")
@@ -523,7 +479,7 @@ describe("pollClaimAndProcess: prompt building", () => {
     claimResults.set("poll-prompt", true)
     taskResult = { success: true, engine: "claude" }
 
-    await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1"))
+    await Effect.runPromise(pollClaimAndProcess("/tmp", "worker-1", makeWorkflowDeps()))
 
     expect(runTaskCalls.length).toBe(1)
     expect(runTaskCalls[0]!.prompt).toContain("Add user authentication")

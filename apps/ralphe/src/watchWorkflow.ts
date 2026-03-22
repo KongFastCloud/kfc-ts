@@ -47,6 +47,18 @@ export type PollResult =
   | { readonly _tag: "ClaimContention"; readonly taskId: string; readonly title: string }
   | { readonly _tag: "Processed"; readonly result: ProcessTaskResult }
 
+export interface WatchWorkflowDeps {
+  readonly loadConfig: typeof loadConfig
+  readonly runTask: typeof runTask
+  readonly queryQueued: typeof queryQueued
+  readonly claimTask: typeof claimTask
+  readonly closeTaskSuccess: typeof closeTaskSuccess
+  readonly writeMetadata: typeof writeMetadata
+  readonly readMetadata: typeof readMetadata
+  readonly buildPromptFromIssue: typeof buildPromptFromIssue
+  readonly markTaskExhaustedFailure: typeof markTaskExhaustedFailure
+}
+
 // ---------------------------------------------------------------------------
 // Core task lifecycle: claim → read metadata → execute → finalize
 // ---------------------------------------------------------------------------
@@ -69,10 +81,23 @@ export const processClaimedTask = (
   issue: BeadsIssue,
   config: RalpheConfig,
   workerId: string,
+  depsOverride?: Partial<WatchWorkflowDeps>,
 ): Effect.Effect<ProcessTaskResult, FatalError> =>
   Effect.gen(function* () {
+    const deps: WatchWorkflowDeps = {
+      loadConfig,
+      runTask,
+      queryQueued,
+      claimTask,
+      closeTaskSuccess,
+      writeMetadata,
+      readMetadata,
+      buildPromptFromIssue,
+      markTaskExhaustedFailure,
+      ...depsOverride,
+    }
     // Read existing metadata before overwriting to capture previous error
-    const existingMeta = yield* Effect.either(readMetadata(issue.id))
+    const existingMeta = yield* Effect.either(deps.readMetadata(issue.id))
     const previousError = existingMeta._tag === "Right" ? existingMeta.right?.error : undefined
 
     // Write initial metadata
@@ -83,14 +108,14 @@ export const processClaimedTask = (
       timestamp: startedAt,
       startedAt,
     }
-    yield* writeMetadata(issue.id, startMetadata)
+    yield* deps.writeMetadata(issue.id, startMetadata)
 
     // Build prompt and execute
-    let prompt = buildPromptFromIssue(issue)
+    let prompt = deps.buildPromptFromIssue(issue)
     if (previousError) {
       prompt += `\n\n## Previous Error\n${previousError}`
     }
-    const result = yield* runTask(prompt, config, { issueId: issue.id })
+    const result = yield* deps.runTask(prompt, config, { issueId: issue.id })
 
     // Write final metadata with resume token
     const finishedAt = new Date().toISOString()
@@ -105,12 +130,12 @@ export const processClaimedTask = (
 
     // Close with appropriate outcome
     if (result.success) {
-      yield* writeMetadata(issue.id, finalMetadata)
-      yield* closeTaskSuccess(issue.id)
+      yield* deps.writeMetadata(issue.id, finalMetadata)
+      yield* deps.closeTaskSuccess(issue.id)
       yield* Effect.logInfo(`Task completed successfully.`)
     } else {
       // Exhausted failure: keep task open, remove eligibility, mark error
-      yield* markTaskExhaustedFailure(
+      yield* deps.markTaskExhaustedFailure(
         issue.id,
         result.error ?? "execution failed",
         finalMetadata,
@@ -148,12 +173,25 @@ export const processClaimedTask = (
 export const pollClaimAndProcess = (
   workDir: string,
   workerId: string,
+  depsOverride?: Partial<WatchWorkflowDeps>,
 ): Effect.Effect<PollResult, FatalError> =>
   Effect.gen(function* () {
-    const config = loadConfig(workDir)
+    const deps: WatchWorkflowDeps = {
+      loadConfig,
+      runTask,
+      queryQueued,
+      claimTask,
+      closeTaskSuccess,
+      writeMetadata,
+      readMetadata,
+      buildPromptFromIssue,
+      markTaskExhaustedFailure,
+      ...depsOverride,
+    }
+    const config = deps.loadConfig(workDir)
 
     // Poll for queued tasks (open + ready + no error + not blocked)
-    const ready = yield* queryQueued(workDir)
+    const ready = yield* deps.queryQueued(workDir)
 
     if (ready.length === 0) {
       return { _tag: "NoneReady" as const }
@@ -163,7 +201,7 @@ export const pollClaimAndProcess = (
     yield* Effect.logInfo(`Found ready task: ${issue.id} — ${issue.title}`)
 
     // Claim atomically
-    const claimed = yield* claimTask(issue.id)
+    const claimed = yield* deps.claimTask(issue.id)
     if (!claimed) {
       yield* Effect.logDebug(`Task ${issue.id} already claimed by another worker. Skipping.`)
       return { _tag: "ClaimContention" as const, taskId: issue.id, title: issue.title }
@@ -171,6 +209,6 @@ export const pollClaimAndProcess = (
 
     yield* Effect.logInfo(`Claimed task: ${issue.id}`)
 
-    const result = yield* processClaimedTask(issue, config, workerId)
+    const result = yield* processClaimedTask(issue, config, workerId, deps)
     return { _tag: "Processed" as const, result }
   })

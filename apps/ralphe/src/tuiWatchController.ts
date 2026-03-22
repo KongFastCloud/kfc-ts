@@ -58,6 +58,15 @@ export interface TuiWatchControllerOptions {
   readonly workDir?: string
   /** Worker ID. Default hostname-based. */
   readonly workerId?: string
+  /** Test-only dependency overrides for deterministic controller behavior. */
+  readonly deps?: Partial<TuiWatchControllerDeps>
+}
+
+export interface TuiWatchControllerDeps {
+  readonly queryAllTasks: typeof queryAllTasks
+  readonly markTaskReady: typeof markTaskReady
+  readonly startTuiWorker: typeof startTuiWorker
+  readonly loadConfig: typeof loadConfig
 }
 
 /**
@@ -136,6 +145,13 @@ export function createTuiWatchController(
   const refreshIntervalMs = opts?.refreshIntervalMs ?? 10_000
   const workDir = opts?.workDir ?? process.cwd()
   const workerId = opts?.workerId ?? `ralphe-${os.hostname()}`
+  const deps: TuiWatchControllerDeps = {
+    queryAllTasks,
+    markTaskReady,
+    startTuiWorker,
+    loadConfig,
+    ...opts?.deps,
+  }
 
   // -----------------------------------------------------------------------
   // Scoped runtime — created once, reused for every Effect execution
@@ -206,7 +222,7 @@ export function createTuiWatchController(
       if (refreshInFlight) return latestTasks
       refreshInFlight = true
       try {
-        const tasks = await run(queryAllTasks(workDir))
+        const tasks = await run(deps.queryAllTasks(workDir))
         latestTasks = tasks
         refreshError = undefined
         lastRefreshed = new Date()
@@ -234,7 +250,7 @@ export function createTuiWatchController(
     },
 
     async markReady(id: string, labels: string[]): Promise<void> {
-      await run(markTaskReady(id, labels))
+      await run(deps.markTaskReady(id, labels))
     },
 
     runEffect<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
@@ -247,7 +263,7 @@ export function createTuiWatchController(
       // Start the Effect-based worker via startTuiWorker, which internally
       // forks tuiWorkerEffect as a fiber. The worker's Effects are routed
       // through the controller's managed runtime via runEffect.
-      workerHandle = startTuiWorker(
+      workerHandle = deps.startTuiWorker(
         {
           onStateChange: (status: WorkerStatus) => {
             workerStatus = status
@@ -296,7 +312,7 @@ export function createTuiWatchController(
               // Execute mark-ready through the scoped runtime's layer.
               // Errors are silently swallowed — drain continues.
               yield* Effect.catchAll(
-                markTaskReady(item.id, item.labels),
+                deps.markTaskReady(item.id, item.labels),
                 () => Effect.void,
               )
 

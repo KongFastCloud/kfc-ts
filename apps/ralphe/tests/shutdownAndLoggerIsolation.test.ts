@@ -11,12 +11,23 @@
  *    controller and worker subsystems.
  */
 
-import { describe, test, expect, beforeAll, afterAll, mock } from "bun:test"
+import { describe, test, expect, beforeEach } from "bun:test"
 import { Effect, Layer, Logger, Fiber, ManagedRuntime } from "effect"
-import type { TuiWatchController, TuiWatchControllerOptions } from "../src/tuiWatchController.js"
+import type { RalpheConfig } from "../src/config.js"
+import {
+  createTuiWatchController,
+  type TuiWatchController,
+  type TuiWatchControllerOptions,
+  type TuiWatchControllerDeps,
+} from "../src/tuiWatchController.js"
+import {
+  startTuiWorker as realStartTuiWorker,
+  tuiWorkerEffect,
+  type TuiWorkerDeps,
+} from "../src/tuiWorker.js"
 
 // ---------------------------------------------------------------------------
-// Module-level mocks — must be set up before importing the controller
+// Local test harness state
 // ---------------------------------------------------------------------------
 
 const mockTasks = [
@@ -27,74 +38,17 @@ const mockTasks = [
 let markReadyCalls: Array<{ id: string; labels: string[] }> = []
 let queryQueuedCallCount = 0
 
-let createTuiWatchController: typeof import("../src/tuiWatchController.js").createTuiWatchController
-let tuiWorkerEffect: typeof import("../src/tuiWorker.js").tuiWorkerEffect
+const baseConfig: RalpheConfig = {
+  engine: "claude",
+  checks: [],
+  report: "none",
+  maxAttempts: 1,
+  git: { mode: "none" },
+}
 
-beforeAll(async () => {
-  // Import real modules first so the spread preserves all exports.
-  // This prevents SyntaxError ("Export named … not found") when Bun's
-  // module mock leaks into other test files sharing the same CI process.
-  const realAdapter = await import(
-    "../src/beadsAdapter.js?real-shutdownIsolation-adapter" as string,
-  ) as typeof import("../src/beadsAdapter.js")
-  const realBeads = await import(
-    "../src/beads.js?real-shutdownIsolation-beads" as string,
-  ) as typeof import("../src/beads.js")
-  const realGit = await import(
-    "../src/git.js?real-shutdownIsolation-git" as string,
-  ) as typeof import("../src/git.js")
-
-  // Mock beads adapter — spread real module to preserve exports like
-  // parseBdTaskList and queryAllTasks that other test files may import.
-  mock.module("../src/beadsAdapter.js", () => ({
-    ...realAdapter,
-    queryAllTasks: () => Effect.succeed(mockTasks),
-    ensureBeadsDatabase: () => Effect.succeed("ok"),
-    queryQueued: () => {
-      queryQueuedCallCount++
-      return Effect.succeed([])
-    },
-  }))
-
-  // Mock beads operations — spread real module to preserve all exports.
-  mock.module("../src/beads.js", () => ({
-    ...realBeads,
-    markTaskReady: (id: string, labels: string[]) => {
-      markReadyCalls.push({ id, labels })
-      return Effect.succeed(undefined)
-    },
-    recoverStaleTasks: () => Effect.succeed(0),
-    claimTask: () => Effect.succeed(false),
-    closeTaskSuccess: () => Effect.succeed(undefined),
-    closeTaskFailure: () => Effect.succeed(undefined),
-    markTaskExhaustedFailure: () => Effect.succeed(undefined),
-    writeMetadata: () => Effect.succeed(undefined),
-    readMetadata: () => Effect.succeed(undefined),
-    buildPromptFromIssue: (issue: { title: string }) => issue.title,
-    addComment: () => Effect.succeed(undefined),
-  }))
-
-  // Mock git
-  mock.module("../src/git.js", () => ({
-    ...realGit,
-    isWorktreeDirty: () => Effect.succeed(false),
-  }))
-
-  const ctrlMod = await import(
-    // @ts-expect-error Bun test isolation import suffix
-    "../src/tuiWatchController.js?shutdownIsolation"
-  ) as typeof import("../src/tuiWatchController.js")
-  createTuiWatchController = ctrlMod.createTuiWatchController
-
-  const workerMod = await import(
-    // @ts-expect-error Bun test isolation import suffix
-    "../src/tuiWorker.js?shutdownIsolation"
-  ) as typeof import("../src/tuiWorker.js")
-  tuiWorkerEffect = workerMod.tuiWorkerEffect
-})
-
-afterAll(() => {
-  mock.restore()
+beforeEach(() => {
+  markReadyCalls = []
+  queryQueuedCallCount = 0
 })
 
 // ---------------------------------------------------------------------------
@@ -107,11 +61,47 @@ const TestLayer: Layer.Layer<never> = Logger.replace(
   Logger.make(() => {}),
 )
 
+function makeWorkerDeps(): TuiWorkerDeps {
+  return {
+    loadConfig: () => baseConfig,
+    queryQueued: () => {
+      queryQueuedCallCount++
+      return Effect.succeed([])
+    },
+    claimTask: () => Effect.succeed(false),
+    recoverStaleTasks: () => Effect.succeed(0),
+    isWorktreeDirty: () => Effect.succeed(false),
+    processClaimedTask: () =>
+      Effect.succeed({
+        success: true,
+        taskId: "noop",
+        engine: "claude" as const,
+      }),
+  }
+}
+
+function makeControllerDeps(): TuiWatchControllerDeps {
+  return {
+    queryAllTasks: () => Effect.succeed(mockTasks),
+    markTaskReady: (id: string, labels: string[]) => {
+      markReadyCalls.push({ id, labels })
+      return Effect.succeed(undefined)
+    },
+    startTuiWorker: (callbacks, opts) =>
+      realStartTuiWorker(callbacks, {
+        ...opts,
+        deps: makeWorkerDeps(),
+      }),
+    loadConfig: () => baseConfig,
+  }
+}
+
 function makeController(overrides?: Partial<TuiWatchControllerOptions>): TuiWatchController {
   return createTuiWatchController(TestLayer, {
     refreshIntervalMs: 50,
     workDir: process.cwd(),
     workerId: "test-shutdown",
+    deps: makeControllerDeps(),
     ...overrides,
   })
 }
@@ -365,7 +355,7 @@ describe("Worker fiber lifecycle — interrupt propagation", () => {
             onLog: (e) => logs.push({ message: e.message }),
             onTaskComplete: () => {},
           },
-          { pollIntervalMs: 30, workerId: "fiber-test" },
+          { pollIntervalMs: 30, workerId: "fiber-test", deps: makeWorkerDeps() },
         ),
       ),
     )
@@ -393,7 +383,7 @@ describe("Worker fiber lifecycle — interrupt propagation", () => {
             onLog: () => {},
             onTaskComplete: () => {},
           },
-          { pollIntervalMs: 500, workerId: "idle-before-stop" },
+          { pollIntervalMs: 500, workerId: "idle-before-stop", deps: makeWorkerDeps() },
         ),
       ),
     )
@@ -424,7 +414,7 @@ describe("Worker fiber lifecycle — interrupt propagation", () => {
             onLog: () => {},
             onTaskComplete: () => {},
           },
-          { pollIntervalMs: 30, workerId: "no-poll-after-stop" },
+          { pollIntervalMs: 30, workerId: "no-poll-after-stop", deps: makeWorkerDeps() },
         ),
       ),
     )

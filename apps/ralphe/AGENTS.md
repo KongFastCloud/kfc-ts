@@ -23,6 +23,10 @@ Default to using Bun instead of Node.js.
 
 Use `bun test` to run tests.
 
+- Do not use global module mocks such as `mock.module(...)` for new tests or refactors. They share process-wide state and have caused CI-only flake in the watch/worker suites.
+- Prefer local fakes, in-memory harnesses, or explicit dependency seams at the test boundary so each test owns its own state.
+- When a test needs to isolate external systems like Beads, git, or `runTask`, keep the real orchestration under test and replace only the boundary with a local deterministic fake.
+
 ```ts#index.test.ts
 import { test, expect } from "bun:test";
 

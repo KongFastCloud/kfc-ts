@@ -57,6 +57,17 @@ export interface TuiWorkerOptions {
   readonly workerId?: string
   /** Working directory. Defaults to process.cwd(). */
   readonly workDir?: string
+  /** Test-only dependency overrides for deterministic worker behavior. */
+  readonly deps?: Partial<TuiWorkerDeps>
+}
+
+export interface TuiWorkerDeps {
+  readonly loadConfig: typeof loadConfig
+  readonly queryQueued: typeof queryQueued
+  readonly claimTask: typeof claimTask
+  readonly recoverStaleTasks: typeof recoverStaleTasks
+  readonly isWorktreeDirty: typeof isWorktreeDirty
+  readonly processClaimedTask: typeof processClaimedTask
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +93,15 @@ export const tuiWorkerEffect = (
   const pollIntervalMs = opts?.pollIntervalMs ?? 10_000
   const workerId = opts?.workerId ?? `ralphe-${os.hostname()}`
   const workDir = opts?.workDir ?? process.cwd()
+  const deps: TuiWorkerDeps = {
+    loadConfig,
+    queryQueued,
+    claimTask,
+    recoverStaleTasks,
+    isWorktreeDirty,
+    processClaimedTask,
+    ...opts?.deps,
+  }
 
   const log = (message: string, taskId?: string) => {
     callbacks.onLog({ timestamp: new Date(), message, taskId })
@@ -99,7 +119,7 @@ export const tuiWorkerEffect = (
     // -----------------------------------------------------------------------
     yield* Effect.catchAll(
       Effect.gen(function* () {
-        const recovered = yield* recoverStaleTasks(workerId)
+        const recovered = yield* deps.recoverStaleTasks(workerId)
         if (recovered > 0) {
           log(`Recovered ${recovered} stale task(s) from previous run`)
           callbacks.onTaskComplete()
@@ -116,7 +136,7 @@ export const tuiWorkerEffect = (
     // -----------------------------------------------------------------------
     yield* Effect.catchAll(
       Effect.gen(function* () {
-        const dirty = yield* isWorktreeDirty()
+        const dirty = yield* deps.isWorktreeDirty()
         if (dirty) {
           log("Worktree has uncommitted changes — pausing automatic pickup.")
           yield* Effect.iterate(true as boolean, {
@@ -124,7 +144,7 @@ export const tuiWorkerEffect = (
             body: () =>
               Effect.gen(function* () {
                 yield* Effect.sleep(pollIntervalMs)
-                return yield* isWorktreeDirty()
+                return yield* deps.isWorktreeDirty()
               }),
           })
           log("Worktree is clean — resuming automatic pickup.")
@@ -144,10 +164,10 @@ export const tuiWorkerEffect = (
     // -----------------------------------------------------------------------
     yield* Effect.forever(
       Effect.gen(function* () {
-        const config = loadConfig(workDir)
+        const config = deps.loadConfig(workDir)
 
         // Poll for queued tasks (open + ready + not blocked)
-        const ready = yield* queryQueued(workDir)
+        const ready = yield* deps.queryQueued(workDir)
 
         if (ready.length === 0) {
           yield* Effect.sleep(pollIntervalMs)
@@ -158,7 +178,7 @@ export const tuiWorkerEffect = (
         log(`Found ready task: ${issue.id} — ${issue.title}`, issue.id)
 
         // Claim atomically — use Either to handle claim failures inline
-        const claimResult = yield* Effect.either(claimTask(issue.id))
+        const claimResult = yield* Effect.either(deps.claimTask(issue.id))
         if (claimResult._tag === "Left") {
           const e = claimResult.left
           log(
@@ -179,7 +199,7 @@ export const tuiWorkerEffect = (
         // Delegate to the shared task lifecycle workflow
         log(`Executing task ${issue.id}...`, issue.id)
         const execResult = yield* Effect.either(
-          processClaimedTask(issue, config, workerId),
+          deps.processClaimedTask(issue, config, workerId),
         )
 
         if (execResult._tag === "Left") {

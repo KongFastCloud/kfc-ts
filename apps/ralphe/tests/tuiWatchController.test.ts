@@ -1,9 +1,19 @@
-import { describe, test, expect, beforeAll, afterAll, mock } from "bun:test"
+import { describe, test, expect, beforeEach } from "bun:test"
 import { Effect, Layer, Logger } from "effect"
-import type { TuiWatchController, TuiWatchControllerOptions } from "../src/tuiWatchController.js"
+import type { RalpheConfig } from "../src/config.js"
+import {
+  createTuiWatchController,
+  type TuiWatchController,
+  type TuiWatchControllerDeps,
+  type TuiWatchControllerOptions,
+} from "../src/tuiWatchController.js"
+import {
+  startTuiWorker as realStartTuiWorker,
+  type TuiWorkerDeps,
+} from "../src/tuiWorker.js"
 
 // ---------------------------------------------------------------------------
-// Module-level mocks — must be set up before importing the controller
+// Local test harness state
 // ---------------------------------------------------------------------------
 
 const mockTasks = [
@@ -12,65 +22,16 @@ const mockTasks = [
 ]
 
 let markReadyCalls: Array<{ id: string; labels: string[] }> = []
+const baseConfig: RalpheConfig = {
+  engine: "claude",
+  checks: [],
+  report: "none",
+  maxAttempts: 1,
+  git: { mode: "none" },
+}
 
-let createTuiWatchController: typeof import("../src/tuiWatchController.js").createTuiWatchController
-
-beforeAll(async () => {
-  // Import real modules first so the spread preserves all exports.
-  // This prevents SyntaxError ("Export named … not found") when Bun's
-  // module mock leaks into other test files sharing the same CI process.
-  const realAdapter = await import(
-    "../src/beadsAdapter.js?real-tuiWatchController-adapter" as string,
-  ) as typeof import("../src/beadsAdapter.js")
-  const realBeads = await import(
-    "../src/beads.js?real-tuiWatchController-beads" as string,
-  ) as typeof import("../src/beads.js")
-  const realGit = await import(
-    "../src/git.js?real-tuiWatchController-git" as string,
-  ) as typeof import("../src/git.js")
-
-  // Mock beads adapter — spread real module to preserve exports like
-  // parseBdTaskList and queryAllTasks that other test files may import.
-  mock.module("../src/beadsAdapter.js", () => ({
-    ...realAdapter,
-    queryAllTasks: () => Effect.succeed(mockTasks),
-    ensureBeadsDatabase: () => Effect.succeed("ok"),
-    queryQueued: () => Effect.succeed([]),
-  }))
-
-  // Mock beads operations — spread real module to preserve all exports.
-  mock.module("../src/beads.js", () => ({
-    ...realBeads,
-    markTaskReady: (id: string, labels: string[]) => {
-      markReadyCalls.push({ id, labels })
-      return Effect.succeed(undefined)
-    },
-    recoverStaleTasks: () => Effect.succeed(0),
-    claimTask: () => Effect.succeed(false),
-    closeTaskSuccess: () => Effect.succeed(undefined),
-    closeTaskFailure: () => Effect.succeed(undefined),
-    markTaskExhaustedFailure: () => Effect.succeed(undefined),
-    writeMetadata: () => Effect.succeed(undefined),
-    readMetadata: () => Effect.succeed(undefined),
-    buildPromptFromIssue: (issue: { title: string }) => issue.title,
-    addComment: () => Effect.succeed(undefined),
-  }))
-
-  // Mock git
-  mock.module("../src/git.js", () => ({
-    ...realGit,
-    isWorktreeDirty: () => Effect.succeed(false),
-  }))
-
-  const mod = await import(
-    // @ts-expect-error Bun test isolation import suffix
-    "../src/tuiWatchController.js?tuiWatchController"
-  ) as typeof import("../src/tuiWatchController.js")
-  createTuiWatchController = mod.createTuiWatchController
-})
-
-afterAll(() => {
-  mock.restore()
+beforeEach(() => {
+  markReadyCalls = []
 })
 
 // ---------------------------------------------------------------------------
@@ -83,11 +44,44 @@ const TestLayer: Layer.Layer<never> = Logger.replace(
   Logger.make(() => {}),
 )
 
+function makeWorkerDeps(): TuiWorkerDeps {
+  return {
+    loadConfig: () => baseConfig,
+    queryQueued: () => Effect.succeed([]),
+    claimTask: () => Effect.succeed(false),
+    recoverStaleTasks: () => Effect.succeed(0),
+    isWorktreeDirty: () => Effect.succeed(false),
+    processClaimedTask: () =>
+      Effect.succeed({
+        success: true,
+        taskId: "noop",
+        engine: "claude" as const,
+      }),
+  }
+}
+
+function makeControllerDeps(): TuiWatchControllerDeps {
+  return {
+    queryAllTasks: () => Effect.succeed(mockTasks),
+    markTaskReady: (id: string, labels: string[]) => {
+      markReadyCalls.push({ id, labels })
+      return Effect.succeed(undefined)
+    },
+    startTuiWorker: (callbacks, opts) =>
+      realStartTuiWorker(callbacks, {
+        ...opts,
+        deps: makeWorkerDeps(),
+      }),
+    loadConfig: () => baseConfig,
+  }
+}
+
 function makeController(overrides?: Partial<TuiWatchControllerOptions>): TuiWatchController {
   return createTuiWatchController(TestLayer, {
     refreshIntervalMs: 50,
     workDir: process.cwd(),
     workerId: "test-controller",
+    deps: makeControllerDeps(),
     ...overrides,
   })
 }
