@@ -23,7 +23,7 @@
 import os from "node:os"
 import { Effect, Fiber, ManagedRuntime, Queue, type Layer } from "effect"
 import type { WatchTask } from "./beadsAdapter.js"
-import { queryAllTasks } from "./beadsAdapter.js"
+import { queryAllTasks, queryTaskDetail } from "./beadsAdapter.js"
 import { markTaskReady } from "./beads.js"
 import type { WorkerStatus, TuiWorkerDeps } from "./tuiWorker.js"
 import { tuiWorkerEffect } from "./tuiWorker.js"
@@ -50,6 +50,14 @@ export interface TuiWatchControllerState {
   readonly lastRefreshed: Date | null
   /** IDs of tasks currently queued or in-flight for mark-ready. */
   readonly markReadyPendingIds: ReadonlySet<string>
+  /** Full detail for the currently viewed task (from bd show). */
+  readonly detailTask: WatchTask | undefined
+  /** Whether a detail fetch is in-flight. */
+  readonly detailLoading: boolean
+  /** Error message from the last detail fetch failure. */
+  readonly detailError: string | undefined
+  /** The task ID currently being viewed in detail. */
+  readonly detailTaskId: string | undefined
 }
 
 export interface TuiWatchControllerOptions {
@@ -65,6 +73,7 @@ export interface TuiWatchControllerOptions {
 
 export interface TuiWatchControllerDeps {
   readonly queryAllTasks: typeof queryAllTasks
+  readonly queryTaskDetail: typeof queryTaskDetail
   readonly markTaskReady: typeof markTaskReady
   readonly tuiWorkerEffect: typeof tuiWorkerEffect
   readonly loadConfig: typeof loadConfig
@@ -98,6 +107,16 @@ export interface TuiWatchController {
   enqueueMarkReady(id: string, labels: string[]): void
   /** Mark a task as ready (direct, non-queued). */
   markReady(id: string, labels: string[]): Promise<void>
+  /**
+   * Enter detail view for the given task ID. Triggers a full detail fetch
+   * (bd show) and stores the result. Immediately sets detailTaskId so the
+   * UI can reconcile from list data while the fetch is in-flight.
+   */
+  fetchTaskDetail(taskId: string): Promise<void>
+  /**
+   * Exit detail view. Clears all detail-specific state.
+   */
+  exitDetailView(): void
   /**
    * Run an arbitrary Effect through the controller's scoped runtime.
    * Intended for one-off operations that must share the TUI logger and
@@ -152,6 +171,7 @@ export function createTuiWatchController(
   const workerId = opts?.workerId ?? `ralphe-${os.hostname()}`
   const deps: TuiWatchControllerDeps = {
     queryAllTasks,
+    queryTaskDetail,
     markTaskReady,
     tuiWorkerEffect,
     loadConfig,
@@ -172,6 +192,12 @@ export function createTuiWatchController(
   let lastRefreshed: Date | null = null
   let workerFiber: Fiber.RuntimeFiber<void, never> | null = null
   let refreshInFlight = false
+
+  // -- Detail-view state ---------------------------------------------------
+  let detailTask: WatchTask | undefined
+  let detailLoading = false
+  let detailError: string | undefined
+  let detailTaskId: string | undefined
 
   // -- Fiber handles -------------------------------------------------------
   let refreshFiber: Fiber.RuntimeFiber<void, never> | null = null
@@ -208,7 +234,10 @@ export function createTuiWatchController(
 
   const controller: TuiWatchController = {
     getState(): TuiWatchControllerState {
-      return { workerStatus, latestTasks, refreshError, lastRefreshed, markReadyPendingIds }
+      return {
+        workerStatus, latestTasks, refreshError, lastRefreshed, markReadyPendingIds,
+        detailTask, detailLoading, detailError, detailTaskId,
+      }
     },
 
     async initialLoad(): Promise<void> {
@@ -232,6 +261,16 @@ export function createTuiWatchController(
         refreshError = undefined
         lastRefreshed = new Date()
         notifyListeners()
+
+        // Re-resolve detail for the currently viewed task so the detail
+        // pane stays current across refreshes without losing context.
+        if (detailTaskId) {
+          void controller.fetchTaskDetail(detailTaskId).catch(() => {
+            // Detail re-fetch failure is non-fatal; the user sees the
+            // error in detailError state.
+          })
+        }
+
         return tasks
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
@@ -256,6 +295,36 @@ export function createTuiWatchController(
 
     async markReady(id: string, labels: string[]): Promise<void> {
       await run(deps.markTaskReady(id, labels))
+    },
+
+    async fetchTaskDetail(taskId: string): Promise<void> {
+      detailTaskId = taskId
+      detailLoading = true
+      detailError = undefined
+      notifyListeners()
+      try {
+        const task = await run(deps.queryTaskDetail(taskId, workDir))
+        // Guard: only apply result if we're still viewing this task
+        if (detailTaskId !== taskId) return
+        detailTask = task
+        detailLoading = false
+        detailError = task ? undefined : `Task ${taskId} not found`
+        notifyListeners()
+      } catch (e) {
+        if (detailTaskId !== taskId) return
+        const msg = e instanceof Error ? e.message : String(e)
+        detailLoading = false
+        detailError = `Detail fetch failed: ${msg}`
+        notifyListeners()
+      }
+    },
+
+    exitDetailView(): void {
+      detailTaskId = undefined
+      detailTask = undefined
+      detailLoading = false
+      detailError = undefined
+      notifyListeners()
     },
 
     runEffect<A, E>(effect: Effect.Effect<A, E>): Promise<A> {

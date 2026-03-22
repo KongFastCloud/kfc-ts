@@ -82,6 +82,7 @@ function makeWorkerDeps(): TuiWorkerDeps {
 function makeControllerDeps(): TuiWatchControllerDeps {
   return {
     queryAllTasks: () => Effect.succeed(mockTasks),
+    queryTaskDetail: () => Effect.succeed(undefined),
     markTaskReady: (id: string, labels: string[]) => {
       markReadyCalls.push({ id, labels })
       return Effect.succeed(undefined)

@@ -69,11 +69,21 @@ function makeWorkerDeps(): TuiWorkerDeps {
   }
 }
 
+const mockDetailTask = {
+  id: "T-1",
+  title: "Task One",
+  status: "queued" as const,
+  comments: [
+    { id: "c1", author: "bot", text: "Attempted with claude", createdAt: "2026-01-01T00:00:00Z" },
+  ],
+}
+
 function makeControllerDeps(
   overrides?: Partial<TuiWatchControllerDeps>,
 ): TuiWatchControllerDeps {
   return {
     queryAllTasks: () => Effect.succeed(mockTasks),
+    queryTaskDetail: (id: string) => Effect.succeed(id === "T-1" ? mockDetailTask : undefined),
     markTaskReady: (id: string, labels: string[]) => {
       markReadyCalls.push({ id, labels })
       return Effect.succeed(undefined)
@@ -358,6 +368,185 @@ describe("TuiWatchController — mark-ready queue wiring", () => {
 
     // Only one call — not duplicated by a second consumer
     expect(markReadyCalls).toHaveLength(1)
+
+    await ctrl.stop()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Detail view — full task detail fetch
+// ---------------------------------------------------------------------------
+
+describe("TuiWatchController — detail view", () => {
+  test("initial detail state is empty", () => {
+    const ctrl = makeController()
+    const state = ctrl.getState()
+
+    expect(state.detailTask).toBeUndefined()
+    expect(state.detailLoading).toBe(false)
+    expect(state.detailError).toBeUndefined()
+    expect(state.detailTaskId).toBeUndefined()
+
+    void ctrl.stop()
+  })
+
+  test("fetchTaskDetail loads full detail including comments", async () => {
+    const ctrl = makeController()
+
+    await ctrl.fetchTaskDetail("T-1")
+
+    const state = ctrl.getState()
+    expect(state.detailTaskId).toBe("T-1")
+    expect(state.detailLoading).toBe(false)
+    expect(state.detailError).toBeUndefined()
+    expect(state.detailTask).toBeDefined()
+    expect(state.detailTask!.id).toBe("T-1")
+    expect(state.detailTask!.comments).toHaveLength(1)
+    expect(state.detailTask!.comments![0]!.text).toBe("Attempted with claude")
+
+    await ctrl.stop()
+  })
+
+  test("fetchTaskDetail sets loading state during fetch", async () => {
+    const states: boolean[] = []
+    const ctrl = makeController({
+      deps: {
+        queryTaskDetail: (id: string) => {
+          // Capture the loading state during the fetch
+          states.push(ctrl.getState().detailLoading)
+          return Effect.succeed(mockDetailTask)
+        },
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+
+    await ctrl.fetchTaskDetail("T-1")
+
+    // Loading should have been true during the fetch
+    expect(states).toContain(true)
+    // After fetch completes, loading should be false
+    expect(ctrl.getState().detailLoading).toBe(false)
+
+    await ctrl.stop()
+  })
+
+  test("fetchTaskDetail sets error for unknown task", async () => {
+    const ctrl = makeController()
+
+    await ctrl.fetchTaskDetail("NONEXISTENT")
+
+    const state = ctrl.getState()
+    expect(state.detailLoading).toBe(false)
+    expect(state.detailError).toContain("not found")
+    expect(state.detailTask).toBeUndefined()
+
+    await ctrl.stop()
+  })
+
+  test("fetchTaskDetail sets error on fetch failure", async () => {
+    const ctrl = makeController({
+      deps: {
+        queryTaskDetail: () => Effect.fail(new Error("network error")) as Effect.Effect<never, unknown>,
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+
+    await ctrl.fetchTaskDetail("T-1")
+
+    const state = ctrl.getState()
+    expect(state.detailLoading).toBe(false)
+    expect(state.detailError).toContain("Detail fetch failed")
+    expect(state.detailError).toContain("network error")
+
+    await ctrl.stop()
+  })
+
+  test("exitDetailView clears all detail state", async () => {
+    const ctrl = makeController()
+
+    await ctrl.fetchTaskDetail("T-1")
+    expect(ctrl.getState().detailTask).toBeDefined()
+
+    ctrl.exitDetailView()
+
+    const state = ctrl.getState()
+    expect(state.detailTask).toBeUndefined()
+    expect(state.detailLoading).toBe(false)
+    expect(state.detailError).toBeUndefined()
+    expect(state.detailTaskId).toBeUndefined()
+
+    await ctrl.stop()
+  })
+
+  test("refresh re-fetches detail when detail view is open", async () => {
+    let detailCallCount = 0
+    const ctrl = makeController({
+      deps: {
+        queryTaskDetail: (id: string) => {
+          detailCallCount++
+          return Effect.succeed(id === "T-1" ? mockDetailTask : undefined)
+        },
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+
+    // Enter detail view
+    await ctrl.fetchTaskDetail("T-1")
+    expect(detailCallCount).toBe(1)
+
+    // Trigger a refresh — should also re-fetch detail
+    await ctrl.refresh()
+    await waitFor(() => detailCallCount >= 2)
+
+    expect(detailCallCount).toBeGreaterThanOrEqual(2)
+
+    await ctrl.stop()
+  })
+
+  test("refresh does not fetch detail when no detail view is open", async () => {
+    let detailCallCount = 0
+    const ctrl = makeController({
+      deps: {
+        queryTaskDetail: () => {
+          detailCallCount++
+          return Effect.succeed(mockDetailTask)
+        },
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+
+    await ctrl.refresh()
+    await flush()
+
+    expect(detailCallCount).toBe(0)
+
+    await ctrl.stop()
+  })
+
+  test("stale detail fetch result is discarded after navigating away", async () => {
+    let resolveDetail: ((task: typeof mockDetailTask | undefined) => void) | null = null
+    const ctrl = makeController({
+      deps: {
+        queryTaskDetail: () =>
+          Effect.promise(
+            () => new Promise<typeof mockDetailTask | undefined>((r) => { resolveDetail = r }),
+          ),
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+
+    // Start detail fetch (don't await — it's intentionally deferred)
+    const fetchPromise = ctrl.fetchTaskDetail("T-1")
+
+    // Wait for the deferred callback to be set
+    await waitFor(() => resolveDetail !== null)
+
+    // Exit detail view before fetch completes
+    ctrl.exitDetailView()
+
+    // Now resolve the deferred detail fetch
+    resolveDetail!(mockDetailTask)
+    await fetchPromise
+
+    // The stale result should have been discarded — detailTaskId was cleared
+    const state = ctrl.getState()
+    expect(state.detailTask).toBeUndefined()
+    expect(state.detailTaskId).toBeUndefined()
 
     await ctrl.stop()
   })

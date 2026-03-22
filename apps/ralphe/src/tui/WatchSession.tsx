@@ -71,6 +71,18 @@ export function WatchSession({ controller, workDir }: WatchSessionProps): ReactN
     [controller],
   )
 
+  const onFetchTaskDetail = useCallback(
+    (taskId: string) => {
+      void controller.fetchTaskDetail(taskId)
+    },
+    [controller],
+  )
+
+  const onExitDetailView = useCallback(
+    () => controller.exitDetailView(),
+    [controller],
+  )
+
   // Load config each render — matches previous behavior in the rerender() helper.
   const config = loadConfig(workDir)
 
@@ -84,6 +96,11 @@ export function WatchSession({ controller, workDir }: WatchSessionProps): ReactN
       markReadyPendingIds={controllerState.markReadyPendingIds}
       workerStatus={controllerState.workerStatus}
       config={config}
+      detailTask={controllerState.detailTask}
+      detailLoading={controllerState.detailLoading}
+      detailError={controllerState.detailError}
+      onFetchTaskDetail={onFetchTaskDetail}
+      onExitDetailView={onExitDetailView}
     />
   )
 }

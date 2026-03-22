@@ -91,6 +91,16 @@ export interface WatchAppProps {
    * Provided by the controller's queue state for loading indicators.
    */
   markReadyPendingIds?: ReadonlySet<string> | undefined
+  /** Full detail task from the detail query (bd show). */
+  detailTask?: WatchTask | undefined
+  /** Whether a detail fetch is in-flight. */
+  detailLoading?: boolean | undefined
+  /** Error message from the last detail fetch failure. */
+  detailError?: string | undefined
+  /** Callback to fetch full detail for a task when entering detail view. */
+  onFetchTaskDetail?: ((taskId: string) => void) | undefined
+  /** Callback to clear detail state when exiting detail view. */
+  onExitDetailView?: (() => void) | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -224,7 +234,7 @@ function truncate(text: string, max: number): string {
   return text.slice(0, max - 1) + "…"
 }
 
-function DetailPane({ task }: { task: WatchTask | null }): ReactNode {
+function DetailPane({ task, loading, error: detailFetchError }: { task: WatchTask | null; loading?: boolean; error?: string }): ReactNode {
   if (!task) {
     return (
       <box
@@ -270,6 +280,20 @@ function DetailPane({ task }: { task: WatchTask | null }): ReactNode {
             <span fg={colors.fg.primary}> {task.title}</span>
           </text>
         </box>
+
+        {/* Detail loading indicator */}
+        {loading && (
+          <box style={{ marginBottom: 1 }}>
+            <text fg={colors.fg.muted}>Loading full detail…</text>
+          </box>
+        )}
+
+        {/* Detail fetch error */}
+        {detailFetchError && (
+          <box style={{ marginBottom: 1 }}>
+            <text fg={colors.status.error}>⚠ {detailFetchError}</text>
+          </box>
+        )}
 
         {/* Metadata block */}
         <box
@@ -562,6 +586,11 @@ export function WatchApp({
   config,
   onEnqueueMarkReady,
   markReadyPendingIds: markReadyPendingIdsProp,
+  detailTask: detailTaskProp,
+  detailLoading: detailLoadingProp,
+  detailError: detailErrorProp,
+  onFetchTaskDetail,
+  onExitDetailView,
 }: WatchAppProps): ReactNode {
   const { width } = useTerminalDimensions()
 
@@ -621,6 +650,7 @@ export function WatchApp({
         switch (key.name) {
           case "escape":
           case "backspace":
+            onExitDetailView?.()
             setFocusState(returnFromDetail())
             return
           default:
@@ -656,9 +686,17 @@ export function WatchApp({
           break
 
         case "return":
-        case "enter":
+        case "enter": {
+          const taskToDetail =
+            focusedTable === "active"
+              ? activeTasks[activeSelectedIndex]
+              : doneTasks[doneSelectedIndex]
+          if (taskToDetail && onFetchTaskDetail) {
+            onFetchTaskDetail(taskToDetail.id)
+          }
           setFocusState((prev) => enterDetail(prev, activeTasks.length, doneTasks.length))
           break
+        }
 
         case "r":
           doRefresh()
@@ -680,7 +718,7 @@ export function WatchApp({
           break
       }
     },
-    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh, selectedTask, activeVisibleRows, doneVisibleRows, markingReadyIds, onEnqueueMarkReady],
+    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh, selectedTask, activeVisibleRows, doneVisibleRows, markingReadyIds, onEnqueueMarkReady, onFetchTaskDetail, onExitDetailView, focusedTable, activeSelectedIndex, doneSelectedIndex],
   )
 
   useKeyboard(handleKeyboard)
@@ -709,7 +747,11 @@ export function WatchApp({
         }}
       >
         {viewMode === "detail" ? (
-          <DetailPane task={selectedTask} />
+          <DetailPane
+            task={detailTaskProp ?? selectedTask}
+            loading={detailLoadingProp}
+            error={detailErrorProp}
+          />
         ) : (
           <DashboardView
             tasks={tasks}

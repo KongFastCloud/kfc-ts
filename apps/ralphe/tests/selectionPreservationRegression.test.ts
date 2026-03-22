@@ -84,6 +84,7 @@ function makeControllerDeps(
         { id: "T-1", title: "Task One", status: "queued" as const },
         { id: "T-2", title: "Task Two", status: "done" as const },
       ]),
+    queryTaskDetail: () => Effect.succeed(undefined),
     markTaskReady: () => Effect.succeed(undefined),
     tuiWorkerEffect,
     workerDeps: makeWorkerDeps(),
