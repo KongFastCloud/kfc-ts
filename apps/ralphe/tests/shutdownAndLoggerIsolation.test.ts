@@ -177,7 +177,29 @@ describe("Logger isolation — TUI runtime suppresses stderr", () => {
   })
 
   test("worker activity through controller runtime does not leak to stderr", async () => {
-    const ctrl = makeController()
+    // Uses a worker dep that emits a real Effect.logInfo on each poll,
+    // rather than relying on silent mocks that never log.
+    let pollCount = 0
+    const depsWithLogging: TuiWorkerDeps = {
+      ...makeWorkerDeps(),
+      queryQueued: () =>
+        Effect.gen(function* () {
+          pollCount++
+          yield* Effect.logInfo("worker-activity-isolation-check")
+          return []
+        }),
+    }
+
+    const ctrl = createTuiWatchController(TestLayer, {
+      refreshIntervalMs: 50,
+      workDir: process.cwd(),
+      workerId: "test-worker-activity",
+      deps: {
+        ...makeControllerDeps(),
+        workerDeps: depsWithLogging,
+      },
+    })
+
     const originalConsoleError = console.error
     let stderrOutput = ""
     console.error = (...args: unknown[]) => {
@@ -186,9 +208,11 @@ describe("Logger isolation — TUI runtime suppresses stderr", () => {
 
     try {
       ctrl.startWorker()
-      // Let the worker poll once
-      await new Promise((r) => setTimeout(r, 150))
+      // Wait for the worker to poll at least once with real logging
+      await waitFor(() => pollCount >= 1)
+      await flush()
       expect(stderrOutput).toBe("")
+      expect(stderrOutput).not.toContain("worker-activity-isolation-check")
     } finally {
       console.error = originalConsoleError
       await ctrl.stop()
@@ -236,6 +260,192 @@ describe("Logger isolation — TUI runtime suppresses stderr", () => {
     } finally {
       console.error = originalConsoleError
       await ctrl.stop()
+    }
+  })
+
+  test("canary: Effect.log with stderr logger DOES reach console.error (positive control)", async () => {
+    // Positive control proving the stderr capture mechanism works. If this
+    // test passes, the other isolation tests are meaningful — the harness
+    // truly can detect leaked output. Without this canary, an always-empty
+    // stderrOutput would make all isolation tests vacuously true.
+    //
+    // Uses a stderr-writing logger (same kind the AppLoggerLayer composes)
+    // to simulate what happens when the worker runs on a runtime that
+    // includes stderr output — the exact failure mode the TUI-safe layer
+    // prevents.
+    const StderrLayer: Layer.Layer<never> = Logger.replace(
+      Logger.defaultLogger,
+      Logger.logfmtLogger.pipe(Logger.withConsoleError),
+    )
+    const stderrRuntime = ManagedRuntime.make(StderrLayer)
+
+    const originalConsoleError = console.error
+    let stderrOutput = ""
+    console.error = (...args: unknown[]) => {
+      stderrOutput += args.map(String).join(" ")
+    }
+
+    try {
+      await stderrRuntime.runPromise(Effect.logInfo("canary-stderr-leak"))
+      expect(stderrOutput).toContain("canary-stderr-leak")
+    } finally {
+      console.error = originalConsoleError
+      await stderrRuntime.dispose()
+    }
+  })
+
+  test("worker-path claim→execute lifecycle logging does not leak to stderr", async () => {
+    // Exercises the full worker hot-path: queryQueued returns a task,
+    // claimTask logs and succeeds, processClaimedTask logs during execution.
+    // All three deps emit real Effect.log calls — if any runs on the wrong
+    // runtime, the sentinel string reaches stderr.
+    let queryCalled = false
+    const depsWithLifecycleLogging: TuiWorkerDeps = {
+      ...makeWorkerDeps(),
+      queryQueued: () =>
+        Effect.gen(function* () {
+          if (!queryCalled) {
+            queryCalled = true
+            yield* Effect.logInfo("lifecycle-query-log")
+            return [{ id: "LC-1", title: "Lifecycle task", status: "queued" as const }]
+          }
+          return []
+        }),
+      claimTask: (id: string) =>
+        Effect.gen(function* () {
+          yield* Effect.logInfo(`lifecycle-claim-log-${id}`)
+          return true
+        }),
+      processClaimedTask: (issue, _config, _workerId) =>
+        Effect.gen(function* () {
+          yield* Effect.logInfo(`lifecycle-process-log-${issue.id}`)
+          return { success: true, taskId: issue.id, engine: "claude" as const }
+        }),
+    }
+
+    const ctrl = createTuiWatchController(TestLayer, {
+      refreshIntervalMs: 50,
+      workDir: process.cwd(),
+      workerId: "test-lifecycle-log-isolation",
+      deps: {
+        ...makeControllerDeps(),
+        workerDeps: depsWithLifecycleLogging,
+      },
+    })
+
+    const originalConsoleError = console.error
+    let stderrOutput = ""
+    console.error = (...args: unknown[]) => {
+      stderrOutput += args.map(String).join(" ")
+    }
+
+    try {
+      ctrl.startWorker()
+      // Wait long enough for the worker to poll, claim, and process the task
+      await new Promise((r) => setTimeout(r, 300))
+      expect(stderrOutput).toBe("")
+      expect(stderrOutput).not.toContain("lifecycle-query-log")
+      expect(stderrOutput).not.toContain("lifecycle-claim-log")
+      expect(stderrOutput).not.toContain("lifecycle-process-log")
+    } finally {
+      console.error = originalConsoleError
+      await ctrl.stop()
+    }
+  })
+
+  test("worker-path logging at all Effect log levels stays isolated", async () => {
+    // Verifies that logDebug, logInfo, logWarning, and logError from worker
+    // deps are all suppressed. A runtime leak could theoretically affect
+    // only certain log levels if the layer override were partial.
+    let pollCount = 0
+    const depsWithMultiLevelLogging: TuiWorkerDeps = {
+      ...makeWorkerDeps(),
+      queryQueued: () =>
+        Effect.gen(function* () {
+          pollCount++
+          if (pollCount <= 2) {
+            yield* Effect.logDebug("multi-level-debug")
+            yield* Effect.logInfo("multi-level-info")
+            yield* Effect.logWarning("multi-level-warning")
+            yield* Effect.logError("multi-level-error")
+          }
+          return []
+        }),
+    }
+
+    const ctrl = createTuiWatchController(TestLayer, {
+      refreshIntervalMs: 50,
+      workDir: process.cwd(),
+      workerId: "test-multi-level-isolation",
+      deps: {
+        ...makeControllerDeps(),
+        workerDeps: depsWithMultiLevelLogging,
+      },
+    })
+
+    const originalConsoleError = console.error
+    let stderrOutput = ""
+    console.error = (...args: unknown[]) => {
+      stderrOutput += args.map(String).join(" ")
+    }
+
+    try {
+      ctrl.startWorker()
+      await waitFor(() => pollCount >= 2)
+      await flush()
+      expect(stderrOutput).toBe("")
+      expect(stderrOutput).not.toContain("multi-level-debug")
+      expect(stderrOutput).not.toContain("multi-level-info")
+      expect(stderrOutput).not.toContain("multi-level-warning")
+      expect(stderrOutput).not.toContain("multi-level-error")
+    } finally {
+      console.error = originalConsoleError
+      await ctrl.stop()
+    }
+  })
+
+  test("worker shutdown after logging activity leaves stderr clean", async () => {
+    // Verifies that teardown logging (e.g., Effect.ensuring cleanup) does
+    // not leak to stderr when the controller stops a worker that has been
+    // actively logging through deps.
+    let polled = false
+    const depsWithLogging: TuiWorkerDeps = {
+      ...makeWorkerDeps(),
+      queryQueued: () =>
+        Effect.gen(function* () {
+          polled = true
+          yield* Effect.logInfo("shutdown-test-worker-log")
+          return []
+        }),
+    }
+
+    const ctrl = createTuiWatchController(TestLayer, {
+      refreshIntervalMs: 50,
+      workDir: process.cwd(),
+      workerId: "test-shutdown-log-isolation",
+      deps: {
+        ...makeControllerDeps(),
+        workerDeps: depsWithLogging,
+      },
+    })
+
+    const originalConsoleError = console.error
+    let stderrOutput = ""
+    console.error = (...args: unknown[]) => {
+      stderrOutput += args.map(String).join(" ")
+    }
+
+    try {
+      ctrl.startWorker()
+      await waitFor(() => polled)
+      // Now stop — shutdown path (fiber interruption, Effect.ensuring) should
+      // also stay on the TUI-safe runtime.
+      await ctrl.stop()
+      // Give any async cleanup a moment to settle
+      await flush()
+      expect(stderrOutput).toBe("")
+    } finally {
+      console.error = originalConsoleError
     }
   })
 
