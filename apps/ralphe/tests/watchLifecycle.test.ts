@@ -51,7 +51,17 @@ let previousMetadata: BeadsMetadata | undefined = undefined
 let startTuiWorker: typeof import("../src/tuiWorker.js").startTuiWorker
 
 beforeAll(async () => {
+  // Import real modules first so the spread preserves all exports.
+  // This prevents SyntaxError ("Export named … not found") when Bun's
+  // module mock leaks into other test files sharing the same CI process.
+  const realAdapter = await import("../src/beadsAdapter.js")
+  const realBeads = await import("../src/beads.js")
+  const realRunTask = await import("../src/runTask.js")
+  const realGit = await import("../src/git.js")
+  const realConfig = await import("../src/config.js")
+
   mock.module("../src/beadsAdapter.js", () => ({
+    ...realAdapter,
     queryQueued: () =>
       Effect.succeed((() => {
         calls.push({ op: "queryQueued" })
@@ -62,6 +72,7 @@ beforeAll(async () => {
   }))
 
   mock.module("../src/beads.js", () => ({
+    ...realBeads,
     markTaskReady: () => Effect.succeed(undefined),
 
     readMetadata: (id: string) => {
@@ -110,6 +121,7 @@ beforeAll(async () => {
   }))
 
   mock.module("../src/runTask.js", () => ({
+    ...realRunTask,
     runTask: (prompt: string, _config: unknown, _opts?: unknown) => {
       runTaskCalls.push({ prompt })
       if (taskExecutionDelay > 0) {
@@ -123,13 +135,13 @@ beforeAll(async () => {
 
   // Only mock isWorktreeDirty so the dirty-worktree guard doesn't block tests.
   // Preserve real git exports to avoid leaking stubs into git.test.ts.
-  const realGit = await import("../src/git.js")
   mock.module("../src/git.js", () => ({
     ...realGit,
     isWorktreeDirty: () => Effect.succeed(false),
   }))
 
   mock.module("../src/config.js", () => ({
+    ...realConfig,
     loadConfig: () => ({
       engine: "claude" as const,
       checks: [],

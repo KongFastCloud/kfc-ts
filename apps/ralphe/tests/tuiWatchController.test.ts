@@ -16,17 +16,25 @@ let markReadyCalls: Array<{ id: string; labels: string[] }> = []
 let createTuiWatchController: typeof import("../src/tuiWatchController.js").createTuiWatchController
 
 beforeAll(async () => {
-  // Mock beads adapter
+  // Import real modules first so the spread preserves all exports.
+  // This prevents SyntaxError ("Export named … not found") when Bun's
+  // module mock leaks into other test files sharing the same CI process.
+  const realAdapter = await import("../src/beadsAdapter.js")
+  const realBeads = await import("../src/beads.js")
+  const realGit = await import("../src/git.js")
+
+  // Mock beads adapter — spread real module to preserve exports like
+  // parseBdTaskList and queryAllTasks that other test files may import.
   mock.module("../src/beadsAdapter.js", () => ({
+    ...realAdapter,
     queryAllTasks: () => Effect.succeed(mockTasks),
     ensureBeadsDatabase: () => Effect.succeed("ok"),
     queryQueued: () => Effect.succeed([]),
   }))
 
-  // Mock beads operations — list all exports explicitly instead of spreading
-  // the real module namespace. Spreading ES module namespace objects can fail
-  // on some Bun/Linux environments due to mock.module timing vs ESM linking.
+  // Mock beads operations — spread real module to preserve all exports.
   mock.module("../src/beads.js", () => ({
+    ...realBeads,
     markTaskReady: (id: string, labels: string[]) => {
       markReadyCalls.push({ id, labels })
       return Effect.succeed(undefined)
@@ -43,7 +51,6 @@ beforeAll(async () => {
   }))
 
   // Mock git
-  const realGit = await import("../src/git.js")
   mock.module("../src/git.js", () => ({
     ...realGit,
     isWorktreeDirty: () => Effect.succeed(false),

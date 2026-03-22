@@ -52,15 +52,24 @@ let processError: Error | null = null
 let tuiWorkerEffect: typeof import("../src/tuiWorker.js").tuiWorkerEffect
 
 beforeAll(async () => {
-  // Mock git — only isWorktreeDirty matters; keep worktree clean.
+  // Import real modules first so the spread preserves all exports.
+  // This prevents SyntaxError ("Export named … not found") when Bun's
+  // module mock leaks into other test files sharing the same CI process.
   const realGit = await import("../src/git.js")
+  const realAdapter = await import("../src/beadsAdapter.js")
+  const realBeads = await import("../src/beads.js")
+  const realWorkflow = await import("../src/watchWorkflow.js")
+  const realConfig = await import("../src/config.js")
+
+  // Mock git — only isWorktreeDirty matters; keep worktree clean.
   mock.module("../src/git.js", () => ({
     ...realGit,
     isWorktreeDirty: () => Effect.succeed(false),
   }))
 
-  // Mock beadsAdapter — explicit control over queryQueued
+  // Mock beadsAdapter — explicit control over queryQueued, preserve other exports.
   mock.module("../src/beadsAdapter.js", () => ({
+    ...realAdapter,
     queryQueued: () => {
       if (queryQueuedError) return Effect.fail(queryQueuedError)
       const result = [...readyQueue]
@@ -69,8 +78,9 @@ beforeAll(async () => {
     },
   }))
 
-  // Mock beads — deterministic, no-op implementations
+  // Mock beads — deterministic, no-op implementations; preserve other exports.
   mock.module("../src/beads.js", () => ({
+    ...realBeads,
     markTaskReady: () => Effect.succeed(undefined),
     recoverStaleTasks: () => Effect.succeed(0),
     claimTask: () => {
@@ -86,16 +96,18 @@ beforeAll(async () => {
     addComment: () => Effect.succeed(undefined),
   }))
 
-  // Mock watchWorkflow — configurable processClaimedTask result
+  // Mock watchWorkflow — configurable processClaimedTask result; preserve other exports.
   mock.module("../src/watchWorkflow.js", () => ({
+    ...realWorkflow,
     processClaimedTask: () => {
       if (processError) return Effect.fail(processError)
       return Effect.succeed(processResult)
     },
   }))
 
-  // Mock config — no filesystem access; return deterministic defaults
+  // Mock config — no filesystem access; return deterministic defaults; preserve other exports.
   mock.module("../src/config.js", () => ({
+    ...realConfig,
     loadConfig: () => ({
       engine: "claude" as const,
       checks: [],
