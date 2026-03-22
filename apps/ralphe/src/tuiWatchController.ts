@@ -4,10 +4,11 @@
  * single ManagedRuntime configured with TuiLoggerLayer, ensuring consistent
  * logging and eliminating scattered bare Effect.runPromise calls.
  *
- * The worker runs as Effect-managed orchestration (tuiWorkerEffect) via
- * startTuiWorker, which internally forks the Effect-based worker as a fiber.
- * The mark-ready consumer and periodic refresh run as daemon fibers inside
- * the managed runtime. Shutdown is driven by fiber interruption, worker stop,
+ * The worker runs as a daemon fiber forked directly on the controller's
+ * ManagedRuntime via tuiWorkerEffect, ensuring it inherits the TUI-safe
+ * logger layer with no default-runtime escape hatch.
+ * The mark-ready consumer and periodic refresh also run as daemon fibers
+ * inside the managed runtime. Shutdown is driven by fiber interruption
  * and queue shutdown.
  *
  * Mark-ready operations are serialized through an Effect-native Queue owned
@@ -24,8 +25,8 @@ import { Effect, Fiber, ManagedRuntime, Queue, type Layer } from "effect"
 import type { WatchTask } from "./beadsAdapter.js"
 import { queryAllTasks } from "./beadsAdapter.js"
 import { markTaskReady } from "./beads.js"
-import type { WorkerStatus } from "./tuiWorker.js"
-import { startTuiWorker } from "./tuiWorker.js"
+import type { WorkerStatus, TuiWorkerDeps } from "./tuiWorker.js"
+import { tuiWorkerEffect } from "./tuiWorker.js"
 import { loadConfig } from "./config.js"
 
 // ---------------------------------------------------------------------------
@@ -65,8 +66,10 @@ export interface TuiWatchControllerOptions {
 export interface TuiWatchControllerDeps {
   readonly queryAllTasks: typeof queryAllTasks
   readonly markTaskReady: typeof markTaskReady
-  readonly startTuiWorker: typeof startTuiWorker
+  readonly tuiWorkerEffect: typeof tuiWorkerEffect
   readonly loadConfig: typeof loadConfig
+  /** Test-only dependency overrides passed through to the worker. */
+  readonly workerDeps?: Partial<TuiWorkerDeps>
 }
 
 /**
@@ -148,7 +151,7 @@ export function createTuiWatchController(
   const deps: TuiWatchControllerDeps = {
     queryAllTasks,
     markTaskReady,
-    startTuiWorker,
+    tuiWorkerEffect,
     loadConfig,
     ...opts?.deps,
   }
@@ -165,7 +168,7 @@ export function createTuiWatchController(
   let latestTasks: WatchTask[] = []
   let refreshError: string | undefined
   let lastRefreshed: Date | null = null
-  let workerHandle: { stop: () => void } | null = null
+  let workerFiber: Fiber.RuntimeFiber<void, never> | null = null
   let refreshInFlight = false
 
   // -- Fiber handles -------------------------------------------------------
@@ -258,12 +261,12 @@ export function createTuiWatchController(
     },
 
     startWorker(): void {
-      if (workerHandle !== null) return
+      if (workerFiber !== null) return
 
-      // Start the Effect-based worker via startTuiWorker, which internally
-      // forks tuiWorkerEffect as a fiber. The worker's Effects are routed
-      // through the controller's managed runtime via runEffect.
-      workerHandle = deps.startTuiWorker(
+      // Fork the worker Effect as a daemon fiber on the controller's managed
+      // runtime. This guarantees the worker inherits the TUI-safe logger
+      // layer — no default-runtime escape hatch.
+      const workerEffect = deps.tuiWorkerEffect(
         {
           onStateChange: (status: WorkerStatus) => {
             workerStatus = status
@@ -283,8 +286,14 @@ export function createTuiWatchController(
           pollIntervalMs: refreshIntervalMs,
           workerId,
           workDir,
-          runEffect: run,
+          deps: deps.workerDeps,
         },
+      )
+
+      void managedRuntime.runPromise(
+        Effect.gen(function* () {
+          workerFiber = yield* Effect.forkDaemon(workerEffect)
+        }),
       )
     },
 
@@ -359,9 +368,12 @@ export function createTuiWatchController(
     },
 
     async stop(): Promise<void> {
-      // Stop the worker — internally interrupts the Effect-based worker fiber.
-      workerHandle?.stop()
-      workerHandle = null
+      // Interrupt the worker fiber — the interrupt is delivered at the next
+      // Effect operator (sleep, yield*, etc.), cleanly stopping the poll loop.
+      if (workerFiber !== null) {
+        await managedRuntime.runPromise(Fiber.interrupt(workerFiber))
+        workerFiber = null
+      }
 
       // Interrupt the periodic refresh fiber.
       if (refreshFiber !== null) {

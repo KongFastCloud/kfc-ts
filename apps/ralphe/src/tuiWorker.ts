@@ -258,26 +258,19 @@ export const tuiWorkerEffect = (
 /**
  * Start the Effect-based TUI worker and return an imperative stop handle.
  *
- * Internally forks tuiWorkerEffect as a fiber using Effect.runFork.
- * Stop is achieved by interrupting the fiber — the interrupt is delivered
- * at the next Effect operator (sleep, yield*, etc.), cleanly stopping the
- * poll loop.
+ * Internally forks tuiWorkerEffect as a fiber using Effect.runFork on the
+ * **default runtime**. This is a low-level convenience for headless or test
+ * contexts where a managed runtime is not available.
  *
- * The controller and test suites use this as the primary worker entry point.
+ * The TUI controller does NOT use this helper — it forks tuiWorkerEffect
+ * directly on its controller-owned ManagedRuntime so that all worker-path
+ * Effect logging inherits the TUI-safe logger configuration. If you are
+ * adding a new TUI-mode call site, prefer forking tuiWorkerEffect on the
+ * controller's managed runtime instead of calling this function.
  */
 export function startTuiWorker(
   callbacks: TuiWorkerCallbacks,
-  opts?: TuiWorkerOptions & {
-    /**
-     * Optional scoped Effect runner that delegates through a managed runtime
-     * (e.g. the TUI controller's ManagedRuntime). When provided, all Effect
-     * executions inside the worker loop use this runner instead of bare
-     * Effect.runPromise, ensuring consistent logging and runtime configuration.
-     *
-     * Defaults to Effect.runPromise for backward compatibility.
-     */
-    readonly runEffect?: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>
-  },
+  opts?: TuiWorkerOptions,
 ): { stop: () => void } {
   // Fork the Effect-based worker immediately using the default runtime.
   // The fiber starts running right away, matching the old fire-and-forget

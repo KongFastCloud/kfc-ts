@@ -21,7 +21,6 @@ import {
   type TuiWatchControllerDeps,
 } from "../src/tuiWatchController.js"
 import {
-  startTuiWorker as realStartTuiWorker,
   tuiWorkerEffect,
   type TuiWorkerDeps,
 } from "../src/tuiWorker.js"
@@ -87,11 +86,8 @@ function makeControllerDeps(): TuiWatchControllerDeps {
       markReadyCalls.push({ id, labels })
       return Effect.succeed(undefined)
     },
-    startTuiWorker: (callbacks, opts) =>
-      realStartTuiWorker(callbacks, {
-        ...opts,
-        deps: makeWorkerDeps(),
-      }),
+    tuiWorkerEffect,
+    workerDeps: makeWorkerDeps(),
     loadConfig: () => baseConfig,
   }
 }
@@ -193,6 +189,50 @@ describe("Logger isolation — TUI runtime suppresses stderr", () => {
       // Let the worker poll once
       await new Promise((r) => setTimeout(r, 150))
       expect(stderrOutput).toBe("")
+    } finally {
+      console.error = originalConsoleError
+      await ctrl.stop()
+    }
+  })
+
+  test("worker-path Effect.log from a dependency does not leak to stderr", async () => {
+    // This is the key regression test: a worker-path dependency emits a real
+    // Effect.logInfo call. If the worker were forked on the default runtime
+    // (the old bug), this log message would reach stderr. With the worker
+    // forked on the controller's managed runtime, the TUI-safe logger layer
+    // captures it instead.
+    const loggingWorkerDeps = makeWorkerDeps()
+    const depsWithLogging: TuiWorkerDeps = {
+      ...loggingWorkerDeps,
+      queryQueued: () =>
+        Effect.gen(function* () {
+          yield* Effect.logInfo("worker-path-log-should-not-reach-stderr")
+          return []
+        }),
+    }
+
+    const ctrl = createTuiWatchController(TestLayer, {
+      refreshIntervalMs: 50,
+      workDir: process.cwd(),
+      workerId: "test-worker-log-isolation",
+      deps: {
+        ...makeControllerDeps(),
+        workerDeps: depsWithLogging,
+      },
+    })
+
+    const originalConsoleError = console.error
+    let stderrOutput = ""
+    console.error = (...args: unknown[]) => {
+      stderrOutput += args.map(String).join(" ")
+    }
+
+    try {
+      ctrl.startWorker()
+      // Let the worker poll at least once so the Effect.logInfo fires
+      await new Promise((r) => setTimeout(r, 200))
+      expect(stderrOutput).toBe("")
+      expect(stderrOutput).not.toContain("worker-path-log-should-not-reach-stderr")
     } finally {
       console.error = originalConsoleError
       await ctrl.stop()

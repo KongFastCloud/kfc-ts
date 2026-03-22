@@ -17,7 +17,7 @@ import {
   type TuiWatchControllerOptions,
 } from "../src/tuiWatchController.js"
 import {
-  startTuiWorker as realStartTuiWorker,
+  tuiWorkerEffect,
   type TuiWorkerDeps,
 } from "../src/tuiWorker.js"
 
@@ -78,11 +78,8 @@ function makeControllerDeps(
       markReadyCalls.push({ id, labels })
       return Effect.succeed(undefined)
     },
-    startTuiWorker: (callbacks, opts) =>
-      realStartTuiWorker(callbacks, {
-        ...opts,
-        deps: makeWorkerDeps(),
-      }),
+    tuiWorkerEffect,
+    workerDeps: makeWorkerDeps(),
     loadConfig: () => baseConfig,
     ...overrides,
   }
