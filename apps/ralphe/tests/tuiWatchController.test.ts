@@ -96,12 +96,16 @@ function makeControllerDeps(
 }
 
 function makeController(overrides?: Partial<TuiWatchControllerOptions>): TuiWatchController {
+  // Extract deps separately to avoid the spread overwriting the fully-mocked
+  // deps object with a partial override (which would leave un-overridden deps
+  // pointing at the real bd CLI — breaks in CI where bd isn't installed).
+  const { deps: depsOverrides, ...restOverrides } = overrides ?? {}
   return createTuiWatchController(TestLayer, {
     refreshIntervalMs: 50,
     workDir: process.cwd(),
     workerId: "test-controller",
-    deps: makeControllerDeps(overrides?.deps as Partial<TuiWatchControllerDeps> | undefined),
-    ...overrides,
+    deps: makeControllerDeps(depsOverrides as Partial<TuiWatchControllerDeps> | undefined),
+    ...restOverrides,
   })
 }
 
