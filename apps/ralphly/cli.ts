@@ -11,6 +11,7 @@ import { Console, Effect, Layer } from "effect"
 import { AppLoggerLayer } from "./src/logger.js"
 import { loadConfig } from "./src/config.js"
 import { FatalError } from "./src/errors.js"
+import { makeLinearLayer, loadCandidateWork, buildPromptFromIssue } from "./src/linear/index.js"
 
 // -- run subcommand --
 
@@ -49,10 +50,31 @@ const run = Command.make(
         return
       }
 
-      // TODO: Query Linear for actionable work for the configured agent
+      // Query Linear for actionable work for the configured agent
+      const linearLayer = makeLinearLayer(cfg.linear)
+
+      const candidates = yield* loadCandidateWork({ agentId: cfg.linear.agentId }).pipe(
+        Effect.provide(linearLayer),
+      )
+
+      yield* Effect.logInfo(`Found ${candidates.length} candidate work item(s)`)
+
+      if (candidates.length === 0) {
+        yield* Console.log("No actionable work found. Exiting.")
+        return
+      }
+
+      for (const { session, issue } of candidates) {
+        yield* Effect.logInfo(
+          `  ${issue.identifier}: ${issue.title} (session: ${session.id}, status: ${session.status})`,
+        )
+        const prompt = buildPromptFromIssue(issue)
+        yield* Effect.logDebug(`Prompt preview (${prompt.length} chars):\n${prompt.slice(0, 200)}...`)
+      }
+
       // TODO: Process backlog through blueprints
       // TODO: Write progress/results back to Linear
-      yield* Console.log("No work processing implemented yet. Exiting.")
+      yield* Console.log(`Loaded ${candidates.length} work item(s). Processing not yet implemented.`)
     }),
 )
 

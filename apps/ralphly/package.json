@@ -26,6 +26,7 @@
   "dependencies": {
     "@effect/cli": "^0.73.2",
     "@effect/platform-bun": "^0.87.1",
+    "@linear/sdk": "^78.0.0",
     "@workspace/blueprints": "workspace:*",
     "effect": "^3.19.19"
   }
