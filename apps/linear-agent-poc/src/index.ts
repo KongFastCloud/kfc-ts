@@ -2,6 +2,7 @@ import fs from "node:fs"
 import http from "node:http"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import dotenv from "dotenv"
 
 type JsonValue =
   | null
@@ -32,6 +33,9 @@ const appRoot = path.resolve(__dirname, "..")
 const dataDir = path.join(appRoot, "data")
 const eventsFile = path.join(dataDir, "events.jsonl")
 const oauthFile = path.join(dataDir, "oauth-latest.json")
+
+dotenv.config({ path: path.join(appRoot, ".env.local"), quiet: true })
+dotenv.config({ path: path.join(appRoot, ".env"), quiet: true })
 
 const port = Number(process.env.PORT ?? "4310")
 const linearApiKey = process.env.LINEAR_API_KEY
