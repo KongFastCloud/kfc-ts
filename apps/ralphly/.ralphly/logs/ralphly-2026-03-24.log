@@ -1,0 +1,4 @@
+{"timestamp":"2026-03-23T17:03:24.139Z","level":"INFO","message":"Agent ID: test-agent","annotations":{},"spans":{}}
+{"timestamp":"2026-03-23T17:03:24.141Z","level":"INFO","message":"Repo path: /tmp/test-repo","annotations":{},"spans":{}}
+{"timestamp":"2026-03-23T17:03:24.141Z","level":"INFO","message":"Max attempts: 2","annotations":{},"spans":{}}
+{"timestamp":"2026-03-23T17:03:25.029Z","level":"ERROR","message":"","annotations":{},"spans":{}}
