@@ -34,6 +34,22 @@ export type {
 export { runIssue, buildTaskInput } from "./runner.js"
 export type { IssueRunResult, RunIssueOptions } from "./runner.js"
 
+// Error-hold
+export { ErrorHoldStore, buildFailureSummary } from "./error-hold.js"
+export type { ErrorHoldRecord } from "./error-hold.js"
+
+// Worker
+export {
+  runWorkerLoop,
+  runWorkerIteration,
+  findPromptedFollowUp,
+} from "./worker.js"
+export type {
+  WorkerOptions,
+  WorkerIterationResult,
+  WorkerRunSummary,
+} from "./worker.js"
+
 // Linear integration
 export {
   Linear,

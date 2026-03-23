@@ -18,6 +18,7 @@ import {
   formatStartActivity,
   formatErrorActivity,
 } from "./linear/activities.js"
+import { buildFailureSummary } from "./error-hold.js"
 import type { CandidateWork } from "./linear/types.js"
 
 // ---------------------------------------------------------------------------
@@ -30,6 +31,8 @@ export interface IssueRunResult {
   readonly success: boolean
   /** The issue identifier (e.g. "ENG-123"). */
   readonly issueIdentifier: string
+  /** The issue ID (Linear internal ID). */
+  readonly issueId: string
   /** The session ID used for this run. */
   readonly sessionId: string
   /** Number of attempts made. */
@@ -38,6 +41,11 @@ export interface IssueRunResult {
   readonly resumeToken?: string | undefined
   /** Error message if the run failed. */
   readonly error?: string | undefined
+  /**
+   * Short failure summary for use as retry feedback.
+   * Only populated when `success` is false.
+   */
+  readonly failureSummary?: string | undefined
 }
 
 /** Options for running a single issue. */
@@ -184,9 +192,13 @@ export const runIssue = (
     return {
       success: result.success,
       issueIdentifier: issue.identifier,
+      issueId: issue.id,
       sessionId: session.id,
       attempts: result.attempts,
       resumeToken: result.resumeToken,
       error: result.error,
+      failureSummary: result.success
+        ? undefined
+        : buildFailureSummary(result.error, result.attempts),
     } satisfies IssueRunResult
   })
