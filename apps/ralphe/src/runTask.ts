@@ -193,6 +193,10 @@ export const runTask = (
     },
     {
       maxAttempts: config.maxAttempts,
+      spanAttributes: {
+        engine: engineChoice,
+        ...(issueId ? { "issue.id": issueId } : {}),
+      },
       onEvent: (event: LoopEvent) => {
         if (!issueId) return Effect.void
         switch (event.type) {

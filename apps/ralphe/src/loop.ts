@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import { CheckFailure, FatalError } from "./errors.js"
+import { withSpan } from "./telemetry.js"
 
 export type LoopEventType = "attempt_start" | "check_failed" | "success"
 
@@ -13,6 +14,8 @@ export interface LoopEvent {
 export interface LoopOptions {
   readonly maxAttempts?: number
   readonly onEvent?: (event: LoopEvent) => Effect.Effect<void, never>
+  /** Extra attributes forwarded to each `loop.attempt` OTel span (e.g. engine, issue.id). */
+  readonly spanAttributes?: Record<string, string | number | boolean>
 }
 
 interface LoopState {
@@ -31,12 +34,14 @@ export const loop = <R>(
   const emitEvent = (event: LoopEvent): Effect.Effect<void, never> =>
     onEvent ? onEvent(event) : Effect.void
 
+  const extraAttrs = opts?.spanAttributes ?? {}
+
   return Effect.iterate(
     { attempt: 1, feedback: undefined, done: false } as LoopState,
     {
       while: (state) => !state.done,
-      body: (state) =>
-        Effect.gen(function* () {
+      body: (state) => {
+        const attemptBody = Effect.gen(function* () {
           yield* emitEvent({ type: "attempt_start", attempt: state.attempt, maxAttempts })
           yield* Effect.logInfo(`Attempt ${state.attempt}/${maxAttempts}`)
 
@@ -76,7 +81,14 @@ export const loop = <R>(
               )
             }),
           )
-        }).pipe(Effect.annotateLogs({ attempt: state.attempt, maxAttempts })),
+        }).pipe(Effect.annotateLogs({ attempt: state.attempt, maxAttempts }))
+
+        return withSpan("loop.attempt", {
+          "loop.attempt": state.attempt,
+          "loop.max_attempts": maxAttempts,
+          ...extraAttrs,
+        }, attemptBody)
+      },
     },
   ) as Effect.Effect<void, FatalError, R>
 }
