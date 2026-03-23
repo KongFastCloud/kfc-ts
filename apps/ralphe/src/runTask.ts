@@ -168,7 +168,11 @@ export const runTask = (
 
   const workflow = loop(
     (feedback, attempt, maxAttempts) => {
-      let pipeline: Effect.Effect<unknown, any, Engine> = agent(task, { feedback }).pipe(
+      let pipeline: Effect.Effect<unknown, any, Engine> = withSpan(
+        "agent.execute",
+        undefined,
+        agent(task, { feedback }),
+      ).pipe(
         Effect.tap((result: AgentResult) => {
           lastResumeToken = result.resumeToken
           return Effect.void
@@ -181,10 +185,10 @@ export const runTask = (
         }),
       )
       for (const check of config.checks) {
-        pipeline = pipe(pipeline, Effect.andThen(cmd(check)))
+        pipeline = pipe(pipeline, Effect.andThen(withSpan("check.run", { "check.name": check }, cmd(check))))
       }
       if (config.report !== "none") {
-        pipeline = pipe(pipeline, Effect.andThen(report(task, config.report)))
+        pipeline = pipe(pipeline, Effect.andThen(withSpan("report.verify", undefined, report(task, config.report))))
       }
       if (gitMode === "commit_and_push_and_wait_ci") {
         pipeline = pipe(pipeline, Effect.andThen(buildCiGitStep(ops)))
