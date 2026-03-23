@@ -7,6 +7,9 @@ export { loadConfig, saveConfig, getConfigPath } from "./config.js"
 export type { RalphlyConfig, LinearIdentity, ConfigError } from "./config.js"
 export { FatalError } from "./errors.js"
 
+// Engine
+export { ClaudeEngineLayer } from "./engine.js"
+
 // Readiness classification
 export {
   classifyIssue,

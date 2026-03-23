@@ -24,6 +24,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.76",
     "@effect/cli": "^0.73.2",
     "@effect/platform-bun": "^0.87.1",
     "@linear/sdk": "^78.0.0",

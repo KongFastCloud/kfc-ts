@@ -178,6 +178,9 @@ importers:
 
   apps/ralphly:
     dependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: ^0.2.76
+        version: 0.2.77(zod@4.3.6)
       '@effect/cli':
         specifier: ^0.73.2
         version: 0.73.2(@effect/platform@0.94.5(effect@3.19.19))(@effect/printer-ansi@0.47.0(@effect/typeclass@0.38.0(effect@3.19.19))(effect@3.19.19))(@effect/printer@0.47.0(@effect/typeclass@0.38.0(effect@3.19.19))(effect@3.19.19))(effect@3.19.19)
