@@ -1,6 +1,7 @@
 /**
  * ABOUTME: Public API for ralphly's Linear integration layer.
- * Exposes session/issue loading, work assembly, and the Linear client service.
+ * Exposes session/issue loading, work assembly, session activity writing,
+ * and the Linear client service.
  */
 
 // Client and service tag
@@ -28,6 +29,19 @@ export {
   buildPromptFromIssue,
 } from "./loader.js"
 
+// Session activity writing
+export {
+  writeSessionActivity,
+  writeStartActivity,
+  writeErrorActivity,
+  makeSessionEventHandler,
+  mapLoopEventToActivity,
+  formatStartActivity,
+  formatCheckFailedActivity,
+  formatSuccessActivity,
+  formatErrorActivity,
+} from "./activities.js"
+
 // Types
 export type {
   LinearIssueData,
@@ -40,3 +54,9 @@ export type {
   SessionPrompt,
   CandidateWork,
 } from "./types.js"
+
+export type {
+  ActivityContentType,
+  ActivityContent,
+  SessionUpdateKind,
+} from "./activities.js"

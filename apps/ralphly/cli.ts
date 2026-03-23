@@ -8,10 +8,12 @@
 import { Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Console, Effect, Layer } from "effect"
+import type { RunConfig } from "@workspace/blueprints"
 import { AppLoggerLayer } from "./src/logger.js"
 import { loadConfig } from "./src/config.js"
 import { FatalError } from "./src/errors.js"
 import { makeLinearLayer, loadCandidateWork, buildPromptFromIssue } from "./src/linear/index.js"
+import { runIssue } from "./src/runner.js"
 
 // -- run subcommand --
 
@@ -72,9 +74,28 @@ const run = Command.make(
         yield* Effect.logDebug(`Prompt preview (${prompt.length} chars):\n${prompt.slice(0, 200)}...`)
       }
 
-      // TODO: Process backlog through blueprints
-      // TODO: Write progress/results back to Linear
-      yield* Console.log(`Loaded ${candidates.length} work item(s). Processing not yet implemented.`)
+      // Process the first candidate through blueprints
+      // (single-issue path — full backlog draining is a future slice)
+      const firstCandidate = candidates[0]!
+      yield* Effect.logInfo(
+        `Processing ${firstCandidate.issue.identifier} through blueprints...`,
+      )
+
+      // Build blueprints RunConfig from ralphly config
+      const runConfig: RunConfig = {
+        maxAttempts: cfg.maxAttempts,
+        checks: [...cfg.checks],
+        gitMode: "none",
+        report: "none",
+      }
+
+      // TODO: Replace with real engine layer when engine selection is implemented.
+      // For now, this placeholder makes the CLI structurally complete.
+      // The actual engine layer will be provided when ralphly gets engine configuration.
+      yield* Console.log(
+        `Ready to process ${firstCandidate.issue.identifier}. ` +
+        `Engine layer not yet configured — use runIssue() programmatically with an engine layer.`,
+      )
     }),
 )
 

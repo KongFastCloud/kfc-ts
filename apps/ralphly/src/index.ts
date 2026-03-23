@@ -7,6 +7,10 @@ export { loadConfig, saveConfig, getConfigPath } from "./config.js"
 export type { RalphlyConfig, LinearIdentity, ConfigError } from "./config.js"
 export { FatalError } from "./errors.js"
 
+// Runner
+export { runIssue, buildTaskInput } from "./runner.js"
+export type { IssueRunResult, RunIssueOptions } from "./runner.js"
+
 // Linear integration
 export {
   Linear,
@@ -21,6 +25,15 @@ export {
   loadDelegatedIssues,
   isTerminal,
   findActiveSessionsForIssue,
+  writeSessionActivity,
+  writeStartActivity,
+  writeErrorActivity,
+  makeSessionEventHandler,
+  mapLoopEventToActivity,
+  formatStartActivity,
+  formatCheckFailedActivity,
+  formatSuccessActivity,
+  formatErrorActivity,
 } from "./linear/index.js"
 export type {
   LinearIssueData,
@@ -30,4 +43,6 @@ export type {
   CandidateWork,
   SessionPrompt,
   AgentSessionStatusValue,
+  ActivityContentType,
+  SessionUpdateKind,
 } from "./linear/index.js"
