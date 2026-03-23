@@ -7,6 +7,29 @@ export { loadConfig, saveConfig, getConfigPath } from "./config.js"
 export type { RalphlyConfig, LinearIdentity, ConfigError } from "./config.js"
 export { FatalError } from "./errors.js"
 
+// Readiness classification
+export {
+  classifyIssue,
+  classifyAll,
+  buildClassificationContext,
+} from "./readiness.js"
+export type {
+  IssueReadiness,
+  ClassifiedWork,
+  ClassificationContext,
+} from "./readiness.js"
+
+// Backlog selection
+export {
+  selectNext,
+  selectAllActionable,
+  formatBacklogSummary,
+} from "./backlog.js"
+export type {
+  BacklogSelection,
+  BacklogSummary,
+} from "./backlog.js"
+
 // Runner
 export { runIssue, buildTaskInput } from "./runner.js"
 export type { IssueRunResult, RunIssueOptions } from "./runner.js"

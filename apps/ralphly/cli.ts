@@ -13,6 +13,7 @@ import { AppLoggerLayer } from "./src/logger.js"
 import { loadConfig } from "./src/config.js"
 import { FatalError } from "./src/errors.js"
 import { makeLinearLayer, loadCandidateWork, buildPromptFromIssue } from "./src/linear/index.js"
+import { selectNext, formatBacklogSummary } from "./src/backlog.js"
 import { runIssue } from "./src/runner.js"
 
 // -- run subcommand --
@@ -66,19 +67,30 @@ const run = Command.make(
         return
       }
 
-      for (const { session, issue } of candidates) {
+      // Classify all candidates and select the next actionable issue
+      const selection = selectNext(candidates)
+
+      yield* Effect.logInfo(formatBacklogSummary(selection))
+
+      for (const classified of selection.classified) {
+        const { work: { session, issue }, readiness, reason } = classified
         yield* Effect.logInfo(
-          `  ${issue.identifier}: ${issue.title} (session: ${session.id}, status: ${session.status})`,
+          `  ${issue.identifier}: ${issue.title} [${readiness}] (session: ${session.id}, status: ${session.status}) — ${reason}`,
         )
-        const prompt = buildPromptFromIssue(issue)
-        yield* Effect.logDebug(`Prompt preview (${prompt.length} chars):\n${prompt.slice(0, 200)}...`)
+        if (readiness === "actionable") {
+          const prompt = buildPromptFromIssue(issue)
+          yield* Effect.logDebug(`Prompt preview (${prompt.length} chars):\n${prompt.slice(0, 200)}...`)
+        }
       }
 
-      // Process the first candidate through blueprints
-      // (single-issue path — full backlog draining is a future slice)
-      const firstCandidate = candidates[0]!
+      if (!selection.next) {
+        yield* Console.log("No actionable work after classification. Exiting.")
+        return
+      }
+
+      const nextCandidate = selection.next
       yield* Effect.logInfo(
-        `Processing ${firstCandidate.issue.identifier} through blueprints...`,
+        `Processing ${nextCandidate.issue.identifier} through blueprints...`,
       )
 
       // Build blueprints RunConfig from ralphly config
@@ -93,7 +105,7 @@ const run = Command.make(
       // For now, this placeholder makes the CLI structurally complete.
       // The actual engine layer will be provided when ralphly gets engine configuration.
       yield* Console.log(
-        `Ready to process ${firstCandidate.issue.identifier}. ` +
+        `Ready to process ${nextCandidate.issue.identifier}. ` +
         `Engine layer not yet configured — use runIssue() programmatically with an engine layer.`,
       )
     }),
