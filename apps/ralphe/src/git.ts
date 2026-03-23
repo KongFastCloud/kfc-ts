@@ -342,4 +342,4 @@ export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError | Check
         message: `Timed out waiting for CI completion for commit ${sha.slice(0, 7)} after ${CI_STATUS_POLL_ATTEMPTS * (CI_STATUS_POLL_DELAY_MS / 1000)}s.`,
       }),
     )
-  }).pipe(Effect.withLogSpan("ci-wait"))
+  })

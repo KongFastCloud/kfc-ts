@@ -52,16 +52,16 @@ export const buildCiGitStep = (
   ops: GitOps,
 ): Effect.Effect<void, FatalError | CheckFailure, Engine> =>
   Effect.gen(function* () {
-    const commitResult = yield* ops.commit()
+    const commitResult = yield* withSpan("git.commit", undefined, ops.commit())
     if (!commitResult) {
       yield* Effect.logDebug("Push/CI skipped: no commit created.")
       return
     }
 
     yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
-    const pushResult = yield* ops.push()
+    const pushResult = yield* withSpan("git.push", undefined, ops.push())
     yield* Effect.logInfo(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
-    const ciResult = yield* ops.waitCi()
+    const ciResult = yield* withSpan("git.wait_ci", undefined, ops.waitCi())
     yield* Effect.logInfo(`CI passed: run ${ciResult.runId}`)
   })
 
@@ -82,21 +82,21 @@ export const executePostLoopGitOps = (
       case "commit_and_push_and_wait_ci":
         break
       case "commit": {
-        const commitResult = yield* ops.commit()
+        const commitResult = yield* withSpan("git.commit", undefined, ops.commit())
         if (commitResult) {
           yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
         }
         break
       }
       case "commit_and_push": {
-        const commitResult = yield* ops.commit()
+        const commitResult = yield* withSpan("git.commit", undefined, ops.commit())
         if (!commitResult) {
           yield* Effect.logDebug("Push skipped: no commit created.")
           break
         }
 
         yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
-        const pushResult = yield* ops.push()
+        const pushResult = yield* withSpan("git.push", undefined, ops.push())
         yield* Effect.logInfo(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
         break
       }
