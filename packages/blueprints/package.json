@@ -1,0 +1,23 @@
+{
+  "name": "@workspace/blueprints",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "lint": "oxlint .",
+    "format": "prettier --write \"**/*.{ts,tsx}\"",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests/",
+    "test:watch": "bun test --watch tests/"
+  },
+  "dependencies": {
+    "effect": "^3.19.19"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}
