@@ -9,6 +9,7 @@ import { loop } from "./loop.js"
 import { report } from "./report.js"
 import { gitCommit, gitPush, gitWaitForCi } from "./git.js"
 import { addComment } from "./beads.js"
+import { withSpan } from "./telemetry.js"
 import type { GitMode, RalpheConfig } from "./config.js"
 import type { CheckFailure, FatalError } from "./errors.js"
 import type { GitCommitResult, GitPushResult, GitHubCiResult } from "./git.js"
@@ -221,7 +222,11 @@ export const runTask = (
     } satisfies TaskResult
   }).pipe(Effect.annotateLogs({ gitMode }))
 
-  return fullWorkflow.pipe(
+  // Wrap in an OTel task.run span for Axiom export (proof-of-life)
+  const spanAttributes: Record<string, string | number> = { engine: engineChoice }
+  if (issueId) spanAttributes["issue.id"] = issueId
+
+  return withSpan("task.run", spanAttributes, fullWorkflow).pipe(
     Effect.catchTag("FatalError", (err) =>
       Effect.succeed({
         success: false,

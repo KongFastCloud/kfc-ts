@@ -41,6 +41,7 @@ export { queryQueued } from "./beadsAdapter.js"
 export { watch, defaultWorkerId } from "./watcher.js"
 export type { WatcherOptions } from "./watcher.js"
 export { tuiWorkerEffect, forkTuiWorker } from "./tuiWorker.js"
+export { initTelemetry, shutdownTelemetry, getTracer, withSpan } from "./telemetry.js"
 export type {
   WorkerState,
   WorkerStatus,

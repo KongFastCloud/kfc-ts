@@ -11,6 +11,7 @@ import { installGlobalSkill } from "./src/skill.js"
 import { runTask } from "./src/runTask.js"
 import { watch } from "./src/watcher.js"
 import { launchWatchTui } from "./src/watchTui.js"
+import { initTelemetry, shutdownTelemetry } from "./src/telemetry.js"
 import fs from "node:fs"
 
 // -- config subcommand --
@@ -240,8 +241,13 @@ const cli = Command.run(ralphe, {
 
 export { resolveRunConfig }
 
-export const runCli = (argv: string[]) =>
+export const runCli = (argv: string[]) => {
+  // Initialize telemetry once at process startup (fail-open)
+  initTelemetry()
+  process.on("exit", () => { void shutdownTelemetry() })
+
   cli(argv).pipe(Effect.provide(Layer.merge(BunContext.layer, AppLoggerLayer)), BunRuntime.runMain)
+}
 
 if (import.meta.main) {
   runCli(process.argv)
