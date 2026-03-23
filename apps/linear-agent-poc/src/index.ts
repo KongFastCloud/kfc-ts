@@ -71,6 +71,15 @@ const writeLatestOauth = (value: JsonValue): void => {
   fs.writeFileSync(oauthFile, JSON.stringify(value, null, 2) + "\n")
 }
 
+const log = (message: string, details?: Record<string, unknown>): void => {
+  if (details) {
+    console.log(`[linear-agent-poc] ${message}`, details)
+    return
+  }
+
+  console.log(`[linear-agent-poc] ${message}`)
+}
+
 const readRecentEvents = (limit = 20): StoredEvent[] => {
   if (!fs.existsSync(eventsFile)) return []
 
@@ -110,6 +119,8 @@ const getAgentSessionId = (payload: JsonValue): string | undefined => {
 const sendThoughtActivity = async (agentSessionId: string): Promise<void> => {
   if (!resolvedLinearAuthorization) return
 
+  log("sending thought activity", { agentSessionId })
+
   const query = `
     mutation AgentActivityCreate($input: AgentActivityCreateInput!) {
       agentActivityCreate(input: $input) {
@@ -141,6 +152,8 @@ const sendThoughtActivity = async (agentSessionId: string): Promise<void> => {
     const body = await response.text()
     throw new Error(`Linear API request failed (${response.status}): ${body}`)
   }
+
+  log("thought activity sent", { agentSessionId })
 }
 
 const html = (body: string, status = 200): Response =>
@@ -161,14 +174,17 @@ const handleOauthCallback = async (request: Request): Promise<Response> => {
   const error = url.searchParams.get("error")
 
   if (error) {
+    log("oauth callback returned error", { error, state })
     return html(`<h1>Linear OAuth failed</h1><p>${error}</p>`, 400)
   }
 
   if (!code) {
+    log("oauth callback missing code")
     return html("<h1>Missing OAuth code</h1>", 400)
   }
 
   if (!linearClientId || !linearClientSecret || !linearOauthRedirectUri) {
+    log("oauth callback missing configuration")
     return html(
       "<h1>Missing OAuth configuration</h1><p>Set LINEAR_CLIENT_ID, LINEAR_CLIENT_SECRET, and LINEAR_OAUTH_REDIRECT_URI.</p>",
       500,
@@ -193,6 +209,8 @@ const handleOauthCallback = async (request: Request): Promise<Response> => {
 
   const rawBody = await response.text()
 
+  log("oauth callback exchanging code", { state, status: response.status })
+
   if (!response.ok) {
     writeLatestOauth({
       receivedAt: new Date().toISOString(),
@@ -201,6 +219,7 @@ const handleOauthCallback = async (request: Request): Promise<Response> => {
       state,
       body: rawBody,
     })
+    log("oauth exchange failed", { state, status: response.status })
     return html("<h1>OAuth exchange failed</h1><p>Check the saved oauth file for details.</p>", 500)
   }
 
@@ -215,6 +234,7 @@ const handleOauthCallback = async (request: Request): Promise<Response> => {
       state,
       body: rawBody,
     })
+    log("oauth exchange returned invalid json", { state })
     return html("<h1>OAuth exchange returned invalid JSON</h1>", 500)
   }
 
@@ -228,6 +248,12 @@ const handleOauthCallback = async (request: Request): Promise<Response> => {
     accessToken: tokenResponse.access_token,
     refreshToken: tokenResponse.refresh_token ?? null,
     raw: tokenResponse as JsonValue,
+  })
+
+  log("oauth exchange succeeded", {
+    state,
+    scope: tokenResponse.scope ?? null,
+    hasRefreshToken: Boolean(tokenResponse.refresh_token),
   })
 
   return html("<h1>Linear OAuth success</h1><p>Token response saved locally for the POC.</p>")
@@ -251,11 +277,17 @@ const handleWebhook = async (request: Request): Promise<Response> => {
   const action = getEventAction(payload)
   const agentSessionId = getAgentSessionId(payload)
 
+  log("webhook received", {
+    action: action ?? null,
+    agentSessionId: agentSessionId ?? null,
+    hasLinearAuth: Boolean(resolvedLinearAuthorization),
+  })
+
   if (action === "created" && agentSessionId && resolvedLinearAuthorization) {
     try {
       await sendThoughtActivity(agentSessionId)
     } catch (error) {
-      console.error("Failed to send thought activity", error)
+      console.error("[linear-agent-poc] failed to send thought activity", error)
     }
   }
 
@@ -312,13 +344,13 @@ const server = http.createServer(async (req, res) => {
 })
 
 server.listen(port, () => {
-  console.log(`linear-agent-poc listening on http://localhost:${port}`)
-  console.log(
+  log(`listening on http://localhost:${port}`)
+  log(
     resolvedLinearAuthorization
       ? "linear-agent-poc mode: webhook logging + Linear thought activity"
       : "linear-agent-poc mode: webhook logging only (no Linear auth configured)",
   )
-  console.log(
+  log(
     linearClientId && linearClientSecret && linearOauthRedirectUri
       ? "linear-agent-poc OAuth callback: enabled"
       : "linear-agent-poc OAuth callback: disabled (missing LINEAR_CLIENT_ID / LINEAR_CLIENT_SECRET / LINEAR_OAUTH_REDIRECT_URI)",
