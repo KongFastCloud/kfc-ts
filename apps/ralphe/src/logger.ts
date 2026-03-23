@@ -1,5 +1,4 @@
-import { Effect, Layer, Logger, HashMap, List } from "effect"
-import type { LogSpan } from "effect/LogSpan"
+import { Effect, Layer, Logger, HashMap } from "effect"
 
 // -- helpers --
 
@@ -15,14 +14,6 @@ const logFileName = (date: Date): string => {
 const ensureLogDir = Effect.sync(() => {
   require("node:fs").mkdirSync(LOG_DIR, { recursive: true })
 })
-
-const spansToRecord = (spans: List.List<LogSpan>): Record<string, number> => {
-  const result: Record<string, number> = {}
-  for (const span of spans) {
-    result[span.label] = Date.now() - span.startTime
-  }
-  return result
-}
 
 const annotationsToRecord = (annotations: HashMap.HashMap<string, unknown>): Record<string, unknown> => {
   const result: Record<string, unknown> = {}
@@ -41,13 +32,12 @@ const formatMessage = (message: unknown): string => {
 // -- file logger --
 
 const makeFileLogger = (): Logger.Logger<unknown, void> =>
-  Logger.make(({ logLevel, message, annotations, spans, date }) => {
+  Logger.make(({ logLevel, message, annotations, date }) => {
     const entry = JSON.stringify({
       timestamp: date.toISOString(),
       level: logLevel.label,
       message: formatMessage(message),
       annotations: annotationsToRecord(annotations),
-      spans: spansToRecord(spans),
     })
 
     const filePath = `${LOG_DIR}/${logFileName(date)}`

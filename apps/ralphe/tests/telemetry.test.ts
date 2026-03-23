@@ -60,6 +60,15 @@ describe("initTelemetry", () => {
     initTelemetry()
     expect(() => initTelemetry()).not.toThrow()
   })
+
+  test("is safe when AXIOM_DOMAIN is invalid (fail-open)", () => {
+    process.env.AXIOM_TOKEN = "test-token"
+    process.env.AXIOM_DATASET = "test-dataset"
+    process.env.AXIOM_DOMAIN = "not-a-url"
+
+    // Should not throw — exporter creation with an invalid URL is fail-open
+    expect(() => initTelemetry()).not.toThrow()
+  })
 })
 
 describe("getTracer", () => {
@@ -78,6 +87,116 @@ describe("shutdownTelemetry", () => {
   test("is safe to call after init with no config", async () => {
     initTelemetry()
     await expect(shutdownTelemetry()).resolves.toBeUndefined()
+  })
+})
+
+describe("fail-open behavior", () => {
+  test("withSpan succeeds when tracer.startSpan throws", async () => {
+    // Install a tracer that throws on startSpan
+    const { trace: traceApi } = require("@opentelemetry/api") as typeof import("@opentelemetry/api")
+    const realProvider = traceApi.getTracerProvider()
+    const fakeTracer = {
+      startSpan: () => { throw new Error("boom") },
+      startActiveSpan: () => { throw new Error("boom") },
+    }
+    const fakeProvider = { getTracer: () => fakeTracer }
+    traceApi.setGlobalTracerProvider(fakeProvider as any)
+
+    try {
+      const result = await Effect.runPromise(
+        withSpan("test.broken", { key: "value" }, Effect.succeed(99)),
+      )
+      expect(result).toBe(99)
+    } finally {
+      traceApi.disable()
+    }
+  })
+
+  test("withSpan succeeds when span.end throws", async () => {
+    const { trace: traceApi } = require("@opentelemetry/api") as typeof import("@opentelemetry/api")
+    const fakeSpan = {
+      end: () => { throw new Error("end failed") },
+      setStatus: () => {},
+      setAttribute: () => fakeSpan,
+      setAttributes: () => fakeSpan,
+      addEvent: () => fakeSpan,
+      recordException: () => {},
+      updateName: () => fakeSpan,
+      isRecording: () => true,
+      spanContext: () => ({ traceId: "0", spanId: "0", traceFlags: 0 }),
+    }
+    const fakeTracer = {
+      startSpan: () => fakeSpan,
+      startActiveSpan: () => {},
+    }
+    const fakeProvider = { getTracer: () => fakeTracer }
+    traceApi.setGlobalTracerProvider(fakeProvider as any)
+
+    try {
+      const result = await Effect.runPromise(
+        withSpan("test.bad-end", undefined, Effect.succeed("still ok")),
+      )
+      expect(result).toBe("still ok")
+    } finally {
+      traceApi.disable()
+    }
+  })
+
+  test("withSpan propagates failure when span.setStatus throws", async () => {
+    const { trace: traceApi } = require("@opentelemetry/api") as typeof import("@opentelemetry/api")
+    const fakeSpan = {
+      end: () => {},
+      setStatus: () => { throw new Error("setStatus failed") },
+      setAttribute: () => fakeSpan,
+      setAttributes: () => fakeSpan,
+      addEvent: () => fakeSpan,
+      recordException: () => {},
+      updateName: () => fakeSpan,
+      isRecording: () => true,
+      spanContext: () => ({ traceId: "0", spanId: "0", traceFlags: 0 }),
+    }
+    const fakeTracer = {
+      startSpan: () => fakeSpan,
+      startActiveSpan: () => {},
+    }
+    const fakeProvider = { getTracer: () => fakeTracer }
+    traceApi.setGlobalTracerProvider(fakeProvider as any)
+
+    try {
+      // The effect fails, span.setStatus throws, but error still propagates
+      const exit = await Effect.runPromiseExit(
+        withSpan("test.bad-status", undefined, Effect.fail("original-error")),
+      )
+      expect(exit._tag).toBe("Failure")
+    } finally {
+      traceApi.disable()
+    }
+  })
+
+  test("shutdownTelemetry is safe after init with valid config", async () => {
+    process.env.AXIOM_TOKEN = "test-token"
+    process.env.AXIOM_DATASET = "test-dataset"
+    process.env.AXIOM_DOMAIN = "https://example.axiom.co"
+    initTelemetry()
+
+    // Shutdown should not throw even if flush/shutdown has issues
+    await expect(shutdownTelemetry()).resolves.toBeUndefined()
+  })
+
+  test("effects run normally with no env config (no-op tracer)", async () => {
+    // No AXIOM_* env vars set, no initTelemetry() called
+    const result = await Effect.runPromise(
+      withSpan("task.run", { engine: "claude" },
+        withSpan("loop.attempt", { "loop.attempt": 1, "loop.max_attempts": 2 },
+          withSpan("agent.execute", undefined,
+            withSpan("check.run", { "check.name": "echo test" },
+              Effect.succeed("all good"),
+            ),
+          ),
+        ),
+      ),
+    )
+    expect(result).toBe("all good")
   })
 })
 

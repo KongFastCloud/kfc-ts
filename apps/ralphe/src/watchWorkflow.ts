@@ -152,7 +152,6 @@ export const processClaimedTask = (
     }
   }).pipe(
     Effect.annotateLogs({ taskId: issue.id, issueTitle: issue.title }),
-    Effect.withLogSpan("task"),
   )
 
 // ---------------------------------------------------------------------------

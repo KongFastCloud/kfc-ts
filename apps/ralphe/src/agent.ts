@@ -23,4 +23,4 @@ export const agent = (
     yield* Effect.logInfo(`Agent done.`)
 
     return result
-  }).pipe(Effect.withLogSpan("agent"))
+  })

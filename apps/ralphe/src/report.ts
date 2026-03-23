@@ -96,4 +96,4 @@ export const report = (
     }
 
     return reportResult
-  }).pipe(Effect.withLogSpan("verification"))
+  })
