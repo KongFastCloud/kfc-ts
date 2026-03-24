@@ -14,8 +14,16 @@
  * - withSpan()          — wraps an Effect in an OTel span
  */
 
-import { trace, type Tracer, type Span, SpanStatusCode } from "@opentelemetry/api"
-import { Effect } from "effect"
+import {
+  trace,
+  context as otelContext,
+  ROOT_CONTEXT,
+  type Tracer,
+  type Span,
+  type Context as OtelContext,
+  SpanStatusCode,
+} from "@opentelemetry/api"
+import { Effect, FiberRef } from "effect"
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -129,10 +137,21 @@ export const getTracer = (): Tracer => trace.getTracer(TRACER_NAME)
 // ---------------------------------------------------------------------------
 
 /**
+ * FiberRef carrying the current OpenTelemetry context through the Effect
+ * fiber. This lets nested withSpan() calls discover their parent span
+ * without relying on an AsyncLocalStorage-based OTel context manager.
+ */
+const OtelContextRef: FiberRef.FiberRef<OtelContext> =
+  FiberRef.unsafeMake<OtelContext>(ROOT_CONTEXT)
+
+/**
  * Wrap an Effect in an OpenTelemetry span.
  *
- * Creates a span before executing the effect, records errors on the span
- * if the effect fails, and ends the span when the effect completes.
+ * Creates a span as a child of the current active context (carried via
+ * FiberRef), makes the new span the active context for the wrapped Effect,
+ * records errors on the span if the effect fails, and ends the span when
+ * the effect completes.
+ *
  * If the tracer is a no-op (unconfigured), this is effectively zero-cost.
  */
 export const withSpan = <A, E, R>(
@@ -142,16 +161,20 @@ export const withSpan = <A, E, R>(
 ): Effect.Effect<A, E, R> =>
   Effect.gen(function* () {
     const tracer = getTracer()
+    const parentCtx = yield* FiberRef.get(OtelContextRef)
     let span: Span | undefined
 
     try {
-      span = tracer.startSpan(name, attributes ? { attributes } : undefined)
+      span = tracer.startSpan(name, attributes ? { attributes } : undefined, parentCtx)
     } catch {
       // If span creation fails, run the effect without tracing
       return yield* effect
     }
 
+    const childCtx = trace.setSpan(parentCtx, span)
+
     const result = yield* effect.pipe(
+      Effect.locally(OtelContextRef, childCtx),
       Effect.tapError((err) =>
         Effect.sync(() => {
           try {
