@@ -36,7 +36,7 @@ export type {
 
 // Runner
 export { runIssue, buildTaskInput } from "./runner.js"
-export type { IssueRunResult, RunIssueOptions } from "./runner.js"
+export type { IssueRunResult, IssueRunConfig, RunIssueOptions } from "./runner.js"
 
 // Failure summary
 export { buildFailureSummary } from "./error-hold.js"

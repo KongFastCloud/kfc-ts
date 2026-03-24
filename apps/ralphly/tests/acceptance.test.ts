@@ -6,9 +6,9 @@
  * existing unit tests, exercising end-to-end worker semantics and
  * operator-visible behavior across the full stack:
  *
- * 1. Blueprints contract alignment — the documented runner contract
- *    (retry with feedback, lifecycle events, result shaping) matches
- *    what ralphly's runner actually receives.
+ * 1. Ralphly-owned workflow assembly — the locally-composed execution
+ *    workflow (from blueprints primitives) preserves the expected contract:
+ *    retry with feedback, lifecycle events, and result shaping.
  *
  * 2. Linear-backed readiness and queueing — backlog selection is
  *    derived from Linear state (workflow categories, session status,
@@ -33,11 +33,10 @@ import {
   Engine,
   CheckFailure,
   FatalError,
-  run as blueprintsRun,
   type AgentResult,
-  type RunConfig,
   type LoopEvent,
 } from "@workspace/blueprints"
+import type { IssueRunConfig } from "../src/runner.js"
 import {
   classifyIssue,
   classifyAll,
@@ -147,7 +146,7 @@ const makeMockLinearLayer = (): {
   }
 }
 
-const baseConfig: RunConfig = {
+const baseConfig: IssueRunConfig = {
   maxAttempts: 2,
   checks: [],
   gitMode: "none",
@@ -179,13 +178,14 @@ const makeFailingEngineLayer = (
   })
 
 // ===========================================================================
-// 1. BLUEPRINTS CONTRACT ALIGNMENT
+// 1. RALPHLY-OWNED WORKFLOW ASSEMBLY
 //
-// Proves the documented blueprints contract (retry with feedback, lifecycle
-// events, result shaping) remains aligned with what ralphly's runner receives.
+// Proves ralphly's locally-assembled execution workflow (composed from
+// blueprints primitives) preserves the expected contract: retry with feedback,
+// lifecycle events observable through session writes, and result shaping.
 // ===========================================================================
 
-describe("acceptance: blueprints contract alignment", () => {
+describe("acceptance: ralphly-owned workflow assembly", () => {
   test("runner receives success result with attempt count and resume token", async () => {
     const { layer: linearLayer, calls } = makeMockLinearLayer()
     const work = makeWork(
@@ -274,7 +274,9 @@ describe("acceptance: blueprints contract alignment", () => {
     expect(receivedPrompts[1]).toContain("assertion failed")
   })
 
-  test("lifecycle events follow documented sequence: attempt_start → check_failed → attempt_start → success", async () => {
+  test("lifecycle events observed through session activities follow documented sequence", async () => {
+    // Proves the ralphly-owned workflow assembly produces the correct
+    // session-write sequence: start → check_failed → success
     let callCount = 0
     const retryEngine = Layer.succeed(Engine, {
       execute: () => {
@@ -288,33 +290,33 @@ describe("acceptance: blueprints contract alignment", () => {
       },
     })
 
-    const events: LoopEvent[] = []
+    const { layer: linearLayer, calls } = makeMockLinearLayer()
+    const work = makeWork(
+      makeIssue({ id: "i-lifecycle", identifier: "ENG-LC", title: "Fix lint" }),
+    )
+
     const result = await Effect.runPromise(
-      blueprintsRun({
-        task: "fix lint",
+      runIssue({
+        work,
         workspace: "/tmp/test-workspace",
         config: { ...baseConfig, maxAttempts: 2 },
         engineLayer: retryEngine,
-        onEvent: (event) => {
-          events.push(event)
-          return Effect.void
-        },
-      }),
+      }).pipe(Effect.provide(linearLayer)),
     )
 
     expect(result.success).toBe(true)
-    // Documented sequence
-    expect(events.map((e) => e.type)).toEqual([
-      "attempt_start",
-      "check_failed",
-      "attempt_start",
-      "success",
-    ])
-    // Feedback is present on the check_failed event
-    expect(events[1]!.feedback).toContain("unused import")
+    expect(result.attempts).toBe(2)
+
+    // Documented session-write sequence: start → check_failed → success
+    const bodies = calls.map((c) => c.content.body)
+    expect(bodies.length).toBe(3)
+    expect(bodies[0]).toContain("Starting work on ENG-LC")
+    expect(bodies[1]).toContain("Check failed")
+    expect(bodies[1]).toContain("unused import")
+    expect(bodies[2]).toContain("All checks passed")
   })
 
-  test("fatal error propagates immediately without retry", async () => {
+  test("fatal error propagates immediately without retry through ralphly workflow", async () => {
     let engineCalls = 0
     const fatalEngine = Layer.succeed(Engine, {
       execute: () => {
@@ -325,19 +327,29 @@ describe("acceptance: blueprints contract alignment", () => {
       },
     })
 
+    const { layer: linearLayer, calls } = makeMockLinearLayer()
+    const work = makeWork(
+      makeIssue({ id: "i-fatal", identifier: "ENG-FATAL", title: "Will crash" }),
+    )
+
     const result = await Effect.runPromise(
-      blueprintsRun({
-        task: "implement feature",
+      runIssue({
+        work,
         workspace: "/tmp/test-workspace",
         config: { ...baseConfig, maxAttempts: 3 },
         engineLayer: fatalEngine,
-      }),
+      }).pipe(Effect.provide(linearLayer)),
     )
 
     // Fatal errors bypass the retry loop
     expect(result.success).toBe(false)
     expect(result.error).toBe("auth token expired")
     expect(engineCalls).toBe(1)
+
+    // Session writes: start → error (no retries)
+    const bodies = calls.map((c) => c.content.body)
+    expect(bodies[0]).toContain("Starting work on ENG-FATAL")
+    expect(bodies[bodies.length - 1]).toMatch(/^Failed after/)
   })
 
   test("retry feedback from ralphly is prepended to task input on same-session retry", async () => {

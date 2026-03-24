@@ -102,7 +102,7 @@ describe("mapLoopEventToActivity", () => {
     const result = mapLoopEventToActivity(event)
 
     // Success is NOT mapped through onEvent — it's written
-    // explicitly by the runner after blueprintsRun completes.
+    // explicitly by the runner after execution completes.
     expect(result).toBeNull()
   })
 
@@ -370,7 +370,7 @@ describe("makeSessionEventHandler", () => {
     await Effect.runPromise(handler(event).pipe(Effect.provide(layer)))
 
     // Success is NOT written through the handler — it's the runner's
-    // responsibility to write it explicitly after blueprintsRun.
+    // responsibility to write it explicitly after execution completes.
     expect(calls).toHaveLength(0)
   })
 })

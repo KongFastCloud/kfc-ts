@@ -23,14 +23,13 @@
  */
 
 import { Effect, Layer } from "effect"
-import type { RunConfig } from "@workspace/blueprints"
 import { Engine } from "@workspace/blueprints"
 import { Linear } from "./linear/client.js"
 import { loadCandidateWork } from "./linear/loader.js"
 import { loadSessionActivities } from "./linear/sessions.js"
 import { selectNext, formatBacklogSummary, type BacklogSelection } from "./backlog.js"
 import { buildClassificationContext } from "./readiness.js"
-import { runIssue, type IssueRunResult } from "./runner.js"
+import { runIssue, type IssueRunResult, type IssueRunConfig } from "./runner.js"
 import type { CandidateWork, SessionPrompt } from "./linear/types.js"
 import { FatalError } from "./errors.js"
 
@@ -44,8 +43,8 @@ export interface WorkerOptions {
   readonly agentId: string
   /** Explicit execution workspace path passed through to blueprints. */
   readonly workspace: string
-  /** Blueprints run configuration. */
-  readonly config: RunConfig
+  /** Execution configuration for issue runs. */
+  readonly config: IssueRunConfig
   /** The Engine layer for agent execution. */
   readonly engineLayer: Layer.Layer<Engine>
 }

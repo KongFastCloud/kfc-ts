@@ -143,7 +143,7 @@ export const mapLoopEventToActivity = (
         ),
       }
     case "success":
-      // Success is written explicitly by the runner after blueprintsRun
+      // Success is written explicitly by the runner after execution
       // completes — not through the onEvent callback. This keeps all
       // terminal writes (success + error) in one place in the runner.
       return null
@@ -250,7 +250,7 @@ export const writeErrorActivity = (
  * The start and terminal activities (success, error) are written
  * explicitly by the runner at entry and exit — not through this handler.
  *
- * Suitable for passing directly as RunnerOptions.onEvent.
+ * Suitable for passing directly as a loop onEvent callback.
  */
 export const makeSessionEventHandler = (
   sessionId: string,

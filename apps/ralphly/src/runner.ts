@@ -1,18 +1,26 @@
 /**
- * ABOUTME: Issue runner that invokes blueprints for a single Linear issue/session.
- * Builds task input from current Linear state, invokes blueprints.run(),
+ * ABOUTME: Issue runner that composes blueprints primitives for a single
+ * Linear issue/session. Owns the per-issue execution workflow assembly
  * and writes explicit session activities at each lifecycle point.
+ *
+ * ## Workflow Composition (owned by this module)
+ *
+ * The runner assembles the execution workflow from blueprints primitives:
+ *   loop(agent → checks → report → ciGitStep) → postLoopGitOps
+ *
+ * This composition is local and explicit — there is no shared runner
+ * abstraction mediating between ralphly and the primitives.
  *
  * ## Session Write Ownership
  *
  * The runner is the single owner of all session-write decisions:
  *
- *   start        → written on entry, before blueprints invocation
+ *   start        → written on entry, before execution
  *   check_failed → written via onEvent callback during the retry loop
- *   success      → written on exit, after blueprints completes successfully
- *   error        → written on exit, after blueprints exhausts all retries
+ *   success      → written on exit, after execution completes successfully
+ *   error        → written on exit, after execution exhausts all retries
  *
- * Terminal writes (success + error) happen in the runner's post-run logic,
+ * Terminal writes (success + error) happen in the runner's post-execution logic,
  * not in the onEvent callback. This keeps all lifecycle boundaries explicit
  * and avoids dual-writing from both the callback and the runner.
  *
@@ -21,10 +29,22 @@
  * Session activities are fire-and-forget — write failures never block execution.
  */
 
-import { Effect, Layer } from "effect"
+import { Effect, Layer, pipe } from "effect"
 import type { LinearClient } from "@linear/sdk"
-import { run as blueprintsRun, type RunConfig, type RunResult, type LoopEvent } from "@workspace/blueprints"
-import { Engine } from "@workspace/blueprints"
+import {
+  Engine,
+  type AgentResult,
+  type LoopEvent,
+  loop,
+  agent,
+  cmd,
+  report,
+  FatalError,
+  buildCiGitStep,
+  executePostLoopGitOps,
+  defaultGitOps,
+  type GitMode,
+} from "@workspace/blueprints"
 import { Linear } from "./linear/client.js"
 import { buildPromptFromIssue } from "./linear/loader.js"
 import {
@@ -40,7 +60,20 @@ import type { CandidateWork } from "./linear/types.js"
 // Types
 // ---------------------------------------------------------------------------
 
-/** Result of running a single issue through blueprints. */
+/**
+ * Execution configuration for a single issue run.
+ * Ralphly owns this type — it is not imported from the blueprints package.
+ * The shape matches the primitives it configures: loop maxAttempts, cmd checks,
+ * git mode, and report mode.
+ */
+export interface IssueRunConfig {
+  readonly maxAttempts: number
+  readonly checks: string[]
+  readonly gitMode: GitMode
+  readonly report: "browser" | "basic" | "none"
+}
+
+/** Result of running a single issue through the execution workflow. */
 export interface IssueRunResult {
   /** Whether blueprints completed successfully. */
   readonly success: boolean
@@ -69,8 +102,8 @@ export interface RunIssueOptions {
   readonly work: CandidateWork
   /** Explicit execution workspace path passed through to blueprints. */
   readonly workspace: string
-  /** Blueprints run configuration. */
-  readonly config: RunConfig
+  /** Execution configuration for the issue run. */
+  readonly config: IssueRunConfig
   /** The Engine layer for agent execution. */
   readonly engineLayer: Layer.Layer<Engine>
   /**
@@ -142,14 +175,23 @@ const writeActivity = (
 // ---------------------------------------------------------------------------
 
 /**
- * Run a single Linear issue through blueprints with explicit session
- * activity writes at each lifecycle point.
+ * Run a single Linear issue through a locally-assembled execution workflow
+ * with explicit session activity writes at each lifecycle point.
  *
- * Flow:
+ * ## Workflow composition (owned by this function)
+ *
+ * The execution pipeline is assembled from blueprints primitives:
+ *   loop(agent → checks → report → ciGitStep) → postLoopGitOps
+ *
+ * This is a flat, visible composition — not a delegation to a shared runner.
+ * The runner decides which steps to include based on its own IssueRunConfig.
+ *
+ * ## Lifecycle
+ *
  * 1. Capture the Linear client from the Effect context
  * 2. Build task input from issue data (+ optional retry feedback)
  * 3. Write **start** activity to the Linear session
- * 4. Invoke blueprints.run() — onEvent writes **check_failed** activities
+ * 4. Execute workflow — onEvent writes **check_failed** activities
  * 5a. On success: write **success** activity
  * 5b. On failure: write **error** activity (the durable held marker)
  * 6. Return structured result
@@ -187,20 +229,77 @@ export const runIssue = (
     // 2. Write start activity
     yield* writeActivity(client, session.id, formatStartActivity(issue.identifier))
 
-    // 3. Invoke blueprints with lifecycle callbacks
+    // 3. Assemble and execute workflow from blueprints primitives
+    //    Composition: loop(agent → checks → report → ciGitStep) → postLoopGitOps
     //    The onEvent callback only handles intermediate check_failed events.
     //    Terminal writes (success/error) are handled below in step 4.
-    const result: RunResult = yield* blueprintsRun({
-      task,
-      workspace,
-      config,
-      engineLayer,
-      onEvent: (event: LoopEvent): Effect.Effect<void, never> => {
-        const mapped = mapLoopEventToActivity(event)
-        if (!mapped) return Effect.void
-        return writeActivity(client, session.id, mapped.body)
+
+    // Mutable state captured by the loop body closure
+    let lastResumeToken: string | undefined
+    let attemptCount = 0
+    const ops = defaultGitOps
+
+    const retryLoop = loop(
+      (feedback, attempt, _maxAttempts) => {
+        attemptCount = attempt
+
+        // Agent step: execute with optional feedback from previous failure
+        let pipeline: Effect.Effect<unknown, any, Engine> = agent(task, workspace, { feedback }).pipe(
+          Effect.tap((result: AgentResult) => {
+            lastResumeToken = result.resumeToken
+            return Effect.void
+          }),
+        )
+
+        // Check steps: run each shell command in sequence
+        for (const check of config.checks) {
+          pipeline = pipe(pipeline, Effect.andThen(cmd(check, workspace)))
+        }
+
+        // Report step: verification agent (when configured)
+        if (config.report !== "none") {
+          pipeline = pipe(pipeline, Effect.andThen(report(task, workspace, config.report)))
+        }
+
+        // In-loop CI git step (only for CI mode — commit, push, wait for CI)
+        if (config.gitMode === "commit_and_push_and_wait_ci") {
+          pipeline = pipe(pipeline, Effect.andThen(buildCiGitStep(ops, workspace)))
+        }
+
+        return pipeline
       },
-    })
+      {
+        maxAttempts: config.maxAttempts,
+        onEvent: (event: LoopEvent): Effect.Effect<void, never> => {
+          const mapped = mapLoopEventToActivity(event)
+          if (!mapped) return Effect.void
+          return writeActivity(client, session.id, mapped.body)
+        },
+      },
+    )
+
+    // Full workflow: retry loop → post-loop git operations → result
+    const result = yield* Effect.gen(function* () {
+      yield* Effect.provide(retryLoop, engineLayer)
+      yield* Effect.provide(executePostLoopGitOps(config.gitMode, ops, workspace), engineLayer)
+
+      return {
+        success: true as const,
+        resumeToken: lastResumeToken,
+        attempts: attemptCount,
+        error: undefined as string | undefined,
+      }
+    }).pipe(
+      Effect.annotateLogs({ gitMode: config.gitMode }),
+      Effect.catchTag("FatalError", (err) =>
+        Effect.succeed({
+          success: false as const,
+          resumeToken: lastResumeToken,
+          error: err.message as string | undefined,
+          attempts: attemptCount,
+        }),
+      ),
+    )
 
     // 4. Write terminal activity — success or error (never both)
     if (result.success) {

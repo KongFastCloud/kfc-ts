@@ -26,7 +26,7 @@
 import { Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Console, Effect, Layer } from "effect"
-import type { RunConfig } from "@workspace/blueprints"
+import type { IssueRunConfig } from "./src/runner.js"
 import { AppLoggerLayer } from "./src/logger.js"
 import { loadConfig } from "./src/config.js"
 import { FatalError } from "./src/errors.js"
@@ -138,7 +138,7 @@ const run = Command.make(
       yield* Console.log("")
       yield* Effect.logInfo("Starting worker loop — draining backlog sequentially")
 
-      const runConfig: RunConfig = {
+      const runConfig: IssueRunConfig = {
         maxAttempts: cfg.maxAttempts,
         checks: [...cfg.checks],
         gitMode: "none",
