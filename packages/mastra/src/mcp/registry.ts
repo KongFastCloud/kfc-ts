@@ -20,13 +20,14 @@ import type { MCPServerRegistration, EnvRequirement } from "./types.ts";
 
 export class MCPConfigError extends Error {
   override readonly name = "MCPConfigError";
-  constructor(
-    public readonly server: string,
-    public readonly missing: readonly string[],
-  ) {
+  readonly server: string;
+  readonly missing: readonly string[];
+  constructor(server: string, missing: readonly string[]) {
     super(
       `MCP server "${server}" is missing required env vars: ${missing.join(", ")}`,
     );
+    this.server = server;
+    this.missing = missing;
   }
 }
 
