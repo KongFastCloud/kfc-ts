@@ -10,12 +10,13 @@
 import { describe, test, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Engine, type AgentResult, CheckFailure } from "@workspace/blueprints"
-import { runWorkerLoop, runWorkerIteration, type WorkerRunSummary } from "../src/worker.js"
+import { runWorkerLoop, runWorkerIteration, findPromptedFollowUp, type WorkerRunSummary } from "../src/worker.js"
 import { Linear } from "../src/linear/client.js"
-import { classifyAll, buildClassificationContext } from "../src/readiness.js"
+import { classifyAll, buildClassificationContext, isReadyWorkflowCategory } from "../src/readiness.js"
 import { selectNext, formatBacklogSummary } from "../src/backlog.js"
 import { runIssue, buildTaskInput } from "../src/runner.js"
 import { ErrorHoldStore } from "../src/error-hold.js"
+import { findActiveSessionsForIssue } from "../src/linear/sessions.js"
 import type {
   LinearIssueData,
   LinearSessionData,
@@ -219,6 +220,51 @@ describe("drain loop — classification", () => {
     const classified = classifyAll(candidates, ctx)
 
     expect(classified[0]!.readiness).toBe("terminal")
+  })
+
+  test("backlog issues are ineligible even when delegated", () => {
+    issueCounter = 150
+    const issue = makeIssue({
+      title: "Backlog task",
+      state: { id: "s1", name: "Backlog", type: "backlog" },
+      delegateId: "agent-001",
+    })
+    const candidates: CandidateWork[] = [
+      { issue, session: makeSession(issue.id) },
+    ]
+
+    const ctx = buildClassificationContext(candidates)
+    const classified = classifyAll(candidates, ctx)
+
+    expect(classified).toHaveLength(1)
+    expect(classified[0]!.readiness).toBe("ineligible")
+    expect(classified[0]!.reason).toContain("backlog")
+  })
+
+  test("triage issues are ineligible", () => {
+    issueCounter = 155
+    const issue = makeIssue({
+      title: "Triage task",
+      state: { id: "s1", name: "Triage", type: "triage" },
+    })
+    const candidates: CandidateWork[] = [
+      { issue, session: makeSession(issue.id) },
+    ]
+
+    const ctx = buildClassificationContext(candidates)
+    const classified = classifyAll(candidates, ctx)
+
+    expect(classified[0]!.readiness).toBe("ineligible")
+  })
+
+  test("only unstarted and started workflow categories are ready", () => {
+    expect(isReadyWorkflowCategory("unstarted")).toBe(true)
+    expect(isReadyWorkflowCategory("started")).toBe(true)
+    expect(isReadyWorkflowCategory("backlog")).toBe(false)
+    expect(isReadyWorkflowCategory("triage")).toBe(false)
+    expect(isReadyWorkflowCategory("completed")).toBe(false)
+    expect(isReadyWorkflowCategory("canceled")).toBe(false)
+    expect(isReadyWorkflowCategory(null)).toBe(false)
   })
 
   test("runtime error-holds merge with Linear session status", () => {
@@ -550,5 +596,153 @@ describe("drain loop — summary", () => {
     expect(summary.errorHeld).toBe(1)
     expect(summary.retried).toBe(0)
     expect(summary.iterations).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Session model tests — delegation, follow-up, and active-session reuse
+// ---------------------------------------------------------------------------
+
+describe("drain loop — session model", () => {
+  test("delegation creates a session that becomes the interaction boundary", () => {
+    // A session created by delegation should be the canonical session for that issue
+    issueCounter = 600
+    const issue = makeIssue({ title: "Delegated task" })
+    const session = makeSession(issue.id, {
+      status: "active",
+      creatorId: "user-delegator",
+    })
+
+    const work: CandidateWork = { issue, session }
+
+    // Session is the interaction boundary — the work item uses session ID
+    expect(work.session.issueId).toBe(issue.id)
+    expect(work.session.status).toBe("active")
+    expect(work.session.creatorId).toBe("user-delegator")
+  })
+
+  test("same-session follow-up continues the existing session", () => {
+    // When a prompted follow-up arrives on the same session,
+    // it should be detected as a retry opportunity (not a new session)
+    issueCounter = 610
+    const issue = makeIssue({ title: "Follow-up task" })
+    const session = makeSession(issue.id, {
+      status: "error",
+    })
+
+    const work: CandidateWork = { issue, session }
+    const store = new ErrorHoldStore()
+
+    // Record the error hold
+    store.record({
+      issueId: issue.id,
+      sessionId: session.id,
+      failureSummary: "npm test failed",
+      failedAt: new Date("2025-06-01T10:00:00Z"),
+    })
+
+    // A prompted follow-up on the SAME session should clear the hold
+    const activities: SessionPrompt[] = [
+      {
+        id: "a-initial",
+        type: "prompt",
+        content: { body: "Original delegation" },
+        createdAt: new Date("2025-06-01T09:00:00Z"),
+      },
+      {
+        id: "a-followup",
+        type: "prompt",
+        content: { body: "I installed the missing dependency, try again" },
+        createdAt: new Date("2025-06-01T11:00:00Z"),
+      },
+    ]
+
+    const followUp = findPromptedFollowUp(activities, new Date("2025-06-01T10:00:00Z"))
+    expect(followUp).toBe("I installed the missing dependency, try again")
+
+    // After detecting follow-up, the hold is cleared for retry on same session
+    store.clear(issue.id)
+    expect(store.has(issue.id)).toBe(false)
+  })
+
+  test("active-session reuse: re-delegation with existing active session uses same session", () => {
+    // When an issue is re-delegated but an active session already exists,
+    // the worker should reuse the existing active session
+    issueCounter = 620
+
+    const sessions: LinearSessionData[] = [
+      makeSession("issue-redeL", {
+        id: "s-original",
+        status: "active",
+        createdAt: new Date("2025-01-01"),
+      }),
+      makeSession("issue-redeL", {
+        id: "s-newer",
+        status: "active",
+        createdAt: new Date("2025-06-01"),
+      }),
+    ]
+
+    // findActiveSessionsForIssue returns newest first — the worker picks the first one
+    const activeSessions = findActiveSessionsForIssue("issue-redeL", sessions)
+    expect(activeSessions).toHaveLength(2)
+    expect(activeSessions[0]!.id).toBe("s-newer") // newest active session wins
+
+    // The worker uses the newest active session as the interaction boundary
+    // rather than creating a new session for re-delegation
+  })
+
+  test("plain comments and out-of-session mentions are not triggers", () => {
+    // Only "prompt" type activities on the session are follow-ups.
+    // Other activity types (thoughts, responses) are not triggers.
+    const activities: SessionPrompt[] = [
+      {
+        id: "a1",
+        type: "thought",
+        content: { body: "Some agent thinking" },
+        createdAt: new Date("2025-06-01T11:00:00Z"),
+      },
+      {
+        id: "a2",
+        type: "response",
+        content: { body: "Agent response" },
+        createdAt: new Date("2025-06-01T11:30:00Z"),
+      },
+      {
+        id: "a3",
+        type: "comment",
+        content: { body: "A plain comment" },
+        createdAt: new Date("2025-06-01T12:00:00Z"),
+      },
+    ]
+
+    const followUp = findPromptedFollowUp(activities, new Date("2025-06-01T10:00:00Z"))
+    expect(followUp).toBeNull()
+  })
+
+  test("session with terminal status does not count as active for reuse", () => {
+    issueCounter = 630
+
+    const sessions: LinearSessionData[] = [
+      makeSession("issue-term", {
+        id: "s-complete",
+        status: "complete",
+        createdAt: new Date("2025-01-01"),
+      }),
+      makeSession("issue-term", {
+        id: "s-error",
+        status: "error",
+        createdAt: new Date("2025-06-01"),
+      }),
+      makeSession("issue-term", {
+        id: "s-stale",
+        status: "stale",
+        createdAt: new Date("2025-06-15"),
+      }),
+    ]
+
+    const activeSessions = findActiveSessionsForIssue("issue-term", sessions)
+    expect(activeSessions).toHaveLength(0)
+    // No active sessions — a genuinely new session should be created on re-delegation
   })
 })

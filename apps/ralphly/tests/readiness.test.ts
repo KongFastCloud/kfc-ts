@@ -9,6 +9,7 @@ import {
   classifyIssue,
   classifyAll,
   buildClassificationContext,
+  isReadyWorkflowCategory,
   type ClassificationContext,
 } from "../src/readiness.js"
 import { selectNext, selectAllActionable, formatBacklogSummary } from "../src/backlog.js"
@@ -102,6 +103,96 @@ describe("classifyIssue", () => {
       const issue = makeIssue({
         id: "i1", identifier: "ENG-1", title: "Dup",
         state: { id: "s1", name: "Duplicate", type: "duplicate" },
+      })
+      const ctx: ClassificationContext = {
+        issuesById: new Map([[issue.id, issue]]),
+        errorHeldIds: new Set(),
+      }
+      const result = classifyIssue(issue, "active", ctx)
+      expect(result.readiness).toBe("terminal")
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // classifyIssue — ineligible (workflow category gating)
+  // ---------------------------------------------------------------------------
+
+  describe("ineligible classification (workflow category)", () => {
+    test("backlog issue is ineligible even when delegated", () => {
+      const issue = makeIssue({
+        id: "i1", identifier: "ENG-1", title: "Backlog item",
+        state: { id: "s1", name: "Backlog", type: "backlog" },
+        delegateId: "agent-001",
+      })
+      const ctx: ClassificationContext = {
+        issuesById: new Map([[issue.id, issue]]),
+        errorHeldIds: new Set(),
+      }
+      const result = classifyIssue(issue, "active", ctx)
+      expect(result.readiness).toBe("ineligible")
+      expect(result.reason).toContain("backlog")
+    })
+
+    test("triage issue is ineligible", () => {
+      const issue = makeIssue({
+        id: "i1", identifier: "ENG-1", title: "Triage item",
+        state: { id: "s1", name: "Triage", type: "triage" },
+      })
+      const ctx: ClassificationContext = {
+        issuesById: new Map([[issue.id, issue]]),
+        errorHeldIds: new Set(),
+      }
+      const result = classifyIssue(issue, "active", ctx)
+      expect(result.readiness).toBe("ineligible")
+      expect(result.reason).toContain("triage")
+    })
+
+    test("issue with null state is ineligible", () => {
+      const issue = makeIssue({
+        id: "i1", identifier: "ENG-1", title: "No state",
+        state: null,
+      })
+      const ctx: ClassificationContext = {
+        issuesById: new Map([[issue.id, issue]]),
+        errorHeldIds: new Set(),
+      }
+      const result = classifyIssue(issue, "active", ctx)
+      expect(result.readiness).toBe("ineligible")
+      expect(result.reason).toContain("unknown")
+    })
+
+    test("unstarted (Todo) issue is eligible and becomes actionable", () => {
+      const issue = makeIssue({
+        id: "i1", identifier: "ENG-1", title: "Todo task",
+        state: { id: "s1", name: "Todo", type: "unstarted" },
+      })
+      const ctx: ClassificationContext = {
+        issuesById: new Map([[issue.id, issue]]),
+        errorHeldIds: new Set(),
+      }
+      const result = classifyIssue(issue, "active", ctx)
+      expect(result.readiness).toBe("actionable")
+    })
+
+    test("started (In Progress) issue is eligible and becomes actionable", () => {
+      const issue = makeIssue({
+        id: "i1", identifier: "ENG-1", title: "In progress task",
+        state: { id: "s1", name: "In Progress", type: "started" },
+      })
+      const ctx: ClassificationContext = {
+        issuesById: new Map([[issue.id, issue]]),
+        errorHeldIds: new Set(),
+      }
+      const result = classifyIssue(issue, "active", ctx)
+      expect(result.readiness).toBe("actionable")
+    })
+
+    test("terminal takes precedence over ineligible", () => {
+      // A completed backlog-type issue should be terminal, not ineligible
+      const issue = makeIssue({
+        id: "i1", identifier: "ENG-1", title: "Done backlog",
+        completedAt: new Date("2025-06-01"),
+        state: { id: "s1", name: "Done", type: "completed" },
       })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
@@ -644,5 +735,135 @@ describe("formatBacklogSummary", () => {
 
     expect(formatted).toContain("skip ENG-1")
     expect(formatted).toContain("blocked")
+  })
+
+  test("includes ineligible count in summary", () => {
+    const backlogIssue = makeIssue({
+      id: "i-bl", identifier: "ENG-BL", title: "Backlog item",
+      state: { id: "s1", name: "Backlog", type: "backlog" },
+    })
+    const actionableIssue = makeIssue({
+      id: "i-act", identifier: "ENG-ACT", title: "Actionable",
+      state: { id: "s2", name: "In Progress", type: "started" },
+    })
+    const candidates: CandidateWork[] = [makeWork(backlogIssue), makeWork(actionableIssue)]
+    const selection = selectNext(candidates)
+    const formatted = formatBacklogSummary(selection)
+
+    expect(formatted).toContain("1 ineligible")
+    expect(formatted).toContain("1 actionable")
+    expect(formatted).toContain("ENG-ACT")
+    expect(selection.summary.ineligible).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isReadyWorkflowCategory
+// ---------------------------------------------------------------------------
+
+describe("isReadyWorkflowCategory", () => {
+  test("unstarted (Todo) is ready", () => {
+    expect(isReadyWorkflowCategory("unstarted")).toBe(true)
+  })
+
+  test("started (In Progress) is ready", () => {
+    expect(isReadyWorkflowCategory("started")).toBe(true)
+  })
+
+  test("backlog is not ready", () => {
+    expect(isReadyWorkflowCategory("backlog")).toBe(false)
+  })
+
+  test("triage is not ready", () => {
+    expect(isReadyWorkflowCategory("triage")).toBe(false)
+  })
+
+  test("completed is not ready", () => {
+    expect(isReadyWorkflowCategory("completed")).toBe(false)
+  })
+
+  test("canceled is not ready", () => {
+    expect(isReadyWorkflowCategory("canceled")).toBe(false)
+  })
+
+  test("duplicate is not ready", () => {
+    expect(isReadyWorkflowCategory("duplicate")).toBe(false)
+  })
+
+  test("null is not ready", () => {
+    expect(isReadyWorkflowCategory(null)).toBe(false)
+  })
+
+  test("undefined is not ready", () => {
+    expect(isReadyWorkflowCategory(undefined)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Backlog issues — explicit exclusion from readiness
+// ---------------------------------------------------------------------------
+
+describe("backlog exclusion from readiness", () => {
+  test("delegated backlog issue is not selected as next work", () => {
+    const backlogIssue = makeIssue({
+      id: "i1", identifier: "ENG-1", title: "Backlog task",
+      state: { id: "s1", name: "Backlog", type: "backlog" },
+      delegateId: "agent-001",
+      priority: 1,
+    })
+    const candidates: CandidateWork[] = [makeWork(backlogIssue)]
+    const result = selectNext(candidates)
+
+    expect(result.next).toBeNull()
+    expect(result.summary.ineligible).toBe(1)
+    expect(result.summary.actionable).toBe(0)
+  })
+
+  test("backlog issues are skipped in favor of Todo/In Progress issues", () => {
+    const backlogIssue = makeIssue({
+      id: "i1", identifier: "ENG-1", title: "Backlog",
+      state: { id: "s1", name: "Backlog", type: "backlog" },
+      priority: 1, // Higher priority
+    })
+    const todoIssue = makeIssue({
+      id: "i2", identifier: "ENG-2", title: "Todo",
+      state: { id: "s2", name: "Todo", type: "unstarted" },
+      priority: 4, // Lower priority
+    })
+    const candidates: CandidateWork[] = [makeWork(backlogIssue), makeWork(todoIssue)]
+    const result = selectNext(candidates)
+
+    expect(result.next!.issue.identifier).toBe("ENG-2")
+    expect(result.summary.ineligible).toBe(1)
+    expect(result.summary.actionable).toBe(1)
+  })
+
+  test("mixed backlog, triage, and actionable issues classify correctly", () => {
+    const backlog = makeIssue({
+      id: "i1", identifier: "ENG-1", title: "Backlog",
+      state: { id: "s1", name: "Backlog", type: "backlog" },
+    })
+    const triage = makeIssue({
+      id: "i2", identifier: "ENG-2", title: "Triage",
+      state: { id: "s2", name: "Triage", type: "triage" },
+    })
+    const inProgress = makeIssue({
+      id: "i3", identifier: "ENG-3", title: "In Progress",
+      state: { id: "s3", name: "In Progress", type: "started" },
+    })
+    const todo = makeIssue({
+      id: "i4", identifier: "ENG-4", title: "Todo",
+      state: { id: "s4", name: "Todo", type: "unstarted" },
+    })
+
+    const candidates: CandidateWork[] = [
+      makeWork(backlog), makeWork(triage), makeWork(inProgress), makeWork(todo),
+    ]
+    const classified = classifyAll(candidates)
+
+    expect(classified[0]!.readiness).toBe("ineligible") // backlog
+    expect(classified[1]!.readiness).toBe("ineligible") // triage
+    expect(classified[2]!.readiness).toBe("actionable") // started
+    expect(classified[3]!.readiness).toBe("actionable") // unstarted
   })
 })

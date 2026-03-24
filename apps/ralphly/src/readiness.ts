@@ -1,12 +1,28 @@
 /**
  * ABOUTME: Dependency-aware readiness classification for Linear issues.
- * Classifies issues as actionable, blocked, error-held, or terminal based
- * on explicit blocking relationships, parent/sub-issue structure, and
- * session status. This module is intentionally pure — no Effect or Linear
- * SDK dependencies — so it can be tested independently from data loading.
+ * Classifies issues as actionable, blocked, error-held, ineligible, or
+ * terminal based on Linear workflow categories, explicit blocking
+ * relationships, parent/sub-issue structure, and session status.
+ *
+ * Readiness is derived from Linear as the source of truth:
+ * - Only issues in Todo (unstarted) or In Progress (started) workflow
+ *   categories are candidates for work. Backlog, Triage, and unknown
+ *   categories are ineligible regardless of delegation status.
+ * - Terminal, error-held, and blocked checks further gate actionability.
+ *
+ * Session semantics (interaction boundary):
+ * - Delegation creates a session ("created" event).
+ * - Follow-up in the session UI creates a "prompted" event on the same
+ *   session, continuing the interaction.
+ * - Plain comments and out-of-session mentions are not supported triggers.
+ * - Re-delegation while an active session exists reuses that session;
+ *   a new session is created only when no active session remains.
+ *
+ * This module is intentionally pure — no Effect or Linear SDK
+ * dependencies — so it can be tested independently from data loading.
  */
 
-import type { LinearIssueData, CandidateWork, AgentSessionStatusValue } from "./linear/types.js"
+import type { LinearIssueData, CandidateWork, AgentSessionStatusValue, WorkflowStateType } from "./linear/types.js"
 import { isTerminal } from "./linear/issues.js"
 
 // ---------------------------------------------------------------------------
@@ -14,7 +30,30 @@ import { isTerminal } from "./linear/issues.js"
 // ---------------------------------------------------------------------------
 
 /** Readiness classification for a delegated issue. */
-export type IssueReadiness = "actionable" | "blocked" | "error-held" | "terminal"
+export type IssueReadiness = "actionable" | "blocked" | "error-held" | "ineligible" | "terminal"
+
+/**
+ * Workflow state types that represent "ready" work — issues the worker
+ * should consider as candidates before blocking/error checks.
+ *
+ * - "unstarted" = Linear's Todo column (ready to begin)
+ * - "started"   = Linear's In Progress column (already underway)
+ *
+ * All other categories (backlog, triage, completed, canceled, duplicate)
+ * are excluded from readiness.
+ */
+const READY_WORKFLOW_CATEGORIES: ReadonlySet<WorkflowStateType> = new Set([
+  "unstarted",
+  "started",
+])
+
+/**
+ * Check whether a workflow state type represents a ready-for-work category.
+ * Returns false for null/undefined state types (conservative: not ready).
+ */
+export const isReadyWorkflowCategory = (
+  stateType: WorkflowStateType | null | undefined,
+): boolean => stateType != null && READY_WORKFLOW_CATEGORIES.has(stateType)
 
 /** A classified work item: candidate work paired with its readiness. */
 export interface ClassifiedWork {
@@ -44,10 +83,19 @@ export interface ClassificationContext {
  *
  * Priority order (first match wins):
  * 1. Terminal — issue is completed, canceled, or duplicate.
- * 2. Error-held — the issue's session is in "error" status.
- * 3. Blocked — a non-terminal issue blocks this one, or a non-terminal
+ * 2. Ineligible — issue is not in a ready workflow category (Todo/In Progress).
+ *    Backlog and Triage issues are ineligible even when delegated.
+ * 3. Error-held — the issue's session is in "error" status.
+ * 4. Blocked — a non-terminal issue blocks this one, or a non-terminal
  *    parent has incomplete non-terminal children that block progress.
- * 4. Actionable — none of the above apply.
+ * 5. Actionable — none of the above apply.
+ *
+ * Workflow category semantics:
+ * - "unstarted" (Todo) and "started" (In Progress) are the only categories
+ *   considered ready for work.
+ * - "backlog" and "triage" are explicitly excluded — they represent work
+ *   that has not yet been promoted to the ready queue.
+ * - Issues with null/unknown state are conservatively treated as ineligible.
  *
  * Blocking semantics:
  * - An issue is blocked if another issue has a "blocks" relation pointing
@@ -66,24 +114,35 @@ export const classifyIssue = (
     return { readiness: "terminal", reason: "issue is in a terminal state" }
   }
 
-  // 2. Error-held (session is in error status)
+  // 2. Ineligible — workflow category is not Todo/In Progress
+  if (!isReadyWorkflowCategory(issue.state?.type)) {
+    const stateDesc = issue.state
+      ? `${issue.state.name} (${issue.state.type})`
+      : "unknown (no state)"
+    return {
+      readiness: "ineligible",
+      reason: `workflow category not ready: ${stateDesc}`,
+    }
+  }
+
+  // 3. Error-held (session is in error status)
   if (sessionStatus === "error" || ctx.errorHeldIds.has(issue.id)) {
     return { readiness: "error-held", reason: "session is in error status" }
   }
 
-  // 3. Blocked by explicit blocking relations
+  // 4. Blocked by explicit blocking relations
   const blockingResult = findBlockingRelation(issue, ctx)
   if (blockingResult) {
     return { readiness: "blocked", reason: blockingResult }
   }
 
-  // 4. Blocked by parent being blocked
+  // 5. Blocked by parent being blocked
   const parentBlockResult = checkParentBlocking(issue, ctx)
   if (parentBlockResult) {
     return { readiness: "blocked", reason: parentBlockResult }
   }
 
-  // 5. Actionable
+  // 6. Actionable
   return { readiness: "actionable", reason: "no blockers detected" }
 }
 

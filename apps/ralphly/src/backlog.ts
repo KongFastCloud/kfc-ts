@@ -32,6 +32,7 @@ export interface BacklogSummary {
   readonly actionable: number
   readonly blocked: number
   readonly errorHeld: number
+  readonly ineligible: number
   readonly terminal: number
   readonly total: number
 }
@@ -116,6 +117,7 @@ const summarize = (classified: readonly ClassifiedWork[]): BacklogSummary => ({
   actionable: classified.filter((c) => c.readiness === "actionable").length,
   blocked: classified.filter((c) => c.readiness === "blocked").length,
   errorHeld: classified.filter((c) => c.readiness === "error-held").length,
+  ineligible: classified.filter((c) => c.readiness === "ineligible").length,
   terminal: classified.filter((c) => c.readiness === "terminal").length,
   total: classified.length,
 })
@@ -127,7 +129,7 @@ const summarize = (classified: readonly ClassifiedWork[]): BacklogSummary => ({
 export const formatBacklogSummary = (selection: BacklogSelection): string => {
   const { summary, next, classified } = selection
   const lines: string[] = [
-    `Backlog: ${summary.total} total, ${summary.actionable} actionable, ${summary.blocked} blocked, ${summary.errorHeld} error-held, ${summary.terminal} terminal`,
+    `Backlog: ${summary.total} total, ${summary.actionable} actionable, ${summary.blocked} blocked, ${summary.errorHeld} error-held, ${summary.ineligible} ineligible, ${summary.terminal} terminal`,
   ]
 
   if (next) {

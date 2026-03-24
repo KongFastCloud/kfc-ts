@@ -15,6 +15,7 @@ export {
   classifyIssue,
   classifyAll,
   buildClassificationContext,
+  isReadyWorkflowCategory,
 } from "./readiness.js"
 export type {
   IssueReadiness,
