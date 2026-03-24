@@ -1,4 +1,5 @@
 import { Effect, Layer, Logger, HashMap } from "effect"
+import { getRemoteLogger } from "./remoteLogger.js"
 
 // -- helpers --
 
@@ -56,7 +57,8 @@ const stderrLogger: Logger.Logger<unknown, void> =
 
 const makeAppLogger = (): Logger.Logger<unknown, void> => {
   const fileLogger = makeFileLogger()
-  return Logger.zip(stderrLogger, fileLogger).pipe(
+  const remoteLogger = getRemoteLogger()
+  return Logger.zip(Logger.zip(stderrLogger, fileLogger), remoteLogger).pipe(
     Logger.map(() => void 0),
   )
 }
@@ -70,10 +72,14 @@ export const AppLoggerLayer: Layer.Layer<never> = Layer.merge(
 
 /**
  * Logger layer for full-screen TUI commands.
- * Writes JSON lines to .ralphe/logs/ but suppresses all stderr output,
- * preventing logfmt noise from corrupting the terminal display.
+ * Writes JSON lines to .ralphe/logs/ and ships eligible events to Axiom,
+ * but suppresses all stderr output, preventing logfmt noise from corrupting
+ * the terminal display.
  */
 export const TuiLoggerLayer: Layer.Layer<never> = Layer.merge(
-  Logger.replace(Logger.defaultLogger, makeFileLogger()),
+  Logger.replace(
+    Logger.defaultLogger,
+    Logger.zip(makeFileLogger(), getRemoteLogger()).pipe(Logger.map(() => void 0)),
+  ),
   Layer.effectDiscard(ensureLogDir),
 )
