@@ -4,18 +4,27 @@
  * issues, process actionable ones through blueprints, skip blocked/error-held,
  * continue after failures, and exit when no actionable work remains.
  *
+ * Backlog selection is derived entirely from Linear-backed state — no private
+ * authoritative hold queue. The worker keeps only transient in-flight state.
+ *
  * Uses mock Engine and Linear layers — no real API calls or agent execution.
  */
 
 import { describe, test, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Engine, type AgentResult, CheckFailure } from "@workspace/blueprints"
-import { runWorkerLoop, runWorkerIteration, findPromptedFollowUp, type WorkerRunSummary } from "../src/worker.js"
+import {
+  runWorkerLoop,
+  runWorkerIteration,
+  findPromptedFollowUp,
+  findLastErrorTimestamp,
+  findLastErrorSummary,
+  type WorkerRunSummary,
+} from "../src/worker.js"
 import { Linear } from "../src/linear/client.js"
 import { classifyAll, buildClassificationContext, isReadyWorkflowCategory } from "../src/readiness.js"
 import { selectNext, formatBacklogSummary } from "../src/backlog.js"
 import { runIssue, buildTaskInput } from "../src/runner.js"
-import { ErrorHoldStore } from "../src/error-hold.js"
 import { findActiveSessionsForIssue } from "../src/linear/sessions.js"
 import type {
   LinearIssueData,
@@ -267,24 +276,24 @@ describe("drain loop — classification", () => {
     expect(isReadyWorkflowCategory(null)).toBe(false)
   })
 
-  test("runtime error-holds merge with Linear session status", () => {
+  test("error-held classification is derived from Linear session status", () => {
     issueCounter = 140
-    const issue = makeIssue({ id: "rt-hold", title: "Runtime held" })
-    const candidates: CandidateWork[] = [
+    const issue = makeIssue({ id: "rt-hold", title: "Error held from Linear" })
+
+    // Active session → should be actionable
+    const activeCandidates: CandidateWork[] = [
       { issue, session: makeSession("rt-hold", { status: "active" }) },
     ]
-
-    // Without runtime hold — should be actionable
-    const ctx1 = buildClassificationContext(candidates)
-    const classified1 = classifyAll(candidates, ctx1)
+    const ctx1 = buildClassificationContext(activeCandidates)
+    const classified1 = classifyAll(activeCandidates, ctx1)
     expect(classified1[0]!.readiness).toBe("actionable")
 
-    // With runtime hold merged — should be error-held
-    const ctx2 = {
-      ...buildClassificationContext(candidates),
-      errorHeldIds: new Set(["rt-hold"]),
-    }
-    const classified2 = classifyAll(candidates, ctx2)
+    // Error session → should be error-held (derived from Linear state)
+    const errorCandidates: CandidateWork[] = [
+      { issue, session: makeSession("rt-hold", { status: "error" }) },
+    ]
+    const ctx2 = buildClassificationContext(errorCandidates)
+    const classified2 = classifyAll(errorCandidates, ctx2)
     expect(classified2[0]!.readiness).toBe("error-held")
   })
 })
@@ -374,59 +383,82 @@ describe("drain loop — selection", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Error-hold tracking tests
+// Error-held state derivation from Linear — no private hold queue
 // ---------------------------------------------------------------------------
 
-describe("drain loop — error-hold tracking", () => {
-  test("ErrorHoldStore tracks failures across iterations", () => {
-    const store = new ErrorHoldStore()
+describe("drain loop — error-held derivation from Linear", () => {
+  test("error-held state is derived from Linear session status", () => {
+    issueCounter = 380
+    const issue = makeIssue({ id: "err-1", title: "Failed task" })
 
-    store.record({
-      issueId: "issue-1",
-      sessionId: "session-1",
-      failureSummary: "Failed after 2 attempt(s): Tests failed",
-      failedAt: new Date("2025-06-01T10:00:00Z"),
-    })
+    // Error session status → error-held classification
+    const candidates: CandidateWork[] = [
+      { issue, session: makeSession("err-1", { status: "error" }) },
+    ]
+    const ctx = buildClassificationContext(candidates)
+    const classified = classifyAll(candidates, ctx)
 
-    store.record({
-      issueId: "issue-2",
-      sessionId: "session-2",
-      failureSummary: "Failed after 1 attempt(s): Build error",
-      failedAt: new Date("2025-06-01T10:05:00Z"),
-    })
-
-    expect(store.size).toBe(2)
-    expect(store.has("issue-1")).toBe(true)
-    expect(store.has("issue-2")).toBe(true)
-    expect(store.heldIds()).toEqual(new Set(["issue-1", "issue-2"]))
-
-    // Clearing one hold leaves the other
-    const cleared = store.clear("issue-1")
-    expect(cleared).not.toBeNull()
-    expect(cleared!.failureSummary).toContain("Tests failed")
-    expect(store.size).toBe(1)
-    expect(store.has("issue-1")).toBe(false)
-    expect(store.has("issue-2")).toBe(true)
+    expect(classified[0]!.readiness).toBe("error-held")
+    expect(classified[0]!.reason).toContain("error")
   })
 
-  test("error-hold records failure summary for retry feedback", () => {
-    const store = new ErrorHoldStore()
+  test("retry feedback is derived from session activities (no private store)", () => {
+    // The worker derives failure context from session activities written to Linear
+    const activities: SessionPrompt[] = [
+      {
+        id: "a-start",
+        type: "thought",
+        content: { body: "Starting work on ENG-1" },
+        createdAt: new Date("2025-06-01T09:00:00Z"),
+      },
+      {
+        id: "a-error",
+        type: "thought",
+        content: { body: "Failed after 2 attempt(s): npm test exited with code 1" },
+        createdAt: new Date("2025-06-01T10:00:00Z"),
+      },
+      {
+        id: "a-followup",
+        type: "prompt",
+        content: { body: "I fixed the test, try again" },
+        createdAt: new Date("2025-06-01T11:00:00Z"),
+      },
+    ]
 
-    store.record({
-      issueId: "fail-1",
-      sessionId: "s-fail-1",
-      failureSummary: "Failed after 2 attempt(s): npm test exited with code 1",
-      failedAt: new Date("2025-06-01T10:00:00Z"),
-    })
+    // Derive error timestamp from Linear activities
+    const errorTimestamp = findLastErrorTimestamp(activities)
+    expect(errorTimestamp).not.toBeNull()
 
-    const hold = store.get("fail-1")
-    expect(hold).not.toBeNull()
-    expect(hold!.failureSummary).toContain("Failed after 2 attempt(s)")
-    expect(hold!.failureSummary).toContain("npm test")
+    // Derive error summary from Linear activities
+    const errorSummary = findLastErrorSummary(activities)
+    expect(errorSummary).toContain("Failed after 2 attempt(s)")
+    expect(errorSummary).toContain("npm test")
 
-    const cleared = store.clear("fail-1")
-    expect(cleared!.failureSummary).toBe(hold!.failureSummary)
-    expect(store.has("fail-1")).toBe(false)
+    // Detect follow-up after error
+    const followUp = findPromptedFollowUp(activities, errorTimestamp!)
+    expect(followUp).toBe("I fixed the test, try again")
+
+    // Build retry feedback (as the worker does)
+    const feedback = [errorSummary, `\nUser follow-up: ${followUp}`].join("\n")
+    expect(feedback).toContain("Failed after 2 attempt(s)")
+    expect(feedback).toContain("I fixed the test")
+  })
+
+  test("no retry when error session has no follow-up", () => {
+    const activities: SessionPrompt[] = [
+      {
+        id: "a-error",
+        type: "thought",
+        content: { body: "Failed after 1 attempt(s): build error" },
+        createdAt: new Date("2025-06-01T10:00:00Z"),
+      },
+    ]
+
+    const errorTimestamp = findLastErrorTimestamp(activities)
+    expect(errorTimestamp).not.toBeNull()
+
+    const followUp = findPromptedFollowUp(activities, errorTimestamp!)
+    expect(followUp).toBeNull()
   })
 })
 
@@ -622,8 +654,9 @@ describe("drain loop — session model", () => {
   })
 
   test("same-session follow-up continues the existing session", () => {
-    // When a prompted follow-up arrives on the same session,
-    // it should be detected as a retry opportunity (not a new session)
+    // When a prompted follow-up arrives on an error session,
+    // it should be detected as a retry opportunity from Linear activities.
+    // No private hold store — the error timestamp is derived from activities.
     issueCounter = 610
     const issue = makeIssue({ title: "Follow-up task" })
     const session = makeSession(issue.id, {
@@ -631,23 +664,20 @@ describe("drain loop — session model", () => {
     })
 
     const work: CandidateWork = { issue, session }
-    const store = new ErrorHoldStore()
 
-    // Record the error hold
-    store.record({
-      issueId: issue.id,
-      sessionId: session.id,
-      failureSummary: "npm test failed",
-      failedAt: new Date("2025-06-01T10:00:00Z"),
-    })
-
-    // A prompted follow-up on the SAME session should clear the hold
+    // Session activities show: delegation → error → follow-up
     const activities: SessionPrompt[] = [
       {
         id: "a-initial",
         type: "prompt",
         content: { body: "Original delegation" },
         createdAt: new Date("2025-06-01T09:00:00Z"),
+      },
+      {
+        id: "a-error",
+        type: "thought",
+        content: { body: "Failed after 2 attempt(s): npm test failed" },
+        createdAt: new Date("2025-06-01T10:00:00Z"),
       },
       {
         id: "a-followup",
@@ -657,12 +687,17 @@ describe("drain loop — session model", () => {
       },
     ]
 
-    const followUp = findPromptedFollowUp(activities, new Date("2025-06-01T10:00:00Z"))
+    // Derive error timestamp from Linear activities (not from a private store)
+    const errorTimestamp = findLastErrorTimestamp(activities)
+    expect(errorTimestamp).toEqual(new Date("2025-06-01T10:00:00Z"))
+
+    // Detect follow-up after the error
+    const followUp = findPromptedFollowUp(activities, errorTimestamp!)
     expect(followUp).toBe("I installed the missing dependency, try again")
 
-    // After detecting follow-up, the hold is cleared for retry on same session
-    store.clear(issue.id)
-    expect(store.has(issue.id)).toBe(false)
+    // The worker would retry with derived feedback
+    const errorSummary = findLastErrorSummary(activities)
+    expect(errorSummary).toContain("npm test failed")
   })
 
   test("active-session reuse: re-delegation with existing active session uses same session", () => {

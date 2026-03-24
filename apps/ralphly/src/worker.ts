@@ -1,11 +1,16 @@
 /**
  * ABOUTME: Worker loop that processes multiple issues from the backlog,
- * handling error-hold and same-session retry behavior.
+ * deriving all queue truth from Linear-backed state on each iteration.
  *
- * When blueprints exhausts retries for an issue, the worker records it
- * as error-held and continues to the next actionable issue instead of
- * stopping globally. A prompted follow-up on the same session can clear
- * the hold and retry the issue with failure feedback.
+ * Backlog selection is a pure derivation over loaded Linear issue/session
+ * state plus the formal readiness rules. The worker keeps only a transient
+ * in-flight set (issue IDs processed in this run) to avoid double-processing
+ * within a single manual invocation — it is NOT an authoritative backlog model.
+ *
+ * Error-held state comes from Linear session status. When a session has
+ * status "error" and a prompted follow-up arrives after the last error
+ * activity, the worker retries with failure feedback derived from session
+ * activities.
  *
  * The worker loop runs until no actionable work remains, then exits.
  */
@@ -17,9 +22,8 @@ import { Linear } from "./linear/client.js"
 import { loadCandidateWork } from "./linear/loader.js"
 import { loadSessionActivities } from "./linear/sessions.js"
 import { selectNext, formatBacklogSummary, type BacklogSelection } from "./backlog.js"
-import { buildClassificationContext, type ClassificationContext } from "./readiness.js"
+import { buildClassificationContext } from "./readiness.js"
 import { runIssue, type IssueRunResult } from "./runner.js"
-import { ErrorHoldStore, buildFailureSummary, type ErrorHoldRecord } from "./error-hold.js"
 import type { CandidateWork, SessionPrompt } from "./linear/types.js"
 import { FatalError } from "./errors.js"
 
@@ -96,31 +100,97 @@ export const findPromptedFollowUp = (
 }
 
 // ---------------------------------------------------------------------------
+// Error activity detection — derived from Linear session activities
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the body text from a session activity's content payload.
+ */
+export const getActivityBody = (activity: SessionPrompt): string | undefined => {
+  if (typeof activity.content !== "object" || activity.content === null) return undefined
+  const body = (activity.content as Record<string, unknown>).body
+  return typeof body === "string" ? body : undefined
+}
+
+/**
+ * Check if a session activity is an error activity written by the worker.
+ * Error activities are "thought" type with body matching the format from
+ * formatErrorActivity() in activities.ts: "Failed after N attempt(s): ...".
+ */
+export const isErrorActivity = (activity: SessionPrompt): boolean => {
+  if (activity.type !== "thought") return false
+  const body = getActivityBody(activity)
+  return typeof body === "string" && body.startsWith("Failed after")
+}
+
+/**
+ * Find the timestamp of the last error activity in a session's history.
+ * Returns null if no error activities are found.
+ *
+ * This derives the failure timestamp from Linear session activities rather
+ * than from an in-memory hold record, keeping queue truth in Linear.
+ */
+export const findLastErrorTimestamp = (
+  activities: readonly SessionPrompt[],
+): Date | null => {
+  for (let i = activities.length - 1; i >= 0; i--) {
+    const a = activities[i]!
+    if (isErrorActivity(a)) {
+      return a.createdAt
+    }
+  }
+  return null
+}
+
+/**
+ * Extract the error summary text from the last error activity.
+ * Returns null if no error activities are found.
+ *
+ * Used to build retry feedback when a prompted follow-up triggers a retry.
+ */
+export const findLastErrorSummary = (
+  activities: readonly SessionPrompt[],
+): string | null => {
+  for (let i = activities.length - 1; i >= 0; i--) {
+    const a = activities[i]!
+    if (isErrorActivity(a)) {
+      return getActivityBody(a) ?? null
+    }
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
 // Worker loop
 // ---------------------------------------------------------------------------
 
 /**
- * Run a single worker iteration: find the next actionable issue and
- * process it. Handles error-hold recording on failure and retry
- * detection for previously error-held issues.
+ * Run a single worker iteration: load fresh state from Linear, check for
+ * retryable error-held issues, classify remaining work, and process the
+ * next actionable issue.
+ *
+ * All backlog truth (error-held state, readiness classification, selection
+ * order) is derived from Linear-backed state. The `inFlight` set is
+ * transient process state that prevents double-processing within a single
+ * worker run — it is NOT an authoritative backlog model.
  *
  * Returns null run result when no actionable work is available.
  */
 export const runWorkerIteration = (
   opts: WorkerOptions,
-  errorHolds: ErrorHoldStore,
+  inFlight: Set<string>,
 ): Effect.Effect<WorkerIterationResult, FatalError, Linear> =>
   Effect.gen(function* () {
     // 1. Load fresh candidate work from Linear
-    const candidates = yield* loadCandidateWork({ agentId: opts.agentId })
+    const allCandidates = yield* loadCandidateWork({ agentId: opts.agentId })
 
-    if (candidates.length === 0) {
+    if (allCandidates.length === 0) {
       yield* Effect.logInfo("No candidate work found")
       return { runResult: null, wasRetry: false, retryFeedback: undefined }
     }
 
-    // 2. Check for prompted follow-ups on error-held issues first
-    const retryResult = yield* checkForRetries(candidates, errorHolds)
+    // 2. Check for retryable error-held issues (derived from Linear session state)
+    const retryResult = yield* checkForRetries(allCandidates)
     if (retryResult) {
       const { work, feedback } = retryResult
       yield* Effect.logInfo(
@@ -134,21 +204,22 @@ export const runWorkerIteration = (
         retryFeedback: feedback,
       })
 
-      // If the retry also fails, re-record the hold
-      if (!result.success) {
-        errorHolds.record({
-          issueId: work.issue.id,
-          sessionId: work.session.id,
-          failureSummary: buildFailureSummary(result.error, result.attempts),
-          failedAt: new Date(),
-        })
-      }
+      // Mark as processed (transient in-flight state)
+      inFlight.add(work.issue.id)
 
       return { runResult: result, wasRetry: true, retryFeedback: feedback }
     }
 
-    // 3. Build classification context with runtime error-holds merged in
-    const ctx = buildClassificationContextWithHolds(candidates, errorHolds)
+    // 3. Exclude already-processed issues (transient in-flight state)
+    const candidates = allCandidates.filter((c) => !inFlight.has(c.issue.id))
+
+    if (candidates.length === 0) {
+      yield* Effect.logInfo("No unprocessed candidates remain")
+      return { runResult: null, wasRetry: false, retryFeedback: undefined }
+    }
+
+    // 4. Classify and select — purely from Linear-backed state
+    const ctx = buildClassificationContext(candidates)
     const selection = selectNext(candidates, ctx)
 
     yield* Effect.logInfo(formatBacklogSummary(selection))
@@ -158,7 +229,7 @@ export const runWorkerIteration = (
       return { runResult: null, wasRetry: false, retryFeedback: undefined }
     }
 
-    // 4. Run the next actionable issue
+    // 5. Run the next actionable issue
     const work = selection.next
     yield* Effect.logInfo(
       `Processing ${work.issue.identifier}: ${work.issue.title}`,
@@ -170,17 +241,12 @@ export const runWorkerIteration = (
       engineLayer: opts.engineLayer,
     })
 
-    // 5. On failure, record error-hold instead of stopping
+    // 6. Mark as processed (transient in-flight state)
+    inFlight.add(work.issue.id)
+
     if (!result.success) {
-      const summary = buildFailureSummary(result.error, result.attempts)
-      errorHolds.record({
-        issueId: work.issue.id,
-        sessionId: work.session.id,
-        failureSummary: summary,
-        failedAt: new Date(),
-      })
       yield* Effect.logWarning(
-        `Issue ${work.issue.identifier} error-held: ${summary}`,
+        `Issue ${work.issue.identifier} failed: ${result.failureSummary}`,
       )
     }
 
@@ -190,15 +256,22 @@ export const runWorkerIteration = (
 /**
  * Run the full worker loop until no actionable work remains.
  *
- * Processes issues one at a time, recording failures as error-holds
- * and continuing to the next actionable issue. Checks for prompted
- * follow-ups on error-held issues at each iteration.
+ * Processes issues one at a time, continuing after failures. Each
+ * iteration loads fresh state from Linear — backlog selection is a pure
+ * derivation over Linear-backed issue/session state, not a private queue.
+ *
+ * A transient in-flight set tracks which issues have been processed in
+ * this run to prevent double-processing. This is NOT an authoritative
+ * backlog model — it is discarded when the worker exits.
  */
 export const runWorkerLoop = (
   opts: WorkerOptions,
 ): Effect.Effect<WorkerRunSummary, FatalError, Linear> =>
   Effect.gen(function* () {
-    const errorHolds = new ErrorHoldStore()
+    // Transient in-flight state: issue IDs processed in this run.
+    // Prevents double-processing within a single worker invocation.
+    // Discarded on exit — not an authoritative backlog model.
+    const inFlight = new Set<string>()
     const iterations: WorkerIterationResult[] = []
     let processed = 0
     let succeeded = 0
@@ -210,7 +283,7 @@ export const runWorkerLoop = (
     const maxIterations = 100
 
     for (let i = 0; i < maxIterations; i++) {
-      const iterResult = yield* runWorkerIteration(opts, errorHolds)
+      const iterResult = yield* runWorkerIteration(opts, inFlight)
       iterations.push(iterResult)
 
       if (!iterResult.runResult) {
@@ -246,11 +319,13 @@ export const runWorkerLoop = (
 
 /**
  * Check error-held issues for prompted follow-ups that would trigger a retry.
+ * Derives error state and failure context entirely from Linear session state
+ * and activities — no private hold queue.
+ *
  * Returns the first retryable work item and its combined feedback, or null.
  */
 const checkForRetries = (
   candidates: readonly CandidateWork[],
-  errorHolds: ErrorHoldStore,
 ): Effect.Effect<
   { work: CandidateWork; feedback: string } | null,
   FatalError,
@@ -258,53 +333,28 @@ const checkForRetries = (
 > =>
   Effect.gen(function* () {
     for (const work of candidates) {
-      const hold = errorHolds.get(work.issue.id)
-      if (!hold) continue
+      // Only check error-status sessions (derived from Linear state)
+      if (work.session.status !== "error") continue
 
-      // Check session activities for a prompted follow-up after the failure
+      // Load session activities to find the error and any follow-up
       const activities = yield* loadSessionActivities(work.session.id)
-      const followUp = findPromptedFollowUp(activities, hold.failedAt)
+      const errorTimestamp = findLastErrorTimestamp(activities)
+      if (!errorTimestamp) continue
 
-      if (followUp) {
-        // Clear the hold — we're about to retry
-        errorHolds.clear(work.issue.id)
+      // Check for prompted follow-up after the error
+      const followUp = findPromptedFollowUp(activities, errorTimestamp)
+      if (!followUp) continue
 
-        // Build combined feedback: failure summary + follow-up context
-        const feedback = [
-          hold.failureSummary,
-          `\nUser follow-up: ${followUp}`,
-        ].join("\n")
+      // Build combined feedback from error summary and follow-up
+      const errorSummary =
+        findLastErrorSummary(activities) ?? "Previous attempt failed"
+      const feedback = [
+        errorSummary,
+        `\nUser follow-up: ${followUp}`,
+      ].join("\n")
 
-        return { work, feedback }
-      }
+      return { work, feedback }
     }
 
     return null
   })
-
-/**
- * Build a ClassificationContext that merges Linear session status
- * with runtime error-hold records. This ensures issues held in the
- * current worker run are classified as error-held even if the
- * Linear session status hasn't been updated yet.
- */
-const buildClassificationContextWithHolds = (
-  candidates: readonly CandidateWork[],
-  errorHolds: ErrorHoldStore,
-): ClassificationContext => {
-  const base = buildClassificationContext(candidates)
-
-  // Merge runtime holds into the error-held set
-  const runtimeHeldIds = errorHolds.heldIds()
-  if (runtimeHeldIds.size === 0) return base
-
-  const mergedHeldIds = new Set(base.errorHeldIds)
-  for (const id of runtimeHeldIds) {
-    mergedHeldIds.add(id)
-  }
-
-  return {
-    issuesById: base.issuesById,
-    errorHeldIds: mergedHeldIds,
-  }
-}

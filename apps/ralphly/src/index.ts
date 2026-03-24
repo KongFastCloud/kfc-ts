@@ -38,15 +38,18 @@ export type {
 export { runIssue, buildTaskInput } from "./runner.js"
 export type { IssueRunResult, RunIssueOptions } from "./runner.js"
 
-// Error-hold
-export { ErrorHoldStore, buildFailureSummary } from "./error-hold.js"
-export type { ErrorHoldRecord } from "./error-hold.js"
+// Failure summary
+export { buildFailureSummary } from "./error-hold.js"
 
 // Worker
 export {
   runWorkerLoop,
   runWorkerIteration,
   findPromptedFollowUp,
+  findLastErrorTimestamp,
+  findLastErrorSummary,
+  isErrorActivity,
+  getActivityBody,
 } from "./worker.js"
 export type {
   WorkerOptions,

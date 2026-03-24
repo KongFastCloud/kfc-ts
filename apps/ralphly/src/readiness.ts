@@ -66,12 +66,14 @@ export interface ClassifiedWork {
 /**
  * Context needed for readiness classification beyond the issue itself.
  * Allows the classifier to look up related issues for blocker resolution.
+ *
+ * Error-held state is not tracked here — it is derived directly from the
+ * session status passed to classifyIssue(). This keeps queue truth in
+ * Linear rather than in a private context model.
  */
 export interface ClassificationContext {
   /** All known issues keyed by ID, for looking up blockers and parents. */
   readonly issuesById: ReadonlyMap<string, LinearIssueData>
-  /** Issue IDs that are in an error-held state (session status "error"). */
-  readonly errorHeldIds: ReadonlySet<string>
 }
 
 // ---------------------------------------------------------------------------
@@ -125,8 +127,8 @@ export const classifyIssue = (
     }
   }
 
-  // 3. Error-held (session is in error status)
-  if (sessionStatus === "error" || ctx.errorHeldIds.has(issue.id)) {
+  // 3. Error-held — derived directly from Linear session status
+  if (sessionStatus === "error") {
     return { readiness: "error-held", reason: "session is in error status" }
   }
 
@@ -221,19 +223,18 @@ const checkParentBlocking = (
 /**
  * Build a ClassificationContext from a set of candidate work items and
  * optionally additional issues (e.g. blockers that aren't delegated).
+ *
+ * Error-held state is not tracked in the context — it is derived directly
+ * from session status in classifyIssue(). This keeps queue truth in Linear.
  */
 export const buildClassificationContext = (
   candidates: readonly CandidateWork[],
   additionalIssues?: readonly LinearIssueData[],
 ): ClassificationContext => {
   const issuesById = new Map<string, LinearIssueData>()
-  const errorHeldIds = new Set<string>()
 
-  for (const { issue, session } of candidates) {
+  for (const { issue } of candidates) {
     issuesById.set(issue.id, issue)
-    if (session.status === "error") {
-      errorHeldIds.add(issue.id)
-    }
   }
 
   if (additionalIssues) {
@@ -242,7 +243,7 @@ export const buildClassificationContext = (
     }
   }
 
-  return { issuesById, errorHeldIds }
+  return { issuesById }
 }
 
 /**

@@ -79,7 +79,6 @@ describe("classifyIssue", () => {
       })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("terminal")
@@ -93,7 +92,6 @@ describe("classifyIssue", () => {
       })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("terminal")
@@ -106,7 +104,6 @@ describe("classifyIssue", () => {
       })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("terminal")
@@ -126,7 +123,6 @@ describe("classifyIssue", () => {
       })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("ineligible")
@@ -140,7 +136,6 @@ describe("classifyIssue", () => {
       })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("ineligible")
@@ -154,7 +149,6 @@ describe("classifyIssue", () => {
       })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("ineligible")
@@ -168,7 +162,6 @@ describe("classifyIssue", () => {
       })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("actionable")
@@ -181,7 +174,6 @@ describe("classifyIssue", () => {
       })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("actionable")
@@ -196,7 +188,6 @@ describe("classifyIssue", () => {
       })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("terminal")
@@ -212,19 +203,8 @@ describe("classifyIssue", () => {
       const issue = makeIssue({ id: "i1", identifier: "ENG-1", title: "Errored" })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "error", ctx)
-      expect(result.readiness).toBe("error-held")
-    })
-
-    test("issue in errorHeldIds set is error-held", () => {
-      const issue = makeIssue({ id: "i1", identifier: "ENG-1", title: "Errored" })
-      const ctx: ClassificationContext = {
-        issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(["i1"]),
-      }
-      const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("error-held")
     })
 
@@ -236,7 +216,6 @@ describe("classifyIssue", () => {
       })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(["i1"]),
       }
       const result = classifyIssue(issue, "error", ctx)
       expect(result.readiness).toBe("terminal")
@@ -261,7 +240,6 @@ describe("classifyIssue", () => {
           [issue.id, issue],
           [blocker.id, blocker],
         ]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("blocked")
@@ -285,7 +263,6 @@ describe("classifyIssue", () => {
           [issue.id, issue],
           [blocker.id, blocker],
         ]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("actionable")
@@ -304,7 +281,6 @@ describe("classifyIssue", () => {
           [issue.id, issue],
           [related.id, related],
         ]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("actionable")
@@ -319,7 +295,6 @@ describe("classifyIssue", () => {
       })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("blocked")
@@ -346,7 +321,6 @@ describe("classifyIssue", () => {
           [terminalBlocker.id, terminalBlocker],
           [activeBlocker.id, activeBlocker],
         ]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("blocked")
@@ -378,7 +352,6 @@ describe("classifyIssue", () => {
           [parent.id, parent],
           [topBlocker.id, topBlocker],
         ]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(child, "active", ctx)
       expect(result.readiness).toBe("blocked")
@@ -400,7 +373,6 @@ describe("classifyIssue", () => {
           [child.id, child],
           [parent.id, parent],
         ]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(child, "active", ctx)
       expect(result.readiness).toBe("actionable")
@@ -422,7 +394,6 @@ describe("classifyIssue", () => {
           [child.id, child],
           [parent.id, parent],
         ]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(child, "active", ctx)
       expect(result.readiness).toBe("actionable")
@@ -435,7 +406,6 @@ describe("classifyIssue", () => {
       })
       const ctx: ClassificationContext = {
         issuesById: new Map([[child.id, child]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(child, "active", ctx)
       expect(result.readiness).toBe("actionable")
@@ -451,7 +421,6 @@ describe("classifyIssue", () => {
       const issue = makeIssue({ id: "i1", identifier: "ENG-1", title: "Task" })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "active", ctx)
       expect(result.readiness).toBe("actionable")
@@ -461,7 +430,6 @@ describe("classifyIssue", () => {
       const issue = makeIssue({ id: "i1", identifier: "ENG-1", title: "Task" })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, "pending", ctx)
       expect(result.readiness).toBe("actionable")
@@ -471,7 +439,6 @@ describe("classifyIssue", () => {
       const issue = makeIssue({ id: "i1", identifier: "ENG-1", title: "Task" })
       const ctx: ClassificationContext = {
         issuesById: new Map([[issue.id, issue]]),
-        errorHeldIds: new Set(),
       }
       const result = classifyIssue(issue, null, ctx)
       expect(result.readiness).toBe("actionable")
@@ -547,12 +514,20 @@ describe("buildClassificationContext", () => {
     expect(ctx.issuesById.get("i-extra")).toBe(extra)
   })
 
-  test("detects error-held issues from session status", () => {
+  test("error-held state is derived from session status in classifyIssue, not context", () => {
+    // Error-held classification comes from sessionStatus passed to classifyIssue(),
+    // not from a separate set in the context. The context only tracks issues for
+    // blocker resolution.
     const issue = makeIssue({ id: "i1", identifier: "ENG-1", title: "Errored" })
     const candidates: CandidateWork[] = [makeWork(issue, { status: "error" })]
     const ctx = buildClassificationContext(candidates)
 
-    expect(ctx.errorHeldIds.has("i1")).toBe(true)
+    // Context has the issue for blocker lookups
+    expect(ctx.issuesById.has("i1")).toBe(true)
+
+    // Classification derives error-held from session status
+    const classified = classifyAll(candidates, ctx)
+    expect(classified[0]!.readiness).toBe("error-held")
   })
 })
 
