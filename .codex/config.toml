@@ -1,3 +1,7 @@
 [mcp_servers.neon]
 type = "http"
 url = "https://mcp.neon.tech/mcp"
+
+[mcp_servers.axiom]
+type = "http"
+url = "https://mcp.axiom.co/mcp"
