@@ -7,101 +7,21 @@ import { agent } from "./agent.js"
 import { cmd } from "./cmd.js"
 import { loop } from "./loop.js"
 import { report } from "./report.js"
-import { gitCommit, gitPush, gitWaitForCi } from "./git.js"
 import { addComment } from "./beads.js"
 import { withSpan } from "./telemetry.js"
 import type { GitMode, RalpheConfig } from "./config.js"
-import type { CheckFailure, FatalError } from "./errors.js"
-import type { GitCommitResult, GitPushResult, GitHubCiResult } from "./git.js"
+import type { TaskResult } from "./TaskResult.js"
+import { defaultGitOps, buildCiGitStep, executePostLoopGitOps } from "./gitWorkflow.js"
 
-export interface TaskResult {
-  readonly success: boolean
-  readonly resumeToken?: string | undefined
-  readonly engine: "claude" | "codex"
-  readonly error?: string | undefined
-}
-
-/**
- * Git operation callbacks for dependency injection.
- * Allows tests to provide fake implementations without module mocking.
- */
-export interface GitOps {
-  readonly commit: () => Effect.Effect<GitCommitResult | undefined, FatalError, Engine>
-  readonly push: () => Effect.Effect<GitPushResult, FatalError>
-  readonly waitCi: () => Effect.Effect<GitHubCiResult, FatalError | CheckFailure>
-}
-
-const defaultGitOps: GitOps = {
-  commit: gitCommit,
-  push: gitPush,
-  waitCi: gitWaitForCi,
-}
+// Re-export from canonical locations for backward compatibility
+export type { TaskResult } from "./TaskResult.js"
+export { type GitOps, buildCiGitStep, executePostLoopGitOps } from "./gitWorkflow.js"
 
 export const resolveGitMode = (
   config: RalpheConfig,
   gitModeOverride?: GitMode,
 ): GitMode =>
   gitModeOverride ?? config.git.mode
-
-/**
- * Build the in-loop git step for commit_and_push_and_wait_ci mode.
- * Commits, pushes, and waits for CI. Returns CheckFailure on CI failure
- * so the retry loop can feed structured annotations back to the agent.
- */
-export const buildCiGitStep = (
-  ops: GitOps,
-): Effect.Effect<void, FatalError | CheckFailure, Engine> =>
-  Effect.gen(function* () {
-    const commitResult = yield* withSpan("git.commit", undefined, ops.commit())
-    if (!commitResult) {
-      yield* Effect.logInfo("Push/CI skipped: no commit created.")
-      return
-    }
-
-    yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
-    const pushResult = yield* withSpan("git.push", undefined, ops.push())
-    yield* Effect.logInfo(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
-    const ciResult = yield* withSpan("git.wait_ci", undefined, ops.waitCi())
-    yield* Effect.logInfo(`CI passed: run ${ciResult.runId}`)
-  })
-
-/**
- * Execute post-loop git operations based on the git mode.
- * Handles "commit" and "commit_and_push" modes.
- * "none" and "commit_and_push_and_wait_ci" are no-ops here
- * (CI mode runs inside the retry loop via buildCiGitStep).
- */
-export const executePostLoopGitOps = (
-  gitMode: GitMode,
-  ops: GitOps,
-): Effect.Effect<void, FatalError, Engine> =>
-  Effect.gen(function* () {
-    yield* Effect.logInfo(`Git mode: ${gitMode}`)
-    switch (gitMode) {
-      case "none":
-      case "commit_and_push_and_wait_ci":
-        break
-      case "commit": {
-        const commitResult = yield* withSpan("git.commit", undefined, ops.commit())
-        if (commitResult) {
-          yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
-        }
-        break
-      }
-      case "commit_and_push": {
-        const commitResult = yield* withSpan("git.commit", undefined, ops.commit())
-        if (!commitResult) {
-          yield* Effect.logInfo("Push skipped: no commit created.")
-          break
-        }
-
-        yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
-        const pushResult = yield* withSpan("git.push", undefined, ops.push())
-        yield* Effect.logInfo(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
-        break
-      }
-    }
-  })
 
 /**
  * Format the session comment for a given engine and resume token.

@@ -2,13 +2,17 @@
 import { Args, Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Console, Effect, Layer } from "effect"
+
 import { AppLoggerLayer, TuiLoggerLayer } from "./src/logger.js"
 import { checkbox, select, input } from "@inquirer/prompts"
 import { FatalError } from "./src/errors.js"
-import { loadConfig, saveConfig, resolveRunConfig, type GitMode, type RalpheConfig } from "./src/config.js"
+import { loadConfig, saveConfig, type GitMode, type RalpheConfig } from "./src/config.js"
 import { detectProject } from "./src/detect.js"
 import { installGlobalSkill } from "./src/skill.js"
-import { runTask } from "./src/runTask.js"
+import { buildRunWorkflow } from "./src/buildRunWorkflow.js"
+import type { RunRequest } from "./src/RunRequest.js"
+import { RunObserver, LogRunObserver } from "./src/RunObserver.js"
+import { EngineResolver, DefaultEngineResolverLayer } from "./src/EngineResolver.js"
 import { watch } from "./src/watcher.js"
 import { launchWatchTui } from "./src/watchTui.js"
 import { initTelemetry, shutdownTelemetry } from "./src/telemetry.js"
@@ -141,25 +145,26 @@ const run = Command.make(
         )
       }
 
+      // Load config for defaults, but build a pure-data RunRequest
       const cfg = loadConfig()
-      const engineChoice = engineOverride.pipe(
-        (opt) => opt._tag === "Some" ? opt.value : cfg.engine,
+      const engineChoice = (
+        engineOverride._tag === "Some" ? engineOverride.value : cfg.engine
       ) as "claude" | "codex"
-      const runConfig = resolveRunConfig(
-        cfg,
-        gitModeOverride.pipe((opt) => opt._tag === "Some" ? opt.value : undefined) as GitMode | undefined,
-      )
+      const resolvedGitMode = (
+        gitModeOverride._tag === "Some" ? gitModeOverride.value : cfg.git.mode
+      ) as GitMode
 
       // Resolve task from file or positional arg
-      let task: string = ""
+      let taskText: string = ""
       if (fileOpt._tag === "Some") {
         const filePath = fileOpt.value
-        task = fs.readFileSync(filePath, "utf-8")
+        taskText = fs.readFileSync(filePath, "utf-8")
         yield* Effect.logInfo(`Task from file: ${filePath}`)
       } else if (taskArg._tag === "Some") {
-        task = taskArg.value
-        yield* Effect.logInfo(`Task: ${task}`)
+        taskText = taskArg.value
+        yield* Effect.logInfo(`Task: ${taskText}`)
       }
+
       yield* Effect.logInfo(`Engine: ${engineChoice}`)
       if (cfg.checks.length > 0) {
         yield* Effect.logInfo(`Root checks: ${cfg.checks.join(", ")}`)
@@ -167,8 +172,25 @@ const run = Command.make(
         yield* Effect.logInfo(`No root checks configured — running agent only.`)
       }
 
-      const result = yield* Effect.annotateLogs({ engine: engineChoice, task: task.slice(0, 80) })(
-        runTask(task, runConfig, { engineOverride: engineChoice }),
+      // Assemble pure-data RunRequest at the CLI boundary
+      const request: RunRequest = {
+        task: taskText,
+        engine: engineChoice,
+        checks: cfg.checks,
+        maxAttempts: cfg.maxAttempts,
+        gitMode: resolvedGitMode,
+        reportMode: cfg.report,
+      }
+
+      // Execute through the app-owned workflow builder with Effect services
+      const result = yield* Effect.annotateLogs({ engine: engineChoice, task: taskText.slice(0, 80) })(
+        Effect.provide(
+          buildRunWorkflow(request),
+          Layer.merge(
+            DefaultEngineResolverLayer,
+            Layer.succeed(RunObserver, LogRunObserver),
+          ),
+        ),
       )
 
       if (!result.success) {
@@ -239,8 +261,6 @@ const cli = Command.run(ralphe, {
   name: "ralphe",
   version: "0.0.1",
 })
-
-export { resolveRunConfig }
 
 export const runCli = (argv: string[]) => {
   // Initialize telemetry and remote log sink once at process startup (fail-open)

@@ -23,7 +23,12 @@ export type { ReportResult } from "./report.js"
 export type { DetectedProject, DetectedCheck } from "./detect.js"
 export type { InstallGlobalSkillOptions, SkillTarget } from "./skill.js"
 export { runTask } from "./runTask.js"
-export type { TaskResult } from "./runTask.js"
+export type { TaskResult } from "./TaskResult.js"
+export { type GitOps, buildCiGitStep, executePostLoopGitOps, defaultGitOps } from "./gitWorkflow.js"
+export { buildRunWorkflow } from "./buildRunWorkflow.js"
+export type { RunRequest } from "./RunRequest.js"
+export { RunObserver, SilentRunObserver, LogRunObserver, composeObservers } from "./RunObserver.js"
+export { EngineResolver, DefaultEngineResolver, DefaultEngineResolverLayer } from "./EngineResolver.js"
 export {
   buildPromptFromIssue,
   queryReady,
