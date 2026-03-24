@@ -9,6 +9,10 @@
  *   categories are candidates for work. Backlog, Triage, and unknown
  *   categories are ineligible regardless of delegation status.
  * - Terminal, error-held, and blocked checks further gate actionability.
+ * - Error-held state is dual-sourced: session status "error" OR an
+ *   unresolved error activity in the session history (activity-derived).
+ *   The activity-based path is the durable mechanism that survives across
+ *   fresh CLI invocations.
  *
  * Session semantics (interaction boundary):
  * - Delegation creates a session ("created" event).
@@ -65,15 +69,30 @@ export interface ClassifiedWork {
 
 /**
  * Context needed for readiness classification beyond the issue itself.
- * Allows the classifier to look up related issues for blocker resolution.
+ * Allows the classifier to look up related issues for blocker resolution
+ * and identify error-held issues from durable Linear-backed state.
  *
- * Error-held state is not tracked here — it is derived directly from the
- * session status passed to classifyIssue(). This keeps queue truth in
- * Linear rather than in a private context model.
+ * Error-held state is dual-sourced:
+ * - Session status "error" (when Linear sets it)
+ * - Activity-derived: the `errorHeldIds` set, built by loading session
+ *   activities and checking for an unresolved error activity (no follow-up
+ *   after the last error). This is the durable mechanism that survives
+ *   across fresh CLI invocations.
+ *
+ * Both sources are derived from Linear — no private in-memory hold store.
  */
 export interface ClassificationContext {
   /** All known issues keyed by ID, for looking up blockers and parents. */
   readonly issuesById: ReadonlyMap<string, LinearIssueData>
+  /**
+   * Issue IDs known to be error-held from session activity analysis.
+   * Built by scanning session activities for unresolved error markers.
+   * This is the durable hold mechanism — it survives process restarts
+   * because the activities are persisted in Linear.
+   *
+   * When empty or omitted, classification falls back to session status alone.
+   */
+  readonly errorHeldIds?: ReadonlySet<string> | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -127,9 +146,15 @@ export const classifyIssue = (
     }
   }
 
-  // 3. Error-held — derived directly from Linear session status
+  // 3. Error-held — derived from Linear-backed state (dual-sourced)
+  //    a) Session status "error" (when Linear sets it)
+  //    b) Activity-derived: errorHeldIds set (built from session activities)
+  //    Both sources are durable across process lifetimes.
   if (sessionStatus === "error") {
     return { readiness: "error-held", reason: "session is in error status" }
+  }
+  if (ctx.errorHeldIds?.has(issue.id)) {
+    return { readiness: "error-held", reason: "session has unresolved error activity" }
   }
 
   // 4. Blocked by explicit blocking relations
@@ -221,15 +246,20 @@ const checkParentBlocking = (
 // ---------------------------------------------------------------------------
 
 /**
- * Build a ClassificationContext from a set of candidate work items and
- * optionally additional issues (e.g. blockers that aren't delegated).
+ * Build a ClassificationContext from a set of candidate work items,
+ * optionally additional issues (e.g. blockers that aren't delegated),
+ * and optionally a set of error-held issue IDs derived from session activities.
  *
- * Error-held state is not tracked in the context — it is derived directly
- * from session status in classifyIssue(). This keeps queue truth in Linear.
+ * Error-held state is dual-sourced:
+ * - Session status "error" (checked in classifyIssue())
+ * - Activity-derived errorHeldIds (passed in here, built from Linear activities)
+ *
+ * Both sources keep queue truth in Linear — no private in-memory hold store.
  */
 export const buildClassificationContext = (
   candidates: readonly CandidateWork[],
   additionalIssues?: readonly LinearIssueData[],
+  errorHeldIds?: ReadonlySet<string>,
 ): ClassificationContext => {
   const issuesById = new Map<string, LinearIssueData>()
 
@@ -243,7 +273,7 @@ export const buildClassificationContext = (
     }
   }
 
-  return { issuesById }
+  return { issuesById, errorHeldIds }
 }
 
 /**

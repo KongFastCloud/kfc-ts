@@ -206,6 +206,49 @@ describe("classifyIssue", () => {
       }
       const result = classifyIssue(issue, "error", ctx)
       expect(result.readiness).toBe("error-held")
+      expect(result.reason).toContain("session is in error status")
+    })
+
+    test("issue in activity-derived errorHeldIds is error-held", () => {
+      const issue = makeIssue({ id: "i1", identifier: "ENG-1", title: "Activity errored" })
+      const ctx: ClassificationContext = {
+        issuesById: new Map([[issue.id, issue]]),
+        errorHeldIds: new Set(["i1"]),
+      }
+      // Session status is "active" but activities say error-held
+      const result = classifyIssue(issue, "active", ctx)
+      expect(result.readiness).toBe("error-held")
+      expect(result.reason).toContain("unresolved error activity")
+    })
+
+    test("issue NOT in errorHeldIds with active status is actionable", () => {
+      const issue = makeIssue({ id: "i1", identifier: "ENG-1", title: "OK" })
+      const ctx: ClassificationContext = {
+        issuesById: new Map([[issue.id, issue]]),
+        errorHeldIds: new Set(["other-id"]),
+      }
+      const result = classifyIssue(issue, "active", ctx)
+      expect(result.readiness).toBe("actionable")
+    })
+
+    test("empty errorHeldIds does not affect classification", () => {
+      const issue = makeIssue({ id: "i1", identifier: "ENG-1", title: "OK" })
+      const ctx: ClassificationContext = {
+        issuesById: new Map([[issue.id, issue]]),
+        errorHeldIds: new Set(),
+      }
+      const result = classifyIssue(issue, "active", ctx)
+      expect(result.readiness).toBe("actionable")
+    })
+
+    test("undefined errorHeldIds does not affect classification", () => {
+      const issue = makeIssue({ id: "i1", identifier: "ENG-1", title: "OK" })
+      const ctx: ClassificationContext = {
+        issuesById: new Map([[issue.id, issue]]),
+        errorHeldIds: undefined,
+      }
+      const result = classifyIssue(issue, "active", ctx)
+      expect(result.readiness).toBe("actionable")
     })
 
     test("terminal takes precedence over error-held", () => {
@@ -219,6 +262,33 @@ describe("classifyIssue", () => {
       }
       const result = classifyIssue(issue, "error", ctx)
       expect(result.readiness).toBe("terminal")
+    })
+
+    test("terminal takes precedence over activity-derived error-held", () => {
+      const issue = makeIssue({
+        id: "i1", identifier: "ENG-1", title: "Done",
+        completedAt: new Date("2025-06-01"),
+        state: { id: "s1", name: "Done", type: "completed" },
+      })
+      const ctx: ClassificationContext = {
+        issuesById: new Map([[issue.id, issue]]),
+        errorHeldIds: new Set(["i1"]),
+      }
+      const result = classifyIssue(issue, "active", ctx)
+      expect(result.readiness).toBe("terminal")
+    })
+
+    test("ineligible takes precedence over activity-derived error-held", () => {
+      const issue = makeIssue({
+        id: "i1", identifier: "ENG-1", title: "Backlog error",
+        state: { id: "s1", name: "Backlog", type: "backlog" },
+      })
+      const ctx: ClassificationContext = {
+        issuesById: new Map([[issue.id, issue]]),
+        errorHeldIds: new Set(["i1"]),
+      }
+      const result = classifyIssue(issue, "active", ctx)
+      expect(result.readiness).toBe("ineligible")
     })
   })
 
@@ -514,20 +584,33 @@ describe("buildClassificationContext", () => {
     expect(ctx.issuesById.get("i-extra")).toBe(extra)
   })
 
-  test("error-held state is derived from session status in classifyIssue, not context", () => {
-    // Error-held classification comes from sessionStatus passed to classifyIssue(),
-    // not from a separate set in the context. The context only tracks issues for
-    // blocker resolution.
+  test("error-held state is dual-sourced: session status and activity-derived errorHeldIds", () => {
+    // Error-held classification comes from two sources:
+    // 1. sessionStatus "error" (when Linear sets it)
+    // 2. errorHeldIds in context (derived from session activities by the worker)
     const issue = makeIssue({ id: "i1", identifier: "ENG-1", title: "Errored" })
-    const candidates: CandidateWork[] = [makeWork(issue, { status: "error" })]
-    const ctx = buildClassificationContext(candidates)
 
-    // Context has the issue for blocker lookups
-    expect(ctx.issuesById.has("i1")).toBe(true)
+    // Source 1: session status "error"
+    const candidates1: CandidateWork[] = [makeWork(issue, { status: "error" })]
+    const ctx1 = buildClassificationContext(candidates1)
+    const classified1 = classifyAll(candidates1, ctx1)
+    expect(classified1[0]!.readiness).toBe("error-held")
 
-    // Classification derives error-held from session status
-    const classified = classifyAll(candidates, ctx)
-    expect(classified[0]!.readiness).toBe("error-held")
+    // Source 2: activity-derived errorHeldIds (session status is "active")
+    const candidates2: CandidateWork[] = [makeWork(issue, { status: "active" })]
+    const ctx2 = buildClassificationContext(candidates2, undefined, new Set(["i1"]))
+    const classified2 = classifyAll(candidates2, ctx2)
+    expect(classified2[0]!.readiness).toBe("error-held")
+  })
+
+  test("buildClassificationContext passes errorHeldIds to context", () => {
+    const issue = makeIssue({ id: "i1", identifier: "ENG-1", title: "Task" })
+    const candidates: CandidateWork[] = [makeWork(issue)]
+    const errorHeldIds = new Set(["i1"])
+    const ctx = buildClassificationContext(candidates, undefined, errorHeldIds)
+
+    expect(ctx.errorHeldIds).toBe(errorHeldIds)
+    expect(ctx.errorHeldIds!.has("i1")).toBe(true)
   })
 })
 

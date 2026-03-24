@@ -7,10 +7,17 @@
  * in-flight set (issue IDs processed in this run) to avoid double-processing
  * within a single manual invocation — it is NOT an authoritative backlog model.
  *
- * Error-held state comes from Linear session status. When a session has
- * status "error" and a prompted follow-up arrives after the last error
- * activity, the worker retries with failure feedback derived from session
- * activities.
+ * Error-held state is dual-sourced from Linear:
+ * - Session status "error" (when Linear sets it)
+ * - Activity-derived: unresolved error activity in session history (durable)
+ *
+ * The activity-based detection is the durable mechanism that survives across
+ * fresh CLI invocations. On each iteration, the worker loads session activities
+ * for candidates and builds an error-held set for classification.
+ *
+ * When a session has an unresolved error and a prompted follow-up arrives
+ * after the last error activity, the worker retries with failure feedback
+ * derived from session activities.
  *
  * The worker loop runs until no actionable work remains, then exits.
  */
@@ -218,8 +225,11 @@ export const runWorkerIteration = (
       return { runResult: null, wasRetry: false, retryFeedback: undefined }
     }
 
-    // 4. Classify and select — purely from Linear-backed state
-    const ctx = buildClassificationContext(candidates)
+    // 4. Build error-held set from session activities (durable Linear state)
+    const errorHeldIds = yield* buildErrorHeldIds(candidates)
+
+    // 5. Classify and select — purely from Linear-backed state
+    const ctx = buildClassificationContext(candidates, undefined, errorHeldIds)
     const selection = selectNext(candidates, ctx)
 
     yield* Effect.logInfo(formatBacklogSummary(selection))
@@ -229,7 +239,7 @@ export const runWorkerIteration = (
       return { runResult: null, wasRetry: false, retryFeedback: undefined }
     }
 
-    // 5. Run the next actionable issue
+    // 6. Run the next actionable issue
     const work = selection.next
     yield* Effect.logInfo(
       `Processing ${work.issue.identifier}: ${work.issue.title}`,
@@ -241,7 +251,7 @@ export const runWorkerIteration = (
       engineLayer: opts.engineLayer,
     })
 
-    // 6. Mark as processed (transient in-flight state)
+    // 7. Mark as processed (transient in-flight state)
     inFlight.add(work.issue.id)
 
     if (!result.success) {
@@ -316,6 +326,52 @@ export const runWorkerLoop = (
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Build a set of issue IDs that are error-held based on session activities.
+ *
+ * For each candidate, loads session activities from Linear and checks whether
+ * the session has an unresolved error activity (an error with no subsequent
+ * prompted follow-up). This is the durable hold mechanism — it works even
+ * when Linear has not set the session status to "error".
+ *
+ * Issues that already have session status "error" are included unconditionally
+ * (no need to re-scan activities for those).
+ *
+ * Returns a Set of issue IDs that should be classified as error-held.
+ */
+export const buildErrorHeldIds = (
+  candidates: readonly CandidateWork[],
+): Effect.Effect<Set<string>, FatalError, Linear> =>
+  Effect.gen(function* () {
+    const held = new Set<string>()
+
+    for (const work of candidates) {
+      // Session status "error" is always error-held (no activity check needed)
+      if (work.session.status === "error") {
+        held.add(work.issue.id)
+        continue
+      }
+
+      // For non-error sessions, check activities for an unresolved error marker.
+      // This catches the case where the worker wrote an error activity but
+      // Linear hasn't (or can't) transition the session status to "error".
+      const activities = yield* loadSessionActivities(work.session.id)
+      const errorTimestamp = findLastErrorTimestamp(activities)
+      if (!errorTimestamp) continue
+
+      // Error found — check if there's a follow-up that clears it
+      const followUp = findPromptedFollowUp(activities, errorTimestamp)
+      if (!followUp) {
+        // Unresolved error → error-held
+        held.add(work.issue.id)
+      }
+      // If there IS a follow-up, the error is cleared → not held
+      // (checkForRetries will pick this up as a retry candidate)
+    }
+
+    return held
+  })
 
 /**
  * Check error-held issues for prompted follow-ups that would trigger a retry.

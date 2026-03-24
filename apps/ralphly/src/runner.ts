@@ -3,6 +3,9 @@
  * Builds task input from current Linear state, invokes blueprints.run(),
  * and translates lifecycle events into Linear session activities.
  *
+ * On terminal failure, writes a durable error activity to the Linear session
+ * so that a fresh `ralphly run` can detect the failure from activities alone.
+ *
  * This is the integration layer between ralphly's Linear-aware model
  * and the tracker-agnostic blueprints execution runner.
  */
@@ -132,8 +135,12 @@ const writeActivity = (
  * 2. Build task input from issue data (+ optional retry feedback)
  * 3. Write start acknowledgement to the Linear session
  * 4. Invoke blueprints.run() with lifecycle callbacks wired to session updates
- * 5. On failure, write a terminal error activity
+ * 5. On failure, write a terminal error activity (the durable hold marker)
  * 6. Return structured result
+ *
+ * The error activity written on failure (step 5) is the durable hold mechanism:
+ * a fresh `ralphly run` can load session activities and detect the error activity
+ * to classify the issue as error-held without any in-memory state.
  *
  * Session activities are fire-and-forget — write failures never block execution.
  * The Linear service dependency is required for session writes.

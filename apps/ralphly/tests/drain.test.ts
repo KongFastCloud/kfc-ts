@@ -16,6 +16,7 @@ import { Engine, type AgentResult, CheckFailure } from "@workspace/blueprints"
 import {
   runWorkerLoop,
   runWorkerIteration,
+  buildErrorHeldIds,
   findPromptedFollowUp,
   findLastErrorTimestamp,
   findLastErrorSummary,
@@ -459,6 +460,181 @@ describe("drain loop — error-held derivation from Linear", () => {
 
     const followUp = findPromptedFollowUp(activities, errorTimestamp!)
     expect(followUp).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Durable error-held state — persists across fresh invocations
+// ---------------------------------------------------------------------------
+
+describe("drain loop — durable error-held state across runs", () => {
+  test("fresh invocation detects error-held issue from Linear session status", () => {
+    // Simulates what a fresh `ralphly run` sees after a previous run failed
+    // and Linear has set the session status to "error".
+    issueCounter = 700
+    const issue = makeIssue({ id: "fresh-err-1", title: "Previously failed" })
+    const session = makeSession("fresh-err-1", { status: "error" })
+    const candidates: CandidateWork[] = [{ issue, session }]
+
+    const ctx = buildClassificationContext(candidates)
+    const classified = classifyAll(candidates, ctx)
+
+    expect(classified[0]!.readiness).toBe("error-held")
+    expect(classified[0]!.reason).toContain("error")
+  })
+
+  test("activity-derived error-held set marks issues even without error session status", () => {
+    // The session status might not be "error" (Linear may not set it).
+    // The activity-derived errorHeldIds set catches this case.
+    issueCounter = 701
+    const issue = makeIssue({ id: "act-err-1", title: "Failed via activities" })
+    const session = makeSession("act-err-1", { status: "active" }) // NOT "error"
+    const candidates: CandidateWork[] = [{ issue, session }]
+
+    // Build context with activity-derived error-held IDs
+    const errorHeldIds = new Set(["act-err-1"])
+    const ctx = buildClassificationContext(candidates, undefined, errorHeldIds)
+    const classified = classifyAll(candidates, ctx)
+
+    expect(classified[0]!.readiness).toBe("error-held")
+    expect(classified[0]!.reason).toContain("unresolved error activity")
+  })
+
+  test("activity-derived error-held does not override terminal classification", () => {
+    issueCounter = 702
+    const issue = makeIssue({
+      id: "term-err", title: "Terminal with error",
+      completedAt: new Date("2025-06-01"),
+      state: { id: "s1", name: "Done", type: "completed" },
+    })
+    const candidates: CandidateWork[] = [
+      { issue, session: makeSession("term-err") },
+    ]
+
+    // Even if activities say error-held, terminal takes precedence
+    const errorHeldIds = new Set(["term-err"])
+    const ctx = buildClassificationContext(candidates, undefined, errorHeldIds)
+    const classified = classifyAll(candidates, ctx)
+
+    expect(classified[0]!.readiness).toBe("terminal")
+  })
+
+  test("fresh invocation can read failure reason from session activities", () => {
+    // After a terminal failure, the runner wrote an error activity to Linear.
+    // A fresh run loads session activities and extracts the failure summary.
+    const activities: SessionPrompt[] = [
+      {
+        id: "a-start",
+        type: "thought",
+        content: { body: "Starting work on ENG-700" },
+        createdAt: new Date("2025-06-01T09:00:00Z"),
+      },
+      {
+        id: "a-error",
+        type: "thought",
+        content: { body: "Failed after 3 attempt(s): npm test exited with code 1" },
+        createdAt: new Date("2025-06-01T10:00:00Z"),
+      },
+    ]
+
+    const errorSummary = findLastErrorSummary(activities)
+    expect(errorSummary).toBe("Failed after 3 attempt(s): npm test exited with code 1")
+
+    const errorTimestamp = findLastErrorTimestamp(activities)
+    expect(errorTimestamp).toEqual(new Date("2025-06-01T10:00:00Z"))
+
+    // No follow-up yet → not retryable
+    const followUp = findPromptedFollowUp(activities, errorTimestamp!)
+    expect(followUp).toBeNull()
+  })
+
+  test("follow-up after error enables retry on fresh invocation", () => {
+    // A user sends a follow-up in the Linear session UI after the worker exited.
+    // The next `ralphly run` detects the follow-up and triggers retry.
+    const activities: SessionPrompt[] = [
+      {
+        id: "a-error",
+        type: "thought",
+        content: { body: "Failed after 2 attempt(s): missing dependency" },
+        createdAt: new Date("2025-06-01T10:00:00Z"),
+      },
+      {
+        id: "a-followup",
+        type: "prompt",
+        content: { body: "Installed the dependency, please retry" },
+        createdAt: new Date("2025-06-02T09:00:00Z"), // Next day — different process
+      },
+    ]
+
+    const errorTimestamp = findLastErrorTimestamp(activities)
+    expect(errorTimestamp).not.toBeNull()
+
+    const followUp = findPromptedFollowUp(activities, errorTimestamp!)
+    expect(followUp).toBe("Installed the dependency, please retry")
+
+    // Build combined feedback as the worker would
+    const errorSummary = findLastErrorSummary(activities)
+    const feedback = [errorSummary, `\nUser follow-up: ${followUp}`].join("\n")
+    expect(feedback).toContain("missing dependency")
+    expect(feedback).toContain("Installed the dependency")
+  })
+
+  test("error-held issue blocks selection until follow-up clears it", () => {
+    issueCounter = 710
+    const errorIssue = makeIssue({
+      id: "err-blocked",
+      identifier: "ENG-ERR",
+      title: "Error held",
+      priority: 1, // High priority
+    })
+    const actionableIssue = makeIssue({
+      id: "act-ok",
+      identifier: "ENG-OK",
+      title: "Actionable",
+      priority: 4, // Low priority
+    })
+
+    const candidates: CandidateWork[] = [
+      { issue: errorIssue, session: makeSession("err-blocked", { status: "error" }) },
+      { issue: actionableIssue, session: makeSession("act-ok") },
+    ]
+
+    const selection = selectNext(candidates)
+
+    // Error-held issue is skipped despite higher priority
+    expect(selection.next!.issue.identifier).toBe("ENG-OK")
+    expect(selection.summary.errorHeld).toBe(1)
+    expect(selection.summary.actionable).toBe(1)
+  })
+
+  test("activity-derived error-held also blocks selection", () => {
+    issueCounter = 720
+    const errorIssue = makeIssue({
+      id: "act-err-sel",
+      identifier: "ENG-AERR",
+      title: "Activity error held",
+      priority: 1,
+    })
+    const actionableIssue = makeIssue({
+      id: "act-ok-sel",
+      identifier: "ENG-AOK",
+      title: "Actionable",
+      priority: 4,
+    })
+
+    const candidates: CandidateWork[] = [
+      { issue: errorIssue, session: makeSession("act-err-sel", { status: "active" }) },
+      { issue: actionableIssue, session: makeSession("act-ok-sel") },
+    ]
+
+    // Pass activity-derived error-held set
+    const errorHeldIds = new Set(["act-err-sel"])
+    const ctx = buildClassificationContext(candidates, undefined, errorHeldIds)
+    const selection = selectNext(candidates, ctx)
+
+    expect(selection.next!.issue.identifier).toBe("ENG-AOK")
+    expect(selection.summary.errorHeld).toBe(1)
+    expect(selection.summary.actionable).toBe(1)
   })
 })
 

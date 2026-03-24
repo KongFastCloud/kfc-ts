@@ -45,6 +45,7 @@ export { buildFailureSummary } from "./error-hold.js"
 export {
   runWorkerLoop,
   runWorkerIteration,
+  buildErrorHeldIds,
   findPromptedFollowUp,
   findLastErrorTimestamp,
   findLastErrorSummary,
