@@ -174,7 +174,7 @@ describe("remote logger entry format", () => {
     expect(entry.message).toBe("hello")
   })
 
-  test("includes annotation fields from Effect.annotateLogs", () => {
+  test("includes allowed annotation fields from Effect.annotateLogs", () => {
     const logger = getRemoteLogger()
     const program = Effect.annotateLogs({ engine: "claude", "issue.id": "TST-42" })(
       Effect.logInfo("task-claimed"),
@@ -186,6 +186,137 @@ describe("remote logger entry format", () => {
     const entry = _getBufferForTesting()[0]!
     expect(entry.engine).toBe("claude")
     expect(entry["issue.id"]).toBe("TST-42")
+  })
+
+  test("normalizes annotation keys to canonical remote field names", () => {
+    const logger = getRemoteLogger()
+    const program = Effect.annotateLogs({
+      taskId: "PROJ-99",
+      attempt: 2,
+      maxAttempts: 5,
+    })(Effect.logInfo("attempt-start"))
+    Effect.runSync(
+      program.pipe(Effect.provide(Logger.replace(Logger.defaultLogger, logger))),
+    )
+
+    const entry = _getBufferForTesting()[0]!
+    // Internal keys are mapped to canonical remote names
+    expect(entry["issue.id"]).toBe("PROJ-99")
+    expect(entry["loop.attempt"]).toBe(2)
+    expect(entry["loop.max_attempts"]).toBe(5)
+    // Internal key names should NOT appear
+    expect(entry.taskId).toBeUndefined()
+    expect(entry.attempt).toBeUndefined()
+    expect(entry.maxAttempts).toBeUndefined()
+  })
+
+  test("includes all approved structured fields when present", () => {
+    const logger = getRemoteLogger()
+    const program = Effect.annotateLogs({
+      "issue.id": "TST-1",
+      engine: "claude",
+      "check.name": "lint",
+      trace_id: "abc-123",
+      span_id: "def-456",
+      workerId: "w-7",
+      "loop.attempt": 1,
+      "loop.max_attempts": 3,
+    })(Effect.logInfo("full-context"))
+    Effect.runSync(
+      program.pipe(Effect.provide(Logger.replace(Logger.defaultLogger, logger))),
+    )
+
+    const entry = _getBufferForTesting()[0]!
+    expect(entry["issue.id"]).toBe("TST-1")
+    expect(entry.engine).toBe("claude")
+    expect(entry["check.name"]).toBe("lint")
+    expect(entry.trace_id).toBe("abc-123")
+    expect(entry.span_id).toBe("def-456")
+    expect(entry.workerId).toBe("w-7")
+    expect(entry["loop.attempt"]).toBe(1)
+    expect(entry["loop.max_attempts"]).toBe(3)
+  })
+})
+
+describe("remote log field filtering", () => {
+  beforeEach(() => {
+    process.env.AXIOM_TOKEN = "test-token"
+    process.env.AXIOM_LOG_DATASET = "test-logs"
+    process.env.AXIOM_DOMAIN = "https://example.axiom.co"
+    initRemoteLogger()
+  })
+
+  test("excludes disallowed high-cardinality fields", () => {
+    const logger = getRemoteLogger()
+    const program = Effect.annotateLogs({
+      issueTitle: "Fix the broken widget",
+      prompt: "You are a coding agent...",
+      stdout: "lots of build output here...",
+      stderr: "error: something failed",
+      command: "bun run build --verbose",
+      resumeToken: "tok_abc123",
+      taskText: "Full description of the task...",
+    })(Effect.logInfo("should-be-stripped"))
+    Effect.runSync(
+      program.pipe(Effect.provide(Logger.replace(Logger.defaultLogger, logger))),
+    )
+
+    const entry = _getBufferForTesting()[0]!
+    // Core fields are present
+    expect(entry.message).toBe("should-be-stripped")
+    expect(entry.level).toBe("INFO")
+    expect(entry._time).toBeDefined()
+
+    // All disallowed fields must be absent
+    expect(entry.issueTitle).toBeUndefined()
+    expect(entry.prompt).toBeUndefined()
+    expect(entry.stdout).toBeUndefined()
+    expect(entry.stderr).toBeUndefined()
+    expect(entry.command).toBeUndefined()
+    expect(entry.resumeToken).toBeUndefined()
+    expect(entry.taskText).toBeUndefined()
+  })
+
+  test("mixes allowed and disallowed fields, only allowed pass through", () => {
+    const logger = getRemoteLogger()
+    const program = Effect.annotateLogs({
+      engine: "claude",
+      "issue.id": "TST-42",
+      issueTitle: "Secret title",
+      prompt: "System prompt...",
+      "check.name": "typecheck",
+    })(Effect.logInfo("mixed-annotations"))
+    Effect.runSync(
+      program.pipe(Effect.provide(Logger.replace(Logger.defaultLogger, logger))),
+    )
+
+    const entry = _getBufferForTesting()[0]!
+    // Allowed fields present
+    expect(entry.engine).toBe("claude")
+    expect(entry["issue.id"]).toBe("TST-42")
+    expect(entry["check.name"]).toBe("typecheck")
+
+    // Disallowed fields absent
+    expect(entry.issueTitle).toBeUndefined()
+    expect(entry.prompt).toBeUndefined()
+  })
+
+  test("remote entries have only core + allowlisted keys", () => {
+    const logger = getRemoteLogger()
+    const program = Effect.annotateLogs({
+      engine: "claude",
+      "issue.id": "TST-1",
+      randomField: "should-not-appear",
+      anotherUnknown: 42,
+    })(Effect.logInfo("strict-contract"))
+    Effect.runSync(
+      program.pipe(Effect.provide(Logger.replace(Logger.defaultLogger, logger))),
+    )
+
+    const entry = _getBufferForTesting()[0]!
+    const keys = Object.keys(entry).sort()
+    // Only core fields + allowed annotation fields
+    expect(keys).toEqual(["_time", "engine", "issue.id", "level", "message"])
   })
 })
 

@@ -78,6 +78,49 @@ const annotationsToRecord = (annotations: HashMap.HashMap<string, unknown>): Rec
 }
 
 // ---------------------------------------------------------------------------
+// Remote field allowlist
+// ---------------------------------------------------------------------------
+
+/**
+ * Mapping from annotation key → remote field name.
+ * Only annotations whose key appears here are forwarded to Axiom.
+ * Keys are normalized to the canonical remote contract names.
+ */
+const ALLOWED_ANNOTATION_MAP: Record<string, string> = {
+  // Direct matches (annotation key === remote field name)
+  "issue.id": "issue.id",
+  engine: "engine",
+  "check.name": "check.name",
+  trace_id: "trace_id",
+  span_id: "span_id",
+  workerId: "workerId",
+
+  // Normalized mappings (internal annotation key → canonical remote name)
+  taskId: "issue.id",
+  attempt: "loop.attempt",
+  maxAttempts: "loop.max_attempts",
+
+  // Direct dotted names (if callers already use the canonical form)
+  "loop.attempt": "loop.attempt",
+  "loop.max_attempts": "loop.max_attempts",
+}
+
+/**
+ * Pick only the allowed annotation fields and map them to canonical remote names.
+ * Any annotation key not in ALLOWED_ANNOTATION_MAP is silently dropped.
+ */
+const pickAllowedFields = (annotations: HashMap.HashMap<string, unknown>): Record<string, unknown> => {
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of annotations) {
+    const remoteName = ALLOWED_ANNOTATION_MAP[key]
+    if (remoteName !== undefined) {
+      result[remoteName] = value
+    }
+  }
+  return result
+}
+
+// ---------------------------------------------------------------------------
 // Flush
 // ---------------------------------------------------------------------------
 
@@ -191,7 +234,7 @@ export const getRemoteLogger = (): Logger.Logger<unknown, void> =>
       _time: date.toISOString(),
       level: logLevel.label,
       message: formatMessage(message),
-      ...annotationsToRecord(annotations),
+      ...pickAllowedFields(annotations),
     }
 
     buffer.push(entry)
