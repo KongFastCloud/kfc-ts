@@ -32,16 +32,16 @@ const parseEnvExampleKeys = (content: string): string[] =>
     .filter((line) => /^[A-Z_]+=/.test(line))
     .map((line) => line.split("=")[0]!)
 
-/** The three env vars that config.ts actually reads via envOr(). */
+/** The env vars that config.ts actually reads via envOr(). */
 const REQUIRED_ENV_KEYS = [
-  "RALPHLY_REPO_PATH",
+  "RALPHLY_WORKSPACE_PATH",
   "LINEAR_API_KEY",
   "LINEAR_AGENT_ID",
 ] as const
 
 /** Config file field paths that map to the required env vars. */
 const REQUIRED_CONFIG_FIELDS = [
-  { envKey: "RALPHLY_REPO_PATH", configPath: "repoPath" },
+  { envKey: "RALPHLY_WORKSPACE_PATH", configPath: "workspacePath" },
   { envKey: "LINEAR_API_KEY", configPath: "linear.apiKey" },
   { envKey: "LINEAR_AGENT_ID", configPath: "linear.agentId" },
 ] as const
@@ -179,14 +179,14 @@ describe("package scripts match ralphe conventions", () => {
 
 describe("documented setup path reaches successful config", () => {
   test("env-only path: set all three env vars → loadConfig succeeds", () => {
-    process.env.RALPHLY_REPO_PATH = "/tmp/setup-test-repo"
+    process.env.RALPHLY_WORKSPACE_PATH = "/tmp/setup-test-workspace"
     process.env.LINEAR_API_KEY = "lin_api_setup_test"
     process.env.LINEAR_AGENT_ID = "agent-setup-test"
 
     const result = loadConfig(TEST_DIR)
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.config.repoPath).toBe("/tmp/setup-test-repo")
+      expect(result.config.workspacePath).toBe("/tmp/setup-test-workspace")
       expect(result.config.linear.apiKey).toBe("lin_api_setup_test")
       expect(result.config.linear.agentId).toBe("agent-setup-test")
       expect(result.config.maxAttempts).toBe(2)
@@ -197,7 +197,7 @@ describe("documented setup path reaches successful config", () => {
   test("config-file-only path: write config.json → loadConfig succeeds", () => {
     saveConfig(
       {
-        repoPath: "/tmp/config-file-repo",
+        workspacePath: "/tmp/config-file-workspace",
         linear: { apiKey: "lin_api_file_test", agentId: "agent-file-test" },
       },
       TEST_DIR,
@@ -206,26 +206,26 @@ describe("documented setup path reaches successful config", () => {
     const result = loadConfig(TEST_DIR)
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.config.repoPath).toBe("/tmp/config-file-repo")
+      expect(result.config.workspacePath).toBe("/tmp/config-file-workspace")
       expect(result.config.linear.apiKey).toBe("lin_api_file_test")
       expect(result.config.linear.agentId).toBe("agent-file-test")
     }
   })
 
   test("mixed path: some values from env, some from file → loadConfig succeeds", () => {
-    // Simulates a developer who has a config file but overrides repo path via env
+    // Simulates a developer who has a config file but overrides workspace path via env
     saveConfig(
       {
         linear: { apiKey: "lin_api_mixed", agentId: "agent-mixed" },
       },
       TEST_DIR,
     )
-    process.env.RALPHLY_REPO_PATH = "/tmp/env-override-repo"
+    process.env.RALPHLY_WORKSPACE_PATH = "/tmp/env-override-workspace"
 
     const result = loadConfig(TEST_DIR)
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.config.repoPath).toBe("/tmp/env-override-repo")
+      expect(result.config.workspacePath).toBe("/tmp/env-override-workspace")
       expect(result.config.linear.apiKey).toBe("lin_api_mixed")
       expect(result.config.linear.agentId).toBe("agent-mixed")
     }
@@ -234,12 +234,12 @@ describe("documented setup path reaches successful config", () => {
   test("precedence: env vars override config file values", () => {
     saveConfig(
       {
-        repoPath: "/tmp/file-value",
+        workspacePath: "/tmp/file-value",
         linear: { apiKey: "lin_api_file", agentId: "agent-file" },
       },
       TEST_DIR,
     )
-    process.env.RALPHLY_REPO_PATH = "/tmp/env-value"
+    process.env.RALPHLY_WORKSPACE_PATH = "/tmp/env-value"
     process.env.LINEAR_API_KEY = "lin_api_env"
     process.env.LINEAR_AGENT_ID = "agent-env"
 
@@ -247,7 +247,7 @@ describe("documented setup path reaches successful config", () => {
     expect(result.ok).toBe(true)
     if (result.ok) {
       // Env wins in all cases, as documented
-      expect(result.config.repoPath).toBe("/tmp/env-value")
+      expect(result.config.workspacePath).toBe("/tmp/env-value")
       expect(result.config.linear.apiKey).toBe("lin_api_env")
       expect(result.config.linear.agentId).toBe("agent-env")
     }
@@ -272,7 +272,7 @@ describe("setup failures produce actionable guidance", () => {
   })
 
   test("missing one value → error is specific to that field", () => {
-    process.env.RALPHLY_REPO_PATH = "/tmp/partial"
+    process.env.RALPHLY_WORKSPACE_PATH = "/tmp/partial"
     process.env.LINEAR_API_KEY = "lin_api_partial"
     // LINEAR_AGENT_ID is missing
 

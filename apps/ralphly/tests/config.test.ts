@@ -13,6 +13,7 @@ const TEST_DIR = path.join(import.meta.dir, ".tmp-test-workspace")
 beforeEach(() => {
   fs.mkdirSync(TEST_DIR, { recursive: true })
   // Clear env vars
+  delete process.env.RALPHLY_WORKSPACE_PATH
   delete process.env.RALPHLY_REPO_PATH
   delete process.env.LINEAR_API_KEY
   delete process.env.LINEAR_AGENT_ID
@@ -20,6 +21,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(TEST_DIR, { recursive: true, force: true })
+  delete process.env.RALPHLY_WORKSPACE_PATH
   delete process.env.RALPHLY_REPO_PATH
   delete process.env.LINEAR_API_KEY
   delete process.env.LINEAR_AGENT_ID
@@ -37,7 +39,7 @@ describe("loadConfig", () => {
   test("loads config from file", () => {
     saveConfig(
       {
-        repoPath: "/tmp/my-repo",
+        workspacePath: "/tmp/my-workspace",
         linear: { apiKey: "lin_api_test123", agentId: "agent-abc" },
         maxAttempts: 3,
         checks: ["pnpm typecheck"],
@@ -48,7 +50,7 @@ describe("loadConfig", () => {
     const result = loadConfig(TEST_DIR)
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.config.repoPath).toBe("/tmp/my-repo")
+      expect(result.config.workspacePath).toBe("/tmp/my-workspace")
       expect(result.config.linear.apiKey).toBe("lin_api_test123")
       expect(result.config.linear.agentId).toBe("agent-abc")
       expect(result.config.maxAttempts).toBe(3)
@@ -59,41 +61,41 @@ describe("loadConfig", () => {
   test("env vars override config file values", () => {
     saveConfig(
       {
-        repoPath: "/tmp/file-repo",
+        workspacePath: "/tmp/file-workspace",
         linear: { apiKey: "lin_api_file", agentId: "agent-file" },
       },
       TEST_DIR,
     )
 
-    process.env.RALPHLY_REPO_PATH = "/tmp/env-repo"
+    process.env.RALPHLY_WORKSPACE_PATH = "/tmp/env-workspace"
     process.env.LINEAR_API_KEY = "lin_api_env"
     process.env.LINEAR_AGENT_ID = "agent-env"
 
     const result = loadConfig(TEST_DIR)
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.config.repoPath).toBe("/tmp/env-repo")
+      expect(result.config.workspacePath).toBe("/tmp/env-workspace")
       expect(result.config.linear.apiKey).toBe("lin_api_env")
       expect(result.config.linear.agentId).toBe("agent-env")
     }
   })
 
   test("env vars alone are sufficient (no config file needed)", () => {
-    process.env.RALPHLY_REPO_PATH = "/tmp/env-only-repo"
+    process.env.RALPHLY_WORKSPACE_PATH = "/tmp/env-only-workspace"
     process.env.LINEAR_API_KEY = "lin_api_env_only"
     process.env.LINEAR_AGENT_ID = "agent-env-only"
 
     const result = loadConfig(TEST_DIR)
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.config.repoPath).toBe("/tmp/env-only-repo")
+      expect(result.config.workspacePath).toBe("/tmp/env-only-workspace")
       expect(result.config.maxAttempts).toBe(2) // default
       expect(result.config.checks).toEqual([]) // default
     }
   })
 
   test("reports all missing fields at once", () => {
-    process.env.RALPHLY_REPO_PATH = "/tmp/partial"
+    process.env.RALPHLY_WORKSPACE_PATH = "/tmp/partial"
     // Missing: LINEAR_API_KEY, LINEAR_AGENT_ID
 
     const result = loadConfig(TEST_DIR)
@@ -115,10 +117,10 @@ describe("getConfigPath", () => {
 
 describe("saveConfig", () => {
   test("creates config dir and writes file", () => {
-    saveConfig({ repoPath: "/tmp/test" }, TEST_DIR)
+    saveConfig({ workspacePath: "/tmp/test" }, TEST_DIR)
     const configPath = getConfigPath(TEST_DIR)
     expect(fs.existsSync(configPath)).toBe(true)
     const content = JSON.parse(fs.readFileSync(configPath, "utf-8"))
-    expect(content.repoPath).toBe("/tmp/test")
+    expect(content.workspacePath).toBe("/tmp/test")
   })
 })

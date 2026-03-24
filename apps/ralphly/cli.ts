@@ -72,7 +72,7 @@ const run = Command.make(
       // Always show configuration summary at startup
       yield* Console.log("─── Configuration ───")
       yield* Console.log(`  Agent ID:     ${cfg.linear.agentId}`)
-      yield* Console.log(`  Repo path:    ${cfg.repoPath}`)
+      yield* Console.log(`  Workspace:    ${cfg.workspacePath}`)
       yield* Console.log(`  Max attempts: ${cfg.maxAttempts}`)
       yield* Console.log(`  Checks:       ${cfg.checks.length > 0 ? cfg.checks.join(", ") : "(none)"}`)
       yield* Console.log("")
@@ -196,8 +196,8 @@ const configCmd = Command.make("config", {}, () =>
     // Show resolved configuration with source hints
     yield* Console.log("─── Configuration ───")
     yield* Console.log("")
-    yield* Console.log(`  Repo path:    ${cfg.repoPath}`)
-    yield* Console.log(`                ${describeSource("RALPHLY_REPO_PATH")}`)
+    yield* Console.log(`  Workspace:    ${cfg.workspacePath}`)
+    yield* Console.log(`                ${describeSource("RALPHLY_WORKSPACE_PATH", "RALPHLY_REPO_PATH")}`)
     yield* Console.log(`  Agent ID:     ${cfg.linear.agentId}`)
     yield* Console.log(`                ${describeSource("LINEAR_AGENT_ID")}`)
     yield* Console.log(`  API key:      ${cfg.linear.apiKey.slice(0, 8)}...`)
@@ -211,10 +211,14 @@ const configCmd = Command.make("config", {}, () =>
 
 /**
  * Describe the source of a config value (env var or config file).
+ * Accepts an optional deprecated alias key for backward-compatibility reporting.
  */
-const describeSource = (envKey: string): string => {
+const describeSource = (envKey: string, deprecatedKey?: string): string => {
   if (process.env[envKey]) {
     return `(from env: ${envKey})`
+  }
+  if (deprecatedKey && process.env[deprecatedKey]) {
+    return `(from env: ${deprecatedKey} — deprecated, use ${envKey})`
   }
   return "(from .ralphly/config.json)"
 }

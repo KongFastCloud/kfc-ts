@@ -6,7 +6,7 @@ A Linear-aware CLI worker that drains delegated work items from Linear and proce
 
 ```
 # 1. Configure
-export RALPHLY_REPO_PATH=/absolute/path/to/your/repo
+export RALPHLY_WORKSPACE_PATH=/absolute/path/to/your/workspace
 export LINEAR_API_KEY=lin_api_...
 export LINEAR_AGENT_ID=your-agent-id
 
@@ -29,8 +29,8 @@ Shows the resolved configuration with value sources. Reports whether configurati
 ```
 ─── Configuration ───
 
-  Repo path:    /Users/you/your-repo
-                (from env: RALPHLY_REPO_PATH)
+  Workspace:    /Users/you/your-workspace
+                (from env: RALPHLY_WORKSPACE_PATH)
   Agent ID:     abc123
                 (from .ralphly/config.json)
   API key:      lin_api_...
@@ -78,9 +78,9 @@ ralphly requires three values to run. You can provide them via environment varia
 
 ### Required values
 
-| Value       | Env var              | Config file path      | Description                              |
-| ----------- | -------------------- | --------------------- | ---------------------------------------- |
-| Repo path   | `RALPHLY_REPO_PATH`  | `repoPath`            | Absolute path to the repository workspace |
+| Value       | Env var                  | Config file path      | Description                              |
+| ----------- | ------------------------ | --------------------- | ---------------------------------------- |
+| Workspace   | `RALPHLY_WORKSPACE_PATH` | `workspacePath`       | Absolute path to the execution workspace  |
 | API key     | `LINEAR_API_KEY`     | `linear.apiKey`       | Linear API key for SDK authentication     |
 | Agent ID    | `LINEAR_AGENT_ID`    | `linear.agentId`      | Linear agent ID that ralphly operates as  |
 
@@ -96,10 +96,12 @@ ralphly requires three values to run. You can provide them via environment varia
 Copy `.env.example` to `.env` and fill in your values, or export the variables directly in your shell profile:
 
 ```sh
-export RALPHLY_REPO_PATH=/absolute/path/to/your/repo
+export RALPHLY_WORKSPACE_PATH=/absolute/path/to/your/workspace
 export LINEAR_API_KEY=lin_api_...
 export LINEAR_AGENT_ID=your-agent-id
 ```
+
+> **Backward compatibility:** `RALPHLY_REPO_PATH` and the config-file key `repoPath` are accepted as temporary aliases. The new names take precedence when both are set. These aliases will be removed in a future release.
 
 See `.env.example` for inline descriptions of each variable.
 
@@ -109,7 +111,7 @@ Alternatively (or in addition), create `.ralphly/config.json` in the workspace r
 
 ```json
 {
-  "repoPath": "/absolute/path/to/your/repo",
+  "workspacePath": "/absolute/path/to/your/workspace",
   "linear": {
     "apiKey": "lin_api_...",
     "agentId": "your-agent-id"

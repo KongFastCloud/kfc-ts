@@ -1,6 +1,6 @@
 /**
  * ABOUTME: Configuration loading for ralphly.
- * Loads agent identity, Linear credentials, repository path, and execution
+ * Loads agent identity, Linear credentials, workspace path, and execution
  * settings from a local config file and/or environment variables.
  * Config file lives at .ralphly/config.json in the workspace root.
  * Environment variables override config file values.
@@ -23,8 +23,8 @@ export interface LinearIdentity {
 
 /** Top-level ralphly configuration. */
 export interface RalphlyConfig {
-  /** Absolute path to the repository workspace ralphly operates in. */
-  readonly repoPath: string
+  /** Absolute path to the execution workspace ralphly operates in. */
+  readonly workspacePath: string
   /** Linear API credentials and agent identity. */
   readonly linear: LinearIdentity
   /** Maximum retry attempts per issue (passed to blueprints). */
@@ -53,6 +53,8 @@ export const getConfigPath = (workDir = process.cwd()): string =>
   path.join(workDir, CONFIG_DIR, CONFIG_FILE)
 
 interface RawConfigFile {
+  workspacePath?: string
+  /** @deprecated Use workspacePath. Temporary backward-compatibility alias. */
   repoPath?: string
   linear?: {
     apiKey?: string
@@ -95,9 +97,12 @@ export interface ConfigError {
  * Load ralphly configuration from config file + environment.
  *
  * Resolution order (highest priority first):
- * 1. Environment variables: RALPHLY_REPO_PATH, LINEAR_API_KEY, LINEAR_AGENT_ID
+ * 1. Environment variables: RALPHLY_WORKSPACE_PATH, LINEAR_API_KEY, LINEAR_AGENT_ID
  * 2. Config file values from .ralphly/config.json
  * 3. Defaults (for maxAttempts, checks)
+ *
+ * Backward compatibility: RALPHLY_REPO_PATH and the config-file key "repoPath"
+ * are accepted as temporary aliases. The new names take precedence when both are set.
  *
  * Returns either a valid config or an error listing missing required fields.
  */
@@ -106,7 +111,10 @@ export const loadConfig = (
 ): { ok: true; config: RalphlyConfig } | { ok: false; error: ConfigError } => {
   const raw = readConfigFile(workDir)
 
-  const repoPath = envOr("RALPHLY_REPO_PATH", raw.repoPath)
+  // New names take precedence; fall back to deprecated aliases.
+  const workspacePath =
+    envOr("RALPHLY_WORKSPACE_PATH", raw.workspacePath) ??
+    envOr("RALPHLY_REPO_PATH", raw.repoPath)
   const apiKey = envOr("LINEAR_API_KEY", raw.linear?.apiKey)
   const agentId = envOr("LINEAR_AGENT_ID", raw.linear?.agentId)
   const maxAttempts = raw.maxAttempts ?? DEFAULTS.maxAttempts
@@ -114,7 +122,7 @@ export const loadConfig = (
 
   // Validate required fields
   const missing: string[] = []
-  if (!repoPath) missing.push("repoPath (env: RALPHLY_REPO_PATH)")
+  if (!workspacePath) missing.push("workspacePath (env: RALPHLY_WORKSPACE_PATH)")
   if (!apiKey) missing.push("linear.apiKey (env: LINEAR_API_KEY)")
   if (!agentId) missing.push("linear.agentId (env: LINEAR_AGENT_ID)")
 
@@ -125,7 +133,7 @@ export const loadConfig = (
   return {
     ok: true,
     config: {
-      repoPath: repoPath!,
+      workspacePath: workspacePath!,
       linear: { apiKey: apiKey!, agentId: agentId! },
       maxAttempts,
       checks,
