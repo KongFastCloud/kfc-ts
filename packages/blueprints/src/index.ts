@@ -86,15 +86,3 @@ export type {
 export { buildCiGitStep, executePostLoopGitOps, defaultGitOps } from "./git-steps.js"
 export type { GitMode, GitOps } from "./git-steps.js"
 
-// ============================================================================
-// Transitional: shared runner
-//
-// The run() function and its supporting types exist for backward compatibility
-// while consumers migrate to primitives-based workflow assembly. New code
-// should compose workflows directly from the primitives above.
-// ============================================================================
-
-/** @deprecated Use primitives-based workflow assembly instead. */
-export { run } from "./runner.js"
-/** @deprecated Use primitives-based workflow assembly instead. */
-export type { RunConfig, RunResult, RunnerOptions } from "./runner.js"

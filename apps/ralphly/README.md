@@ -1,6 +1,6 @@
 # ralphly
 
-A Linear-aware CLI worker that drains delegated work items from Linear and processes them through AI blueprints (Claude Agent SDK). ralphly is CLI-first and manually invoked — there is no HTTP server or webhook receiver.
+A Linear-aware CLI worker that drains delegated work items from Linear and processes them using blueprints primitives (Claude Agent SDK). ralphly owns its own workflow assembly — orchestration, session lifecycle, and side effects are app concerns, not delegated to a shared runner. CLI-first and manually invoked — there is no HTTP server or webhook receiver.
 
 ## Quick start
 

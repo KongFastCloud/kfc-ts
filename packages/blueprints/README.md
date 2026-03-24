@@ -203,17 +203,3 @@ Default `GitOps` implementation using the real git primitives. Pass this to `bui
 
 All primitives that interact with the filesystem accept an explicit `workspace` parameter. There is no fallback to `process.cwd()`. The caller decides the execution directory and threads it through to each primitive.
 
----
-
-## Transitional: shared runner
-
-The `run()` function is a legacy shared orchestrator that composes all primitives into a single pipeline. It exists for backward compatibility while consumers migrate to primitives-based workflow assembly.
-
-**New code should not depend on `run()`.** Compose workflows from primitives instead.
-
-```ts
-// Deprecated — use primitives directly
-import { run, type RunConfig, type RunnerOptions } from "@workspace/blueprints"
-```
-
-The runner will be removed once all consumers have migrated to local workflow assembly.

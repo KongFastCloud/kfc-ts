@@ -1,3 +1,7 @@
+## Status
+
+**Complete.** The shared runner (`blueprints.run()`) has been removed. Both ralphe and ralphly own their workflow assembly using blueprints primitives. Runner-centric tests have been deleted. Package and app documentation reflects the final ownership model: blueprints owns primitives, apps own orchestration and side effects.
+
 ## Problem Statement
 
 `ralphe` and `blueprints` currently blur ownership of execution behavior. `ralphe` still owns a full agent runner with retry, checks, reporting, git flow, and tracker-side effects, while `blueprints` also exposes a central runner that tries to own the same orchestration. This creates duplicated orchestration logic, mixed config models, and an unclear boundary between app policy and shared execution primitives.
