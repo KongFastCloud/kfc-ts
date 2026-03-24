@@ -101,4 +101,67 @@ describe("glitchtip registration", () => {
       "https://glitchtip.internal.dev",
     );
   });
+
+  // ── read-only access ────────────────────────────────────────────
+
+  it("describes itself as read-only", () => {
+    expect(glitchtip.description.toLowerCase()).toContain("read-only");
+  });
+
+  // ── env contract coverage (.env.example alignment) ─────────────
+
+  it("declares exactly three env vars matching the documented contract", () => {
+    const names = glitchtip.env.map((e) => e.name).sort();
+    expect(names).toEqual([
+      "GLITCHTIP_BASE_URL",
+      "GLITCHTIP_ORGANIZATION",
+      "GLITCHTIP_TOKEN",
+    ]);
+  });
+
+  it("does not forward unexpected env vars to the subprocess", () => {
+    const def = glitchtip.createDefinition({
+      GLITCHTIP_TOKEN: "tok_abc",
+      GLITCHTIP_ORGANIZATION: "my-org",
+      EXTRA_SECRET: "should-not-appear",
+    });
+
+    const envKeys = Object.keys(def.env!).sort();
+    expect(envKeys).toEqual([
+      "GLITCHTIP_BASE_URL",
+      "GLITCHTIP_ORGANIZATION",
+      "GLITCHTIP_TOKEN",
+    ]);
+    expect(def.env!).not.toHaveProperty("EXTRA_SECRET");
+  });
+
+  it("fails when both required vars are missing at once", () => {
+    try {
+      validateEnv(glitchtip, {});
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(MCPConfigError);
+      const e = err as InstanceType<typeof MCPConfigError>;
+      expect(e.missing).toContain("GLITCHTIP_TOKEN");
+      expect(e.missing).toContain("GLITCHTIP_ORGANIZATION");
+    }
+  });
+
+  it("treats empty-string token as missing", () => {
+    expect(() =>
+      validateEnv(glitchtip, {
+        GLITCHTIP_TOKEN: "",
+        GLITCHTIP_ORGANIZATION: "my-org",
+      }),
+    ).toThrow(MCPConfigError);
+  });
+
+  it("treats empty-string organization as missing", () => {
+    expect(() =>
+      validateEnv(glitchtip, {
+        GLITCHTIP_TOKEN: "tok_abc",
+        GLITCHTIP_ORGANIZATION: "",
+      }),
+    ).toThrow(MCPConfigError);
+  });
 });

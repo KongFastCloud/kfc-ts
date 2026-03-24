@@ -2,7 +2,8 @@
  * MCP client creation tests.
  *
  * Verifies that createGlitchTipClient handles missing env vars
- * gracefully (returns null) and re-throws unexpected errors.
+ * gracefully (returns null), re-throws unexpected errors, and
+ * validates the full failure-path contract.
  */
 
 import { describe, it } from "node:test"
@@ -36,5 +37,48 @@ describe("createGlitchTipClient", () => {
       if (origOrg === undefined) delete process.env.GLITCHTIP_ORGANIZATION
       else process.env.GLITCHTIP_ORGANIZATION = origOrg
     }
+  })
+
+  it("returns null when only GLITCHTIP_TOKEN is set (missing GLITCHTIP_ORGANIZATION)", () => {
+    const origToken = process.env.GLITCHTIP_TOKEN
+    const origOrg = process.env.GLITCHTIP_ORGANIZATION
+
+    process.env.GLITCHTIP_TOKEN = "test-token"
+    delete process.env.GLITCHTIP_ORGANIZATION
+
+    try {
+      const client = createGlitchTipClient()
+      assert.equal(client, null, "should return null when organization is missing")
+    } finally {
+      if (origToken === undefined) delete process.env.GLITCHTIP_TOKEN
+      else process.env.GLITCHTIP_TOKEN = origToken
+      if (origOrg === undefined) delete process.env.GLITCHTIP_ORGANIZATION
+      else process.env.GLITCHTIP_ORGANIZATION = origOrg
+    }
+  })
+
+  it("returns null when only GLITCHTIP_ORGANIZATION is set (missing GLITCHTIP_TOKEN)", () => {
+    const origToken = process.env.GLITCHTIP_TOKEN
+    const origOrg = process.env.GLITCHTIP_ORGANIZATION
+
+    delete process.env.GLITCHTIP_TOKEN
+    process.env.GLITCHTIP_ORGANIZATION = "test-org"
+
+    try {
+      const client = createGlitchTipClient()
+      assert.equal(client, null, "should return null when token is missing")
+    } finally {
+      if (origToken === undefined) delete process.env.GLITCHTIP_TOKEN
+      else process.env.GLITCHTIP_TOKEN = origToken
+      if (origOrg === undefined) delete process.env.GLITCHTIP_ORGANIZATION
+      else process.env.GLITCHTIP_ORGANIZATION = origOrg
+    }
+  })
+
+  it("returns null idempotently on repeated calls without env vars", () => {
+    const first = createGlitchTipClient()
+    const second = createGlitchTipClient()
+    assert.equal(first, null)
+    assert.equal(second, null)
   })
 })
