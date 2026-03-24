@@ -2,16 +2,18 @@
  * ABOUTME: Tests for the blueprints execution runner.
  * Verifies the full pipeline: agent → checks → loop composition,
  * retry with feedback, fatal error propagation, resume token capture,
- * lifecycle event callbacks, and onAgentResult callbacks.
+ * lifecycle event callbacks, onAgentResult callbacks, and explicit
+ * workspace propagation to report and git surfaces.
  */
 
-import { describe, test, expect } from "bun:test"
+import { describe, test, expect, afterAll } from "bun:test"
 import fs from "node:fs"
 import os from "node:os"
+import path from "node:path"
 import { Effect, Layer, pipe } from "effect"
 import { Engine, type AgentResult } from "../src/engine.js"
 import { FatalError } from "../src/errors.js"
-import { run, type RunConfig, type RunResult } from "../src/runner.js"
+import { run, type RunConfig, type RunResult, type GitOps } from "../src/runner.js"
 import { agent } from "../src/agent.js"
 import { cmd } from "../src/cmd.js"
 import { loop } from "../src/loop.js"
@@ -230,5 +232,199 @@ describe("shared executor orchestration", () => {
     const result = await Effect.runPromiseExit(Effect.provide(workflow, layer))
     expect(calls).toBe(1)
     expect(result._tag).toBe("Failure")
+  })
+})
+
+/**
+ * Workspace contract tests.
+ * Verify that the runner threads the explicit workspace to report and git
+ * surfaces — the same workspace used for agent and check execution.
+ */
+describe("workspace contract", () => {
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), "bp-ws-"))
+  const workspace = fs.realpathSync(ws)
+
+  afterAll(() => {
+    fs.rmSync(workspace, { recursive: true, force: true })
+  })
+
+  const successReport = JSON.stringify({ success: true, report: "ok" })
+  const reportResponse = `done\n\n\`\`\`json\n${successReport}\n\`\`\``
+
+  test("report step receives the configured workspace", async () => {
+    let engineWorkDir: string | undefined
+
+    const result = await Effect.runPromise(
+      run({
+        task: "implement feature",
+        workspace,
+        config: {
+          maxAttempts: 1,
+          checks: [],
+          gitMode: "none",
+          report: "basic",
+        },
+        engineLayer: Layer.succeed(Engine, {
+          execute: (_prompt: string, workDir: string) => {
+            engineWorkDir = workDir
+            return Effect.succeed({ response: reportResponse })
+          },
+        }),
+      }),
+    )
+
+    expect(result.success).toBe(true)
+    // Engine was called with the explicit workspace for both agent and report
+    expect(engineWorkDir).toBe(workspace)
+  })
+
+  test("report step creates reports directory inside workspace", async () => {
+    await Effect.runPromise(
+      run({
+        task: "implement feature",
+        workspace,
+        config: {
+          maxAttempts: 1,
+          checks: [],
+          gitMode: "none",
+          report: "basic",
+        },
+        engineLayer: Layer.succeed(Engine, {
+          execute: () => Effect.succeed({ response: reportResponse }),
+        }),
+      }),
+    )
+
+    const reportsDir = path.join(workspace, ".blueprints/reports")
+    expect(fs.existsSync(reportsDir)).toBe(true)
+  })
+
+  test("git ops receive the configured workspace (commit mode)", async () => {
+    let gitWorkspace: string | undefined
+
+    const fakeGitOps: GitOps = {
+      commit: (ws) => {
+        gitWorkspace = ws
+        return Effect.succeed(undefined)
+      },
+      push: () => Effect.succeed({ remote: "origin", ref: "main", output: "" }),
+      waitCi: () =>
+        Effect.succeed({
+          runId: 1,
+          status: "completed",
+          conclusion: "success",
+          url: null,
+          workflowName: null,
+        }),
+    }
+
+    const result = await Effect.runPromise(
+      run({
+        task: "task",
+        workspace,
+        config: {
+          maxAttempts: 1,
+          checks: [],
+          gitMode: "commit",
+          report: "none",
+        },
+        engineLayer: Layer.succeed(Engine, {
+          execute: () => Effect.succeed({ response: "done" }),
+        }),
+        gitOps: fakeGitOps,
+      }),
+    )
+
+    expect(result.success).toBe(true)
+    expect(gitWorkspace).toBe(workspace)
+  })
+
+  test("git ops receive the configured workspace (commit_and_push mode)", async () => {
+    const receivedWorkspaces: string[] = []
+
+    const fakeGitOps: GitOps = {
+      commit: (ws) => {
+        receivedWorkspaces.push(ws)
+        return Effect.succeed({ message: "feat: test", hash: "abc1234" })
+      },
+      push: (ws) => {
+        receivedWorkspaces.push(ws)
+        return Effect.succeed({ remote: "origin", ref: "main", output: "" })
+      },
+      waitCi: () =>
+        Effect.succeed({
+          runId: 1,
+          status: "completed",
+          conclusion: "success",
+          url: null,
+          workflowName: null,
+        }),
+    }
+
+    const result = await Effect.runPromise(
+      run({
+        task: "task",
+        workspace,
+        config: {
+          maxAttempts: 1,
+          checks: [],
+          gitMode: "commit_and_push",
+          report: "none",
+        },
+        engineLayer: Layer.succeed(Engine, {
+          execute: () => Effect.succeed({ response: "done" }),
+        }),
+        gitOps: fakeGitOps,
+      }),
+    )
+
+    expect(result.success).toBe(true)
+    expect(receivedWorkspaces).toEqual([workspace, workspace])
+  })
+
+  test("CI git step receives workspace (commit_and_push_and_wait_ci mode)", async () => {
+    const receivedWorkspaces: string[] = []
+
+    const fakeGitOps: GitOps = {
+      commit: (ws) => {
+        receivedWorkspaces.push(ws)
+        return Effect.succeed({ message: "feat: ci", hash: "def5678" })
+      },
+      push: (ws) => {
+        receivedWorkspaces.push(ws)
+        return Effect.succeed({ remote: "origin", ref: "main", output: "" })
+      },
+      waitCi: (ws) => {
+        receivedWorkspaces.push(ws)
+        return Effect.succeed({
+          runId: 42,
+          status: "completed",
+          conclusion: "success",
+          url: "https://github.com/test/actions/runs/42",
+          workflowName: "CI",
+        })
+      },
+    }
+
+    const result = await Effect.runPromise(
+      run({
+        task: "task",
+        workspace,
+        config: {
+          maxAttempts: 1,
+          checks: [],
+          gitMode: "commit_and_push_and_wait_ci",
+          report: "none",
+        },
+        engineLayer: Layer.succeed(Engine, {
+          execute: () => Effect.succeed({ response: "done" }),
+        }),
+        gitOps: fakeGitOps,
+      }),
+    )
+
+    expect(result.success).toBe(true)
+    // All three git ops should receive the workspace
+    expect(receivedWorkspaces).toEqual([workspace, workspace, workspace])
   })
 })
