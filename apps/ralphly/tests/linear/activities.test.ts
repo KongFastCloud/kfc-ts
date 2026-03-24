@@ -1,7 +1,15 @@
 /**
- * ABOUTME: Tests for Linear session activity formatting and lifecycle event mapping.
- * Verifies the explicit mapping from blueprints lifecycle events to Linear
- * session activities — the core testable contract for this slice.
+ * ABOUTME: Tests for Linear session activity formatting, lifecycle event mapping,
+ * and the explicit session-write contract.
+ *
+ * The session-write contract is:
+ *   start        → runner writes on entry
+ *   check_failed → onEvent callback writes during retry loop
+ *   success      → runner writes on successful exit
+ *   error        → runner writes on terminal failure (also the durable held marker)
+ *
+ * mapLoopEventToActivity only handles intermediate events (check_failed).
+ * Terminal events (success, error) are written explicitly by the runner.
  */
 
 import { describe, test, expect } from "bun:test"
@@ -15,6 +23,10 @@ import {
   formatErrorActivity,
   mapLoopEventToActivity,
   writeSessionActivity,
+  writeStartActivity,
+  writeSuccessActivity,
+  writeCheckFailedActivity,
+  writeErrorActivity,
   makeSessionEventHandler,
 } from "../../src/linear/activities.js"
 
@@ -60,7 +72,7 @@ describe("formatErrorActivity", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Lifecycle event mapping tests
+// Lifecycle event mapping tests — contract: only intermediate events mapped
 // ---------------------------------------------------------------------------
 
 describe("mapLoopEventToActivity", () => {
@@ -80,7 +92,7 @@ describe("mapLoopEventToActivity", () => {
     expect(result!.body).toContain("npm test failed")
   })
 
-  test("maps success event to success activity", () => {
+  test("returns null for success (written explicitly by runner)", () => {
     const event: LoopEvent = {
       type: "success",
       attempt: 2,
@@ -89,10 +101,9 @@ describe("mapLoopEventToActivity", () => {
 
     const result = mapLoopEventToActivity(event)
 
-    expect(result).not.toBeNull()
-    expect(result!.kind).toBe("success")
-    expect(result!.body).toContain("[attempt 2/3]")
-    expect(result!.body).toContain("All checks passed")
+    // Success is NOT mapped through onEvent — it's written
+    // explicitly by the runner after blueprintsRun completes.
+    expect(result).toBeNull()
   })
 
   test("returns null for attempt_start (handled separately)", () => {
@@ -172,7 +183,107 @@ describe("writeSessionActivity", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Session event handler tests
+// Convenience writer tests — each state has an explicit function
+// ---------------------------------------------------------------------------
+
+describe("writeStartActivity", () => {
+  test("writes start acknowledgement with issue identifier", async () => {
+    const calls: Array<{ agentSessionId: string; content: { type: string; body: string } }> = []
+    const mockClient = {
+      createAgentActivity: async (input: { agentSessionId: string; content: { type: string; body: string } }) => {
+        calls.push(input)
+        return { success: true }
+      },
+    }
+    const layer = Layer.succeed(
+      Linear,
+      mockClient as unknown as InstanceType<typeof import("@linear/sdk").LinearClient>,
+    )
+
+    await Effect.runPromise(
+      writeStartActivity("session-1", "ENG-123").pipe(Effect.provide(layer)),
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.content.body).toBe("Starting work on ENG-123")
+  })
+})
+
+describe("writeSuccessActivity", () => {
+  test("writes success with attempt count", async () => {
+    const calls: Array<{ agentSessionId: string; content: { type: string; body: string } }> = []
+    const mockClient = {
+      createAgentActivity: async (input: { agentSessionId: string; content: { type: string; body: string } }) => {
+        calls.push(input)
+        return { success: true }
+      },
+    }
+    const layer = Layer.succeed(
+      Linear,
+      mockClient as unknown as InstanceType<typeof import("@linear/sdk").LinearClient>,
+    )
+
+    await Effect.runPromise(
+      writeSuccessActivity("session-1", 2, 3).pipe(Effect.provide(layer)),
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.content.body).toContain("[attempt 2/3]")
+    expect(calls[0]!.content.body).toContain("All checks passed")
+  })
+})
+
+describe("writeCheckFailedActivity", () => {
+  test("writes check-failed with attempt count and feedback", async () => {
+    const calls: Array<{ agentSessionId: string; content: { type: string; body: string } }> = []
+    const mockClient = {
+      createAgentActivity: async (input: { agentSessionId: string; content: { type: string; body: string } }) => {
+        calls.push(input)
+        return { success: true }
+      },
+    }
+    const layer = Layer.succeed(
+      Linear,
+      mockClient as unknown as InstanceType<typeof import("@linear/sdk").LinearClient>,
+    )
+
+    await Effect.runPromise(
+      writeCheckFailedActivity("session-1", 1, 3, "tests broken").pipe(Effect.provide(layer)),
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.content.body).toContain("[attempt 1/3]")
+    expect(calls[0]!.content.body).toContain("Check failed")
+    expect(calls[0]!.content.body).toContain("tests broken")
+  })
+})
+
+describe("writeErrorActivity", () => {
+  test("writes terminal error with durable held-marker semantics", async () => {
+    const calls: Array<{ agentSessionId: string; content: { type: string; body: string } }> = []
+    const mockClient = {
+      createAgentActivity: async (input: { agentSessionId: string; content: { type: string; body: string } }) => {
+        calls.push(input)
+        return { success: true }
+      },
+    }
+    const layer = Layer.succeed(
+      Linear,
+      mockClient as unknown as InstanceType<typeof import("@linear/sdk").LinearClient>,
+    )
+
+    await Effect.runPromise(
+      writeErrorActivity("session-1", "npm test failed", 2).pipe(Effect.provide(layer)),
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.content.body).toContain("Failed after 2 attempt(s)")
+    expect(calls[0]!.content.body).toContain("npm test failed")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Session event handler tests — only intermediate events
 // ---------------------------------------------------------------------------
 
 describe("makeSessionEventHandler", () => {
@@ -234,11 +345,11 @@ describe("makeSessionEventHandler", () => {
     expect(calls).toHaveLength(0)
   })
 
-  test("writes activity for success events", async () => {
-    const calls: Array<{ agentSessionId: string; content: { type: string; body: string } }> = []
+  test("does nothing for success events (written explicitly by runner)", async () => {
+    const calls: unknown[] = []
 
     const mockClient = {
-      createAgentActivity: async (input: { agentSessionId: string; content: { type: string; body: string } }) => {
+      createAgentActivity: async (input: unknown) => {
         calls.push(input)
         return { success: true }
       },
@@ -258,7 +369,44 @@ describe("makeSessionEventHandler", () => {
 
     await Effect.runPromise(handler(event).pipe(Effect.provide(layer)))
 
-    expect(calls).toHaveLength(1)
-    expect(calls[0]!.content.body).toContain("All checks passed")
+    // Success is NOT written through the handler — it's the runner's
+    // responsibility to write it explicitly after blueprintsRun.
+    expect(calls).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Session write contract completeness
+// ---------------------------------------------------------------------------
+
+describe("session write contract", () => {
+  test("every SessionUpdateKind has a corresponding format function", () => {
+    // This test ensures the format functions stay in sync with the type.
+    // If a new kind is added to SessionUpdateKind, a format function
+    // should be added too.
+    expect(typeof formatStartActivity).toBe("function")
+    expect(typeof formatCheckFailedActivity).toBe("function")
+    expect(typeof formatSuccessActivity).toBe("function")
+    expect(typeof formatErrorActivity).toBe("function")
+  })
+
+  test("every SessionUpdateKind has a corresponding write function", () => {
+    expect(typeof writeStartActivity).toBe("function")
+    expect(typeof writeCheckFailedActivity).toBe("function")
+    expect(typeof writeSuccessActivity).toBe("function")
+    expect(typeof writeErrorActivity).toBe("function")
+  })
+
+  test("error activity body matches the pattern detected by isErrorActivity", () => {
+    // The error format MUST start with "Failed after" because that's
+    // what isErrorActivity() in worker.ts uses to detect durable holds.
+    const body = formatErrorActivity("some error", 2)
+    expect(body.startsWith("Failed after")).toBe(true)
+  })
+
+  test("non-error activity bodies do not match the error detection pattern", () => {
+    expect(formatStartActivity("ENG-1").startsWith("Failed after")).toBe(false)
+    expect(formatSuccessActivity(1, 2).startsWith("Failed after")).toBe(false)
+    expect(formatCheckFailedActivity(1, 2, "err").startsWith("Failed after")).toBe(false)
   })
 })

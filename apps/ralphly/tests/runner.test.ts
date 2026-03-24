@@ -1,7 +1,10 @@
 /**
  * ABOUTME: Tests for the issue runner that invokes blueprints for a single
- * Linear issue/session. Verifies task input construction, session activity
- * writing at lifecycle milestones, and result shaping.
+ * Linear issue/session. Verifies the explicit session-write contract:
+ *   start → [check_failed…] → success | error
+ *
+ * The runner is the single owner of all session-write decisions.
+ * Terminal writes (success + error) are explicit — not through onEvent.
  */
 
 import { describe, test, expect } from "bun:test"
@@ -161,7 +164,7 @@ describe("buildTaskInput", () => {
 })
 
 // ---------------------------------------------------------------------------
-// runIssue tests
+// runIssue tests — session write contract: start → success | error
 // ---------------------------------------------------------------------------
 
 describe("runIssue", () => {
@@ -183,7 +186,7 @@ describe("runIssue", () => {
     expect(calls[0]!.content.body).toContain("Starting work on ENG-42")
   })
 
-  test("writes success activity when run completes", async () => {
+  test("writes explicit success activity when run completes", async () => {
     const { layer: linearLayer, calls } = makeMockLinearLayer()
     const work = makeWork()
 
@@ -200,13 +203,16 @@ describe("runIssue", () => {
     expect(result.sessionId).toBe("session-1")
     expect(result.attempts).toBe(1)
 
-    // Should have: start + success activities
+    // Should have exactly: start + success activities
     const bodies = calls.map((c) => c.content.body)
     expect(bodies.some((b) => b.includes("Starting work on ENG-42"))).toBe(true)
     expect(bodies.some((b) => b.includes("All checks passed"))).toBe(true)
+    // The success activity should be written by the runner, not doubled
+    const successCount = bodies.filter((b) => b.includes("All checks passed")).length
+    expect(successCount).toBe(1)
   })
 
-  test("writes error activity when run fails terminally", async () => {
+  test("writes explicit error activity when run fails terminally", async () => {
     const { layer: linearLayer, calls } = makeMockLinearLayer()
     const work = makeWork()
 
@@ -221,10 +227,50 @@ describe("runIssue", () => {
     expect(result.success).toBe(false)
     expect(result.error).toBeDefined()
 
-    // Should have: start + error activities
+    // Should have exactly: start + error activities
     const bodies = calls.map((c) => c.content.body)
     expect(bodies.some((b) => b.includes("Starting work on ENG-42"))).toBe(true)
     expect(bodies.some((b) => b.includes("Failed after"))).toBe(true)
+  })
+
+  test("complete lifecycle: start → check_failed → success on retry", async () => {
+    // Engine that fails first call, succeeds second
+    let callCount = 0
+    const retryEngine = Layer.succeed(Engine, {
+      execute: (_prompt: string, _workDir: string) => {
+        callCount++
+        if (callCount === 1) {
+          return Effect.fail(
+            new CheckFailure({
+              command: "npm test",
+              stderr: "Tests failed",
+              exitCode: 1,
+            }),
+          )
+        }
+        return Effect.succeed({ response: "Fixed!" } satisfies AgentResult)
+      },
+    })
+
+    const { layer: linearLayer, calls } = makeMockLinearLayer()
+    const work = makeWork()
+
+    const result = await Effect.runPromise(
+      runIssue({
+        work,
+        config: { maxAttempts: 2, checks: [], gitMode: "none", report: "none" },
+        engineLayer: retryEngine,
+      }).pipe(Effect.provide(linearLayer)),
+    )
+
+    expect(result.success).toBe(true)
+    expect(result.attempts).toBe(2)
+
+    // Activities should be: start → check_failed → success
+    const bodies = calls.map((c) => c.content.body)
+    expect(bodies[0]).toContain("Starting work on ENG-42")
+    expect(bodies.some((b) => b.includes("Check failed"))).toBe(true)
+    expect(bodies[bodies.length - 1]).toContain("All checks passed")
   })
 
   test("returns resume token from agent execution", async () => {

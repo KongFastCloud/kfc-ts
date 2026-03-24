@@ -4,10 +4,23 @@
  * blueprints for execution. This first slice is intentionally CLI-first
  * and manually invoked, with no HTTP server or webhook receiver.
  *
- * `ralphly run` drains the backlog sequentially: it queries Linear for
- * candidate work, classifies issues, processes actionable issues one at a
- * time through blueprints, records failures as error-holds, and exits only
- * when no actionable work remains.
+ * ## Operator flow
+ *
+ *   ralphly config              Show resolved configuration and value sources
+ *   ralphly run --dry-run       Load and classify backlog, show what would happen
+ *   ralphly run                 Drain the backlog sequentially, then exit
+ *
+ * The expected manual flow is: config → run --dry-run → run.
+ * Each step is safe to repeat.
+ *
+ * ## Exit behavior
+ *
+ * `ralphly run` exits when no actionable work remains. The exit summary
+ * includes a reason code so the operator knows why the worker stopped:
+ *   - no_candidates:   nothing delegated to the agent
+ *   - no_actionable:   candidates exist but all blocked/held/terminal/ineligible
+ *   - backlog_drained: all actionable work was processed
+ *   - iteration_limit: safety bound reached (should not happen in practice)
  */
 
 import { Command, Options } from "@effect/cli"
@@ -25,7 +38,7 @@ import { ClaudeEngineLayer } from "./src/engine.js"
 // -- run subcommand --
 
 const dryRun = Options.boolean("dry-run").pipe(
-  Options.withDescription("Print resolved config and backlog summary, then exit without processing"),
+  Options.withDescription("Load and classify backlog, show what would happen, then exit without processing"),
   Options.withDefault(false),
 )
 
@@ -40,54 +53,74 @@ const run = Command.make(
         return yield* Effect.fail(
           new FatalError({
             command: "run",
-            message: `Missing required configuration:\n${result.error.missing.map((m) => `  - ${m}`).join("\n")}`,
+            message: `Missing required configuration:\n${result.error.missing.map((m) => `  - ${m}`).join("\n")}\n\nRun 'ralphly config' to see current configuration status.`,
           }),
         )
       }
 
       const cfg = result.config
 
-      yield* Effect.logInfo(`Agent ID: ${cfg.linear.agentId}`)
-      yield* Effect.logInfo(`Repo path: ${cfg.repoPath}`)
-      yield* Effect.logInfo(`Max attempts: ${cfg.maxAttempts}`)
-      if (cfg.checks.length > 0) {
-        yield* Effect.logInfo(`Checks: ${cfg.checks.join(", ")}`)
-      }
+      // Always show configuration summary at startup
+      yield* Console.log("─── Configuration ───")
+      yield* Console.log(`  Agent ID:     ${cfg.linear.agentId}`)
+      yield* Console.log(`  Repo path:    ${cfg.repoPath}`)
+      yield* Console.log(`  Max attempts: ${cfg.maxAttempts}`)
+      yield* Console.log(`  Checks:       ${cfg.checks.length > 0 ? cfg.checks.join(", ") : "(none)"}`)
+      yield* Console.log("")
 
       const linearLayer = makeLinearLayer(cfg.linear)
 
       if (isDryRun) {
-        // Dry run: load and classify work, print summary, exit
+        // Dry run: load and classify work, print structured summary, exit
+        yield* Console.log("─── Dry Run ───")
         const candidates = yield* loadCandidateWork({ agentId: cfg.linear.agentId }).pipe(
           Effect.provide(linearLayer),
         )
 
-        yield* Effect.logInfo(`Found ${candidates.length} candidate work item(s)`)
-
         if (candidates.length === 0) {
-          yield* Console.log("Dry run — no candidate work found. Exiting.")
+          yield* Console.log("No candidate work found. Nothing delegated to this agent.")
+          yield* Console.log("")
+          yield* Console.log("Exit: no_candidates — nothing to do.")
           return
         }
 
         const selection = selectNext(candidates)
-        yield* Effect.logInfo(formatBacklogSummary(selection))
+        yield* Console.log(formatBacklogSummary(selection))
+        yield* Console.log("")
 
+        // Show each candidate with actionable detail
+        yield* Console.log("─── Candidates ───")
         for (const classified of selection.classified) {
           const { work: { session, issue }, readiness, reason } = classified
-          yield* Effect.logInfo(
-            `  ${issue.identifier}: ${issue.title} [${readiness}] (session: ${session.id}, status: ${session.status}) — ${reason}`,
+          const marker = readiness === "actionable" ? "▶" : "·"
+          yield* Console.log(
+            `  ${marker} ${issue.identifier}: ${issue.title}`,
+          )
+          yield* Console.log(
+            `    readiness: ${readiness} — ${reason}`,
+          )
+          yield* Console.log(
+            `    session: ${session.id} (status: ${session.status})`,
           )
           if (readiness === "actionable") {
             const prompt = buildPromptFromIssue(issue)
             yield* Effect.logDebug(`Prompt preview (${prompt.length} chars):\n${prompt.slice(0, 200)}...`)
           }
         }
+        yield* Console.log("")
 
-        yield* Console.log("Dry run — config and backlog loaded successfully. Exiting.")
+        if (selection.next) {
+          yield* Console.log(`Would process: ${selection.next.issue.identifier} — ${selection.next.issue.title}`)
+        } else {
+          yield* Console.log("No actionable work. Nothing would be processed.")
+        }
+        yield* Console.log("")
+        yield* Console.log("Exit: dry run complete — no changes made.")
         return
       }
 
       // Full run: drain the backlog through the worker loop
+      yield* Console.log("─── Worker Run ───")
       yield* Effect.logInfo("Starting worker loop — draining backlog sequentially")
 
       const runConfig: RunConfig = {
@@ -104,20 +137,23 @@ const run = Command.make(
       }).pipe(Effect.provide(linearLayer))
 
       // Report final summary
-      yield* Effect.logInfo(
-        `Worker complete. Processed: ${summary.processed}, Succeeded: ${summary.succeeded}, ` +
-        `Error-held: ${summary.errorHeld}, Retried: ${summary.retried}`,
-      )
+      yield* Console.log("")
+      yield* Console.log("─── Summary ───")
+      yield* Console.log(`  Processed:  ${summary.processed}`)
+      yield* Console.log(`  Succeeded:  ${summary.succeeded}`)
+      yield* Console.log(`  Error-held: ${summary.errorHeld}`)
+      yield* Console.log(`  Retried:    ${summary.retried}`)
+      yield* Console.log("")
 
       if (summary.processed === 0) {
-        yield* Console.log("No actionable work found. Exiting.")
+        yield* Console.log(`Exit: ${summary.exitReason} — no work processed.`)
       } else if (summary.succeeded === summary.processed) {
         yield* Console.log(
-          `All ${summary.processed} issue(s) processed successfully.`,
+          `Exit: ${summary.exitReason} — all ${summary.processed} issue(s) succeeded.`,
         )
       } else {
         yield* Console.log(
-          `Processed ${summary.processed} issue(s): ${summary.succeeded} succeeded, ${summary.errorHeld} error-held.`,
+          `Exit: ${summary.exitReason} — ${summary.succeeded}/${summary.processed} succeeded, ${summary.errorHeld} error-held.`,
         )
       }
     }),
@@ -130,22 +166,44 @@ const configCmd = Command.make("config", {}, () =>
     const result = loadConfig()
 
     if (!result.ok) {
-      yield* Console.log("Configuration incomplete. Missing:")
+      yield* Console.log("─── Configuration (incomplete) ───")
+      yield* Console.log("")
+      yield* Console.log("Missing required values:")
       for (const m of result.error.missing) {
-        yield* Console.log(`  - ${m}`)
+        yield* Console.log(`  ✗ ${m}`)
       }
+      yield* Console.log("")
+      yield* Console.log("Set these via environment variables or .ralphly/config.json.")
       return
     }
 
     const cfg = result.config
-    yield* Console.log("Current configuration:")
+
+    // Show resolved configuration with source hints
+    yield* Console.log("─── Configuration ───")
+    yield* Console.log("")
     yield* Console.log(`  Repo path:    ${cfg.repoPath}`)
+    yield* Console.log(`                ${describeSource("RALPHLY_REPO_PATH")}`)
     yield* Console.log(`  Agent ID:     ${cfg.linear.agentId}`)
+    yield* Console.log(`                ${describeSource("LINEAR_AGENT_ID")}`)
     yield* Console.log(`  API key:      ${cfg.linear.apiKey.slice(0, 8)}...`)
+    yield* Console.log(`                ${describeSource("LINEAR_API_KEY")}`)
     yield* Console.log(`  Max attempts: ${cfg.maxAttempts}`)
     yield* Console.log(`  Checks:       ${cfg.checks.length > 0 ? cfg.checks.join(", ") : "(none)"}`)
+    yield* Console.log("")
+    yield* Console.log("Configuration is complete. Ready to run.")
   }),
 )
+
+/**
+ * Describe the source of a config value (env var or config file).
+ */
+const describeSource = (envKey: string): string => {
+  if (process.env[envKey]) {
+    return `(from env: ${envKey})`
+  }
+  return "(from .ralphly/config.json)"
+}
 
 // -- root --
 

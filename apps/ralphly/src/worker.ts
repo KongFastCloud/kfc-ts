@@ -58,6 +58,20 @@ export interface WorkerIterationResult {
   readonly retryFeedback: string | undefined
 }
 
+/**
+ * Why the worker loop exited. An operator should be able to read this
+ * and understand whether the exit was expected.
+ */
+export type WorkerExitReason =
+  /** No candidate work found in Linear at all. */
+  | "no_candidates"
+  /** Candidates exist but none are actionable (all blocked/held/terminal/ineligible). */
+  | "no_actionable"
+  /** All actionable work was processed in this run. */
+  | "backlog_drained"
+  /** Safety bound reached — too many iterations. */
+  | "iteration_limit"
+
 /** Summary of the full worker run. */
 export interface WorkerRunSummary {
   /** Total issues processed (attempted). */
@@ -68,6 +82,8 @@ export interface WorkerRunSummary {
   readonly errorHeld: number
   /** Issues that were retried after a prompted follow-up. */
   readonly retried: number
+  /** Why the worker loop stopped. */
+  readonly exitReason: WorkerExitReason
   /** All individual iteration results. */
   readonly iterations: readonly WorkerIterationResult[]
 }
@@ -287,6 +303,7 @@ export const runWorkerLoop = (
     let succeeded = 0
     let errorHeld = 0
     let retried = 0
+    let exitReason: WorkerExitReason = "backlog_drained"
 
     // Loop until no work is available
     // Safety bound: prevent infinite loops — stop after a generous limit
@@ -297,9 +314,19 @@ export const runWorkerLoop = (
       iterations.push(iterResult)
 
       if (!iterResult.runResult) {
-        // No work available — exit the loop
+        // No work available — determine why
+        if (processed === 0 && i === 0) {
+          // First iteration returned nothing — either no candidates or nothing actionable
+          // The iteration logs the specific reason, so we check the most common case
+          exitReason = "no_candidates"
+        } else if (processed === 0) {
+          exitReason = "no_actionable"
+        } else {
+          exitReason = "backlog_drained"
+        }
+
         yield* Effect.logInfo(
-          `Worker loop complete. Processed: ${processed}, Succeeded: ${succeeded}, Error-held: ${errorHeld}, Retried: ${retried}`,
+          `Worker loop complete (${exitReason}). Processed: ${processed}, Succeeded: ${succeeded}, Error-held: ${errorHeld}, Retried: ${retried}`,
         )
         break
       }
@@ -312,6 +339,14 @@ export const runWorkerLoop = (
       } else {
         errorHeld++
       }
+
+      // Safety check: if we've hit the iteration limit
+      if (i === maxIterations - 1) {
+        exitReason = "iteration_limit"
+        yield* Effect.logWarning(
+          `Worker loop hit iteration limit (${maxIterations}). Stopping.`,
+        )
+      }
     }
 
     return {
@@ -319,6 +354,7 @@ export const runWorkerLoop = (
       succeeded,
       errorHeld,
       retried,
+      exitReason,
       iterations,
     } satisfies WorkerRunSummary
   })

@@ -56,6 +56,7 @@ export type {
   WorkerOptions,
   WorkerIterationResult,
   WorkerRunSummary,
+  WorkerExitReason,
 } from "./worker.js"
 
 // Linear integration
@@ -74,6 +75,8 @@ export {
   findActiveSessionsForIssue,
   writeSessionActivity,
   writeStartActivity,
+  writeSuccessActivity,
+  writeCheckFailedActivity,
   writeErrorActivity,
   makeSessionEventHandler,
   mapLoopEventToActivity,

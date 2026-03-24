@@ -1,13 +1,24 @@
 /**
  * ABOUTME: Issue runner that invokes blueprints for a single Linear issue/session.
  * Builds task input from current Linear state, invokes blueprints.run(),
- * and translates lifecycle events into Linear session activities.
+ * and writes explicit session activities at each lifecycle point.
  *
- * On terminal failure, writes a durable error activity to the Linear session
- * so that a fresh `ralphly run` can detect the failure from activities alone.
+ * ## Session Write Ownership
  *
- * This is the integration layer between ralphly's Linear-aware model
- * and the tracker-agnostic blueprints execution runner.
+ * The runner is the single owner of all session-write decisions:
+ *
+ *   start        → written on entry, before blueprints invocation
+ *   check_failed → written via onEvent callback during the retry loop
+ *   success      → written on exit, after blueprints completes successfully
+ *   error        → written on exit, after blueprints exhausts all retries
+ *
+ * Terminal writes (success + error) happen in the runner's post-run logic,
+ * not in the onEvent callback. This keeps all lifecycle boundaries explicit
+ * and avoids dual-writing from both the callback and the runner.
+ *
+ * The error activity doubles as the durable held marker — see activities.ts.
+ *
+ * Session activities are fire-and-forget — write failures never block execution.
  */
 
 import { Effect, Layer } from "effect"
@@ -19,6 +30,7 @@ import { buildPromptFromIssue } from "./linear/loader.js"
 import {
   mapLoopEventToActivity,
   formatStartActivity,
+  formatSuccessActivity,
   formatErrorActivity,
 } from "./linear/activities.js"
 import { buildFailureSummary } from "./error-hold.js"
@@ -128,22 +140,29 @@ const writeActivity = (
 // ---------------------------------------------------------------------------
 
 /**
- * Run a single Linear issue through blueprints with session activity updates.
+ * Run a single Linear issue through blueprints with explicit session
+ * activity writes at each lifecycle point.
  *
  * Flow:
  * 1. Capture the Linear client from the Effect context
  * 2. Build task input from issue data (+ optional retry feedback)
- * 3. Write start acknowledgement to the Linear session
- * 4. Invoke blueprints.run() with lifecycle callbacks wired to session updates
- * 5. On failure, write a terminal error activity (the durable hold marker)
+ * 3. Write **start** activity to the Linear session
+ * 4. Invoke blueprints.run() — onEvent writes **check_failed** activities
+ * 5a. On success: write **success** activity
+ * 5b. On failure: write **error** activity (the durable held marker)
  * 6. Return structured result
  *
- * The error activity written on failure (step 5) is the durable hold mechanism:
+ * Every processing run produces exactly: start → [check_failed…] → success | error.
+ *
+ * The runner is the single owner of terminal writes (success + error).
+ * The onEvent callback only handles intermediate check_failed events.
+ * This keeps the session-write contract explicit and symmetric.
+ *
+ * The error activity written on failure (step 5b) is the durable hold mechanism:
  * a fresh `ralphly run` can load session activities and detect the error activity
  * to classify the issue as error-held without any in-memory state.
  *
  * Session activities are fire-and-forget — write failures never block execution.
- * The Linear service dependency is required for session writes.
  */
 export const runIssue = (
   opts: RunIssueOptions,
@@ -163,12 +182,12 @@ export const runIssue = (
     const task = buildTaskInput(work, retryFeedback)
     yield* Effect.logDebug(`Task input (${task.length} chars)`)
 
-    // 2. Write start acknowledgement
+    // 2. Write start activity
     yield* writeActivity(client, session.id, formatStartActivity(issue.identifier))
 
     // 3. Invoke blueprints with lifecycle callbacks
-    //    Callbacks capture the Linear client in a closure so they don't need
-    //    the Effect context. blueprints.run() expects Effect.Effect<void, never>.
+    //    The onEvent callback only handles intermediate check_failed events.
+    //    Terminal writes (success/error) are handled below in step 4.
     const result: RunResult = yield* blueprintsRun({
       task,
       config,
@@ -180,8 +199,17 @@ export const runIssue = (
       },
     })
 
-    // 4. Handle terminal failure
-    if (!result.success) {
+    // 4. Write terminal activity — success or error (never both)
+    if (result.success) {
+      yield* Effect.logInfo(
+        `Issue ${issue.identifier} completed successfully in ${result.attempts} attempt(s)`,
+      )
+      yield* writeActivity(
+        client,
+        session.id,
+        formatSuccessActivity(result.attempts, config.maxAttempts),
+      )
+    } else {
       yield* Effect.logWarning(
         `Issue ${issue.identifier} failed after ${result.attempts} attempt(s): ${result.error}`,
       )
@@ -189,10 +217,6 @@ export const runIssue = (
         client,
         session.id,
         formatErrorActivity(result.error ?? "Unknown error", result.attempts),
-      )
-    } else {
-      yield* Effect.logInfo(
-        `Issue ${issue.identifier} completed successfully in ${result.attempts} attempt(s)`,
       )
     }
 

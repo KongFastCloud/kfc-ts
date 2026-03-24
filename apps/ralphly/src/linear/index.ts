@@ -33,6 +33,8 @@ export {
 export {
   writeSessionActivity,
   writeStartActivity,
+  writeSuccessActivity,
+  writeCheckFailedActivity,
   writeErrorActivity,
   makeSessionEventHandler,
   mapLoopEventToActivity,

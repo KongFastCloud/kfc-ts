@@ -787,13 +787,14 @@ describe("drain loop — activity writes", () => {
 // Worker summary shape test
 // ---------------------------------------------------------------------------
 
-describe("drain loop — summary", () => {
+describe("drain loop — summary and exit reason", () => {
   test("WorkerRunSummary has correct shape and fields", () => {
     const summary: WorkerRunSummary = {
       processed: 3,
       succeeded: 2,
       errorHeld: 1,
       retried: 0,
+      exitReason: "backlog_drained",
       iterations: [
         { runResult: null, wasRetry: false, retryFeedback: undefined },
       ],
@@ -803,7 +804,33 @@ describe("drain loop — summary", () => {
     expect(summary.succeeded).toBe(2)
     expect(summary.errorHeld).toBe(1)
     expect(summary.retried).toBe(0)
+    expect(summary.exitReason).toBe("backlog_drained")
     expect(summary.iterations).toHaveLength(1)
+  })
+
+  test("exit reason distinguishes no_candidates, no_actionable, and backlog_drained", () => {
+    // These are the three operator-meaningful exit reasons.
+    // The worker should produce the right one so the operator knows
+    // whether to check Linear, wait, or celebrate.
+    const noCandidates: WorkerRunSummary = {
+      processed: 0, succeeded: 0, errorHeld: 0, retried: 0,
+      exitReason: "no_candidates",
+      iterations: [],
+    }
+    const noActionable: WorkerRunSummary = {
+      processed: 0, succeeded: 0, errorHeld: 0, retried: 0,
+      exitReason: "no_actionable",
+      iterations: [],
+    }
+    const drained: WorkerRunSummary = {
+      processed: 2, succeeded: 2, errorHeld: 0, retried: 0,
+      exitReason: "backlog_drained",
+      iterations: [],
+    }
+
+    expect(noCandidates.exitReason).toBe("no_candidates")
+    expect(noActionable.exitReason).toBe("no_actionable")
+    expect(drained.exitReason).toBe("backlog_drained")
   })
 })
 
