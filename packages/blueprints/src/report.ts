@@ -77,6 +77,7 @@ const parseReportResult = (response: string): ReportResult => {
 
 export const report = (
   task: string,
+  workspace: string,
   mode: "browser" | "basic",
   options?: ReportOptions,
 ): Effect.Effect<ReportResult, CheckFailure | FatalError, Engine> =>
@@ -84,12 +85,12 @@ export const report = (
     const engine = yield* Engine
 
     const reportsDir = options?.reportsDir ?? DEFAULT_REPORTS_DIR
-    const resolvedDir = path.join(process.cwd(), reportsDir)
+    const resolvedDir = path.join(workspace, reportsDir)
     fs.mkdirSync(resolvedDir, { recursive: true })
 
     yield* Effect.logInfo(`Running verification (${mode})...`)
     const prompt = buildPrompt(task, mode, reportsDir)
-    const result = yield* engine.execute(prompt, process.cwd())
+    const result = yield* engine.execute(prompt, workspace)
 
     const reportResult = parseReportResult(result.response)
 

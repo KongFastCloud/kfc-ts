@@ -15,6 +15,7 @@ export interface CmdResult {
 
 export const cmd = (
   command: string,
+  workspace: string,
 ): Effect.Effect<CmdResult, CheckFailure | FatalError> =>
   Effect.gen(function* () {
     yield* Effect.logDebug(`Running: ${command}`)
@@ -22,6 +23,7 @@ export const cmd = (
     const result = yield* Effect.tryPromise({
       try: async () => {
         const proc = Bun.spawn(["sh", "-c", command], {
+          cwd: workspace,
           stdout: "pipe",
           stderr: "pipe",
         })

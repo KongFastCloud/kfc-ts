@@ -42,6 +42,8 @@ import { FatalError } from "./errors.js"
 export interface WorkerOptions {
   /** The Linear agent ID to load work for. */
   readonly agentId: string
+  /** Explicit execution workspace path passed through to blueprints. */
+  readonly workspace: string
   /** Blueprints run configuration. */
   readonly config: RunConfig
   /** The Engine layer for agent execution. */
@@ -222,6 +224,7 @@ export const runWorkerIteration = (
 
       const result = yield* runIssue({
         work,
+        workspace: opts.workspace,
         config: opts.config,
         engineLayer: opts.engineLayer,
         retryFeedback: feedback,
@@ -263,6 +266,7 @@ export const runWorkerIteration = (
 
     const result = yield* runIssue({
       work,
+      workspace: opts.workspace,
       config: opts.config,
       engineLayer: opts.engineLayer,
     })

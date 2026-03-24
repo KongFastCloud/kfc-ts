@@ -67,6 +67,8 @@ export interface IssueRunResult {
 export interface RunIssueOptions {
   /** The candidate work item (session + issue). */
   readonly work: CandidateWork
+  /** Explicit execution workspace path passed through to blueprints. */
+  readonly workspace: string
   /** Blueprints run configuration. */
   readonly config: RunConfig
   /** The Engine layer for agent execution. */
@@ -168,7 +170,7 @@ export const runIssue = (
   opts: RunIssueOptions,
 ): Effect.Effect<IssueRunResult, never, Linear> =>
   Effect.gen(function* () {
-    const { work, config, engineLayer, retryFeedback } = opts
+    const { work, workspace, config, engineLayer, retryFeedback } = opts
     const { session, issue } = work
 
     // Capture the Linear client so callbacks can use it without Effect context
@@ -190,6 +192,7 @@ export const runIssue = (
     //    Terminal writes (success/error) are handled below in step 4.
     const result: RunResult = yield* blueprintsRun({
       task,
+      workspace,
       config,
       engineLayer,
       onEvent: (event: LoopEvent): Effect.Effect<void, never> => {

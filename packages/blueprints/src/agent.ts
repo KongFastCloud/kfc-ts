@@ -14,6 +14,7 @@ export interface AgentOptions {
 
 export const agent = (
   task: string,
+  workspace: string,
   opts?: AgentOptions,
 ): Effect.Effect<AgentResult, CheckFailure | FatalError, Engine> =>
   Effect.gen(function* () {
@@ -25,7 +26,7 @@ export const agent = (
     }
 
     yield* Effect.logInfo(`Running agent...`)
-    const result = yield* engine.execute(prompt, process.cwd())
+    const result = yield* engine.execute(prompt, workspace)
     yield* Effect.logInfo(`Agent done.`)
 
     return result

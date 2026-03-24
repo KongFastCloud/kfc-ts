@@ -674,6 +674,7 @@ describe("drain loop — issue runner", () => {
     const result = await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { maxAttempts: 1, checks: [], gitMode: "none", report: "none" },
         engineLayer,
       }).pipe(Effect.provide(linearLayer)),
@@ -697,6 +698,7 @@ describe("drain loop — issue runner", () => {
     const result = await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { maxAttempts: 1, checks: [], gitMode: "none", report: "none" },
         engineLayer,
       }).pipe(Effect.provide(linearLayer)),
@@ -725,6 +727,7 @@ describe("drain loop — issue runner", () => {
     await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { maxAttempts: 1, checks: [], gitMode: "none", report: "none" },
         engineLayer: trackingEngine,
         retryFeedback: "Previous: npm test failed with 3 errors",
@@ -752,6 +755,7 @@ describe("drain loop — activity writes", () => {
     await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { maxAttempts: 1, checks: [], gitMode: "none", report: "none" },
         engineLayer,
       }).pipe(Effect.provide(linearLayer)),
@@ -772,6 +776,7 @@ describe("drain loop — activity writes", () => {
     await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { maxAttempts: 1, checks: [], gitMode: "none", report: "none" },
         engineLayer,
       }).pipe(Effect.provide(linearLayer)),

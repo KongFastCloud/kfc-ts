@@ -5,19 +5,24 @@
  */
 
 import { describe, test, expect } from "bun:test"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import { Effect } from "effect"
 import { cmd } from "../src/cmd.js"
 import { CheckFailure } from "../src/errors.js"
 
+const workspace = fs.realpathSync(os.tmpdir())
+
 describe("cmd", () => {
   test("succeeds on exit 0", async () => {
-    const result = await Effect.runPromise(cmd("echo hello"))
+    const result = await Effect.runPromise(cmd("echo hello", workspace))
     expect(result.stdout.trim()).toBe("hello")
     expect(result.exitCode).toBe(0)
   })
 
   test("fails with CheckFailure on non-zero exit", async () => {
-    const result = await Effect.runPromiseExit(cmd("exit 1"))
+    const result = await Effect.runPromiseExit(cmd("exit 1", workspace))
     expect(result._tag).toBe("Failure")
     if (result._tag === "Failure" && result.cause._tag === "Fail") {
       const err = result.cause.error
@@ -26,7 +31,7 @@ describe("cmd", () => {
   })
 
   test("captures stderr on failure", async () => {
-    const result = await Effect.runPromiseExit(cmd("echo 'error output' >&2 && exit 1"))
+    const result = await Effect.runPromiseExit(cmd("echo 'error output' >&2 && exit 1", workspace))
     expect(result._tag).toBe("Failure")
     if (result._tag === "Failure" && result.cause._tag === "Fail") {
       const err = result.cause.error as CheckFailure
@@ -36,7 +41,12 @@ describe("cmd", () => {
   })
 
   test("captures stdout on success", async () => {
-    const result = await Effect.runPromise(cmd("echo 'success output'"))
+    const result = await Effect.runPromise(cmd("echo 'success output'", workspace))
     expect(result.stdout.trim()).toBe("success output")
+  })
+
+  test("executes in the specified workspace directory", async () => {
+    const result = await Effect.runPromise(cmd("pwd", workspace))
+    expect(result.stdout.trim()).toBe(workspace)
   })
 })

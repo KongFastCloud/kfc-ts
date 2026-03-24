@@ -49,10 +49,11 @@ interface CliResult {
   readonly stdout: string
 }
 
-const runCommand = (command: string, args: string[]): Effect.Effect<CliResult, FatalError> =>
+const runCommand = (command: string, args: string[], workspace: string): Effect.Effect<CliResult, FatalError> =>
   Effect.tryPromise({
     try: async () => {
       const proc = Bun.spawn([command, ...args], {
+        cwd: workspace,
         stdout: "pipe",
         stderr: "pipe",
       })
@@ -82,18 +83,18 @@ const runCommand = (command: string, args: string[]): Effect.Effect<CliResult, F
     },
   })
 
-const run = (args: string[]): Effect.Effect<GitResult, FatalError> =>
-  runCommand("git", args)
+const run = (args: string[], workspace: string): Effect.Effect<GitResult, FatalError> =>
+  runCommand("git", args, workspace)
 
-const runGh = (args: string[]): Effect.Effect<CliResult, FatalError> =>
-  runCommand("gh", args)
+const runGh = (args: string[], workspace: string): Effect.Effect<CliResult, FatalError> =>
+  runCommand("gh", args, workspace)
 
 /**
  * Check whether the git worktree has uncommitted changes (staged or unstaged).
  * Returns `true` when the working tree is dirty.
  */
-export const isWorktreeDirty = (): Effect.Effect<boolean, FatalError> =>
-  run(["status", "--porcelain"]).pipe(
+export const isWorktreeDirty = (workspace: string): Effect.Effect<boolean, FatalError> =>
+  run(["status", "--porcelain"], workspace).pipe(
     Effect.map((result) => result.stdout.trim().length > 0),
   )
 
@@ -151,12 +152,12 @@ const parseGhRunList = (raw: string): GhRun[] | undefined => {
  * Returns a formatted string of failure-level annotations (~4KB) instead of
  * raw logs (~117KB) so the agent gets concise, actionable feedback.
  */
-const fetchCiAnnotations = (runId: number): Effect.Effect<string, never> =>
+const fetchCiAnnotations = (runId: number, workspace: string): Effect.Effect<string, never> =>
   Effect.gen(function* () {
-    const repoInfo = yield* runGh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])
+    const repoInfo = yield* runGh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], workspace)
     const repo = repoInfo.stdout.trim()
 
-    const jobsOutput = yield* runGh(["run", "view", String(runId), "--json", "jobs"])
+    const jobsOutput = yield* runGh(["run", "view", String(runId), "--json", "jobs"], workspace)
     const jobs: GhJob[] = (() => {
       try {
         const parsed = JSON.parse(jobsOutput.stdout)
@@ -174,7 +175,7 @@ const fetchCiAnnotations = (runId: number): Effect.Effect<string, never> =>
       const annOutput = yield* runGh([
         "api",
         `repos/${repo}/check-runs/${job.databaseId}/annotations`,
-      ]).pipe(
+      ], workspace).pipe(
         Effect.catchTag("FatalError", () => Effect.succeed({ stdout: "[]" })),
       )
       try {
@@ -198,23 +199,23 @@ const fetchCiAnnotations = (runId: number): Effect.Effect<string, never> =>
     Effect.catchTag("FatalError", () => Effect.succeed("(failed to fetch CI annotations)")),
   )
 
-export const gitCommit = (): Effect.Effect<GitCommitResult | undefined, FatalError, Engine> =>
+export const gitCommit = (workspace: string): Effect.Effect<GitCommitResult | undefined, FatalError, Engine> =>
   Effect.gen(function* () {
-    const status = yield* run(["status", "--porcelain"])
+    const status = yield* run(["status", "--porcelain"], workspace)
     if (!status.stdout.trim()) {
       yield* Effect.logDebug("No changes to commit.")
       return undefined
     }
 
-    yield* run(["add", "-A"])
+    yield* run(["add", "-A"], workspace)
 
-    const diff = yield* run(["diff", "--staged"])
+    const diff = yield* run(["diff", "--staged"], workspace)
 
     yield* Effect.logInfo("Generating commit message...")
     const engine = yield* Engine
     const result = yield* engine.execute(
       COMMIT_MSG_PROMPT + diff.stdout,
-      process.cwd(),
+      workspace,
     ).pipe(
       Effect.catchTag("CheckFailure", (err) =>
         Effect.fail(new FatalError({ command: err.command, message: err.stderr })),
@@ -224,33 +225,33 @@ export const gitCommit = (): Effect.Effect<GitCommitResult | undefined, FatalErr
     const message = result.response.trim()
     yield* Effect.logInfo(`Commit: ${message}`)
 
-    yield* run(["commit", "-m", message])
-    const hash = (yield* run(["rev-parse", "--short", "HEAD"])).stdout.trim()
+    yield* run(["commit", "-m", message], workspace)
+    const hash = (yield* run(["rev-parse", "--short", "HEAD"], workspace)).stdout.trim()
     yield* Effect.logInfo("Committed.")
 
     return { message, hash }
   })
 
-export const gitPush = (): Effect.Effect<GitPushResult, FatalError> =>
+export const gitPush = (workspace: string): Effect.Effect<GitPushResult, FatalError> =>
   Effect.gen(function* () {
-    const ref = (yield* run(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim()
-    const remote = yield* run(["config", `branch.${ref}.remote`]).pipe(
+    const ref = (yield* run(["rev-parse", "--abbrev-ref", "HEAD"], workspace)).stdout.trim()
+    const remote = yield* run(["config", `branch.${ref}.remote`], workspace).pipe(
       Effect.map((result) => result.stdout.trim() || "origin"),
       Effect.catchTag("FatalError", () => Effect.succeed("origin")),
     )
 
     yield* Effect.logInfo("Pushing...")
-    const pushOutput = (yield* run(["push"])).stdout.trim()
+    const pushOutput = (yield* run(["push"], workspace)).stdout.trim()
     yield* Effect.logInfo("Pushed.")
 
     return { remote, ref, output: pushOutput }
   })
 
-export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError | CheckFailure> =>
+export const gitWaitForCi = (workspace: string): Effect.Effect<GitHubCiResult, FatalError | CheckFailure> =>
   Effect.gen(function* () {
-    yield* runGh(["--version"])
+    yield* runGh(["--version"], workspace)
 
-    const sha = (yield* run(["rev-parse", "HEAD"])).stdout.trim()
+    const sha = (yield* run(["rev-parse", "HEAD"], workspace)).stdout.trim()
     yield* Effect.logInfo(`Waiting for GitHub Actions for commit ${sha.slice(0, 7)}...`)
 
     const listCommand = `gh run list --commit ${sha} --limit 20 --json databaseId,status,conclusion,url,workflowName`
@@ -265,7 +266,7 @@ export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError | Check
         "20",
         "--json",
         "databaseId,status,conclusion,url,workflowName",
-      ])
+      ], workspace)
       const runs = parseGhRunList(listOutput.stdout)
       if (!runs) {
         return yield* Effect.fail(
@@ -306,7 +307,7 @@ export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError | Check
         run.conclusion !== "neutral"
       )
       if (failingRun) {
-        const annotations = yield* fetchCiAnnotations(failingRun.databaseId)
+        const annotations = yield* fetchCiAnnotations(failingRun.databaseId, workspace)
 
         return yield* Effect.fail(
           new CheckFailure({

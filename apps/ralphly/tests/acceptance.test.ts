@@ -195,6 +195,7 @@ describe("acceptance: blueprints contract alignment", () => {
     const result = await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { ...baseConfig, maxAttempts: 3 },
         engineLayer: makeEngineLayer("Feature implemented", "resume-abc"),
       }).pipe(Effect.provide(linearLayer)),
@@ -218,6 +219,7 @@ describe("acceptance: blueprints contract alignment", () => {
     const result = await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { ...baseConfig, maxAttempts: 2 },
         engineLayer: makeFailingEngineLayer(),
       }).pipe(Effect.provide(linearLayer)),
@@ -256,6 +258,7 @@ describe("acceptance: blueprints contract alignment", () => {
     const result = await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { ...baseConfig, maxAttempts: 3 },
         engineLayer: retryEngine,
       }).pipe(Effect.provide(linearLayer)),
@@ -289,6 +292,7 @@ describe("acceptance: blueprints contract alignment", () => {
     const result = await Effect.runPromise(
       blueprintsRun({
         task: "fix lint",
+        workspace: "/tmp/test-workspace",
         config: { ...baseConfig, maxAttempts: 2 },
         engineLayer: retryEngine,
         onEvent: (event) => {
@@ -324,6 +328,7 @@ describe("acceptance: blueprints contract alignment", () => {
     const result = await Effect.runPromise(
       blueprintsRun({
         task: "implement feature",
+        workspace: "/tmp/test-workspace",
         config: { ...baseConfig, maxAttempts: 3 },
         engineLayer: fatalEngine,
       }),
@@ -357,6 +362,7 @@ describe("acceptance: blueprints contract alignment", () => {
     await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: baseConfig,
         engineLayer: engine,
         retryFeedback: "Failed after 2 attempt(s): bun test exited with code 1\n\nUser follow-up: I added the missing fixture",
@@ -630,6 +636,7 @@ describe("acceptance: durable failure holds across fresh manual runs", () => {
     const result = await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { ...baseConfig, maxAttempts: 2 },
         engineLayer: makeFailingEngineLayer(),
       }).pipe(Effect.provide(linearLayer)),
@@ -813,6 +820,7 @@ describe("acceptance: session-write contract and same-session retry", () => {
     await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { ...baseConfig, maxAttempts: 1 },
         engineLayer: makeEngineLayer(),
       }).pipe(Effect.provide(linearLayer)),
@@ -833,6 +841,7 @@ describe("acceptance: session-write contract and same-session retry", () => {
     await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { ...baseConfig, maxAttempts: 1 },
         engineLayer: makeFailingEngineLayer(),
       }).pipe(Effect.provide(linearLayer)),
@@ -875,6 +884,7 @@ describe("acceptance: session-write contract and same-session retry", () => {
     const result = await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { ...baseConfig, maxAttempts: 2 },
         engineLayer: retryEngine,
       }).pipe(Effect.provide(linearLayer)),
@@ -899,6 +909,7 @@ describe("acceptance: session-write contract and same-session retry", () => {
     const result = await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { ...baseConfig, maxAttempts: 2 },
         engineLayer: makeFailingEngineLayer(),
       }).pipe(Effect.provide(linearLayer)),
@@ -923,6 +934,7 @@ describe("acceptance: session-write contract and same-session retry", () => {
     await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: baseConfig,
         engineLayer: makeEngineLayer(),
       }).pipe(Effect.provide(linearLayer)),
@@ -1138,6 +1150,7 @@ describe("acceptance: manual backlog draining", () => {
       const result = await Effect.runPromise(
         runIssue({
           work,
+          workspace: "/tmp/test-workspace",
           config: { ...baseConfig, maxAttempts: 1 },
           engineLayer: mixedEngine,
         }).pipe(Effect.provide(linearLayer)),

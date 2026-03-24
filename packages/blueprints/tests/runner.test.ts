@@ -6,6 +6,8 @@
  */
 
 import { describe, test, expect } from "bun:test"
+import fs from "node:fs"
+import os from "node:os"
 import { Effect, Layer, pipe } from "effect"
 import { Engine, type AgentResult } from "../src/engine.js"
 import { FatalError } from "../src/errors.js"
@@ -14,6 +16,8 @@ import { agent } from "../src/agent.js"
 import { cmd } from "../src/cmd.js"
 import { loop } from "../src/loop.js"
 import type { LoopEvent } from "../src/loop.js"
+
+const testWorkspace = fs.realpathSync(os.tmpdir())
 
 const baseConfig: RunConfig = {
   maxAttempts: 2,
@@ -33,6 +37,7 @@ describe("runner.run", () => {
     const result = await Effect.runPromise(
       run({
         task: "implement feature",
+        workspace: testWorkspace,
         config: baseConfig,
         engineLayer: mockEngineLayer(),
       }),
@@ -47,6 +52,7 @@ describe("runner.run", () => {
     const result = await Effect.runPromise(
       run({
         task: "implement feature",
+        workspace: testWorkspace,
         config: { ...baseConfig, checks: ["echo ok"] },
         engineLayer: mockEngineLayer(),
       }),
@@ -58,6 +64,7 @@ describe("runner.run", () => {
     const result = await Effect.runPromise(
       run({
         task: "task",
+        workspace: testWorkspace,
         config: baseConfig,
         engineLayer: mockEngineLayer(() =>
           Effect.fail(new FatalError({ command: "agent", message: "auth failed" })),
@@ -72,6 +79,7 @@ describe("runner.run", () => {
     const result = await Effect.runPromise(
       run({
         task: "task",
+        workspace: testWorkspace,
         config: baseConfig,
         engineLayer: mockEngineLayer(() =>
           Effect.succeed({ response: "ok", resumeToken: "thread-xyz" }),
@@ -86,6 +94,7 @@ describe("runner.run", () => {
     await Effect.runPromise(
       run({
         task: "task",
+        workspace: testWorkspace,
         config: baseConfig,
         engineLayer: mockEngineLayer(),
         onEvent: (event) => {
@@ -105,6 +114,7 @@ describe("runner.run", () => {
     await Effect.runPromise(
       run({
         task: "task",
+        workspace: testWorkspace,
         config: baseConfig,
         engineLayer: mockEngineLayer(),
         onAgentResult: (result, attempt) => {
@@ -120,6 +130,7 @@ describe("runner.run", () => {
     const result = await Effect.runPromise(
       run({
         task: "task",
+        workspace: testWorkspace,
         config: baseConfig,
         engineLayer: mockEngineLayer(() =>
           Effect.succeed({ response: "ok" }),
@@ -136,6 +147,8 @@ describe("runner.run", () => {
  * the runner uses internally, with mock engines.
  */
 describe("shared executor orchestration", () => {
+  const ws = testWorkspace
+
   test("agent + checks succeed on first attempt", async () => {
     const layer = Layer.succeed(Engine, {
       execute: () =>
@@ -144,8 +157,8 @@ describe("shared executor orchestration", () => {
 
     const workflow = loop(
       (feedback) => {
-        const pipeline = agent("implement feature", { feedback })
-        return pipe(pipeline, Effect.andThen(cmd("echo ok")))
+        const pipeline = agent("implement feature", ws, { feedback })
+        return pipe(pipeline, Effect.andThen(cmd("echo ok", ws)))
       },
       { maxAttempts: baseConfig.maxAttempts },
     )
@@ -164,13 +177,13 @@ describe("shared executor orchestration", () => {
 
     const workflow = loop(
       (feedback) => {
-        const pipeline = agent("fix bug", { feedback })
+        const pipeline = agent("fix bug", ws, { feedback })
         return pipe(
           pipeline,
           Effect.andThen(
             calls === 0
-              ? cmd("exit 1")
-              : cmd("echo ok"),
+              ? cmd("exit 1", ws)
+              : cmd("echo ok", ws),
           ),
         )
       },
@@ -189,7 +202,7 @@ describe("shared executor orchestration", () => {
         Effect.succeed({ response: "ok", resumeToken: "thread-xyz" }),
     })
 
-    const workflow = agent("task", {}).pipe(
+    const workflow = agent("task", ws, {}).pipe(
       Effect.tap((result) => {
         capturedToken = result.resumeToken
         return Effect.void
@@ -210,7 +223,7 @@ describe("shared executor orchestration", () => {
     })
 
     const workflow = loop(
-      (feedback) => agent("task", { feedback }),
+      (feedback) => agent("task", ws, { feedback }),
       { maxAttempts: 3 },
     )
 

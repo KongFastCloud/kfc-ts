@@ -1,7 +1,8 @@
 /**
  * ABOUTME: The canonical execution runner for blueprints.
  * Composes agent → checks → report → git into a retry loop with lifecycle events.
- * Callers provide prepared task input, an Engine layer, and run configuration.
+ * Callers provide prepared task input, an explicit workspace path, an Engine layer,
+ * and run configuration. All steps execute within the provided workspace.
  * The runner is agnostic to Linear, Beads, and tracker-specific concerns — callers
  * handle external integrations via the onEvent callback.
  *
@@ -70,11 +71,12 @@ export interface RunResult {
 /**
  * Git operation callbacks for dependency injection.
  * Allows tests to provide fake implementations without module mocking.
+ * Each operation receives the explicit workspace path to execute within.
  */
 export interface GitOps {
-  readonly commit: () => Effect.Effect<GitCommitResult | undefined, FatalError, Engine>
-  readonly push: () => Effect.Effect<GitPushResult, FatalError>
-  readonly waitCi: () => Effect.Effect<GitHubCiResult, FatalError | CheckFailure>
+  readonly commit: (workspace: string) => Effect.Effect<GitCommitResult | undefined, FatalError, Engine>
+  readonly push: (workspace: string) => Effect.Effect<GitPushResult, FatalError>
+  readonly waitCi: (workspace: string) => Effect.Effect<GitHubCiResult, FatalError | CheckFailure>
 }
 
 const defaultGitOps: GitOps = {
@@ -94,18 +96,19 @@ const defaultGitOps: GitOps = {
  */
 export const buildCiGitStep = (
   ops: GitOps,
+  workspace: string,
 ): Effect.Effect<void, FatalError | CheckFailure, Engine> =>
   Effect.gen(function* () {
-    const commitResult = yield* ops.commit()
+    const commitResult = yield* ops.commit(workspace)
     if (!commitResult) {
       yield* Effect.logDebug("Push/CI skipped: no commit created.")
       return
     }
 
     yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
-    const pushResult = yield* ops.push()
+    const pushResult = yield* ops.push(workspace)
     yield* Effect.logInfo(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
-    const ciResult = yield* ops.waitCi()
+    const ciResult = yield* ops.waitCi(workspace)
     yield* Effect.logInfo(`CI passed: run ${ciResult.runId}`)
   })
 
@@ -118,6 +121,7 @@ export const buildCiGitStep = (
 export const executePostLoopGitOps = (
   gitMode: GitMode,
   ops: GitOps,
+  workspace: string,
 ): Effect.Effect<void, FatalError, Engine> =>
   Effect.gen(function* () {
     yield* Effect.logInfo(`Git mode: ${gitMode}`)
@@ -126,21 +130,21 @@ export const executePostLoopGitOps = (
       case "commit_and_push_and_wait_ci":
         break
       case "commit": {
-        const commitResult = yield* ops.commit()
+        const commitResult = yield* ops.commit(workspace)
         if (commitResult) {
           yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
         }
         break
       }
       case "commit_and_push": {
-        const commitResult = yield* ops.commit()
+        const commitResult = yield* ops.commit(workspace)
         if (!commitResult) {
           yield* Effect.logDebug("Push skipped: no commit created.")
           break
         }
 
         yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
-        const pushResult = yield* ops.push()
+        const pushResult = yield* ops.push(workspace)
         yield* Effect.logInfo(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
         break
       }
@@ -154,6 +158,13 @@ export const executePostLoopGitOps = (
 export interface RunnerOptions {
   /** The task prompt to execute. */
   readonly task: string
+  /**
+   * Explicit execution workspace path.
+   * All steps (agent, checks, reports, git) execute within this directory.
+   * Callers provide the repo root, worktree path, or any target directory —
+   * the runner never falls back to process.cwd().
+   */
+  readonly workspace: string
   /** Run configuration (retries, checks, git mode, report mode). */
   readonly config: RunConfig
   /** The Engine layer to use for agent execution. */
@@ -183,14 +194,18 @@ export interface RunnerOptions {
  * agent → checks → report → loop with retries → git mode flow.
  *
  * This is the canonical execution runner. Callers (ralphly, ralphe, etc.)
- * prepare task input and configuration, then delegate to this function.
+ * prepare task input, an explicit workspace path, and configuration, then
+ * delegate to this function. All execution steps (agent, checks, reports,
+ * git) run within the provided workspace — the runner never falls back to
+ * process.cwd().
+ *
  * The runner handles retries, feedback propagation, engine/check/report
  * orchestration, lifecycle events, and final result shaping.
  *
  * The runner never fails — errors are captured in RunResult.
  */
 export const run = (opts: RunnerOptions): Effect.Effect<RunResult, never> => {
-  const { task, config, engineLayer, onEvent, onAgentResult, gitOps } = opts
+  const { task, workspace, config, engineLayer, onEvent, onAgentResult, gitOps } = opts
   const ops = gitOps ?? defaultGitOps
 
   // Track state across attempts
@@ -201,7 +216,7 @@ export const run = (opts: RunnerOptions): Effect.Effect<RunResult, never> => {
     (feedback, attempt, maxAttempts) => {
       attemptCount = attempt
 
-      let pipeline: Effect.Effect<unknown, any, Engine> = agent(task, { feedback }).pipe(
+      let pipeline: Effect.Effect<unknown, any, Engine> = agent(task, workspace, { feedback }).pipe(
         Effect.tap((result: AgentResult) => {
           lastResumeToken = result.resumeToken
           return Effect.void
@@ -213,15 +228,15 @@ export const run = (opts: RunnerOptions): Effect.Effect<RunResult, never> => {
       )
 
       for (const check of config.checks) {
-        pipeline = pipe(pipeline, Effect.andThen(cmd(check)))
+        pipeline = pipe(pipeline, Effect.andThen(cmd(check, workspace)))
       }
 
       if (config.report !== "none") {
-        pipeline = pipe(pipeline, Effect.andThen(report(task, config.report)))
+        pipeline = pipe(pipeline, Effect.andThen(report(task, workspace, config.report)))
       }
 
       if (config.gitMode === "commit_and_push_and_wait_ci") {
-        pipeline = pipe(pipeline, Effect.andThen(buildCiGitStep(ops)))
+        pipeline = pipe(pipeline, Effect.andThen(buildCiGitStep(ops, workspace)))
       }
 
       return pipeline
@@ -234,7 +249,7 @@ export const run = (opts: RunnerOptions): Effect.Effect<RunResult, never> => {
 
   const fullWorkflow = Effect.gen(function* () {
     yield* Effect.provide(workflow, engineLayer)
-    yield* Effect.provide(executePostLoopGitOps(config.gitMode, ops), engineLayer)
+    yield* Effect.provide(executePostLoopGitOps(config.gitMode, ops, workspace), engineLayer)
 
     return {
       success: true,

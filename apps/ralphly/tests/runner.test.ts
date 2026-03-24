@@ -175,6 +175,7 @@ describe("runIssue", () => {
     await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { maxAttempts: 1, checks: [], gitMode: "none", report: "none" },
         engineLayer: makeEngineLayer(),
       }).pipe(Effect.provide(linearLayer)),
@@ -193,6 +194,7 @@ describe("runIssue", () => {
     const result = await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { maxAttempts: 1, checks: [], gitMode: "none", report: "none" },
         engineLayer: makeEngineLayer(),
       }).pipe(Effect.provide(linearLayer)),
@@ -219,6 +221,7 @@ describe("runIssue", () => {
     const result = await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { maxAttempts: 1, checks: [], gitMode: "none", report: "none" },
         engineLayer: makeFailingEngineLayer(),
       }).pipe(Effect.provide(linearLayer)),
@@ -258,6 +261,7 @@ describe("runIssue", () => {
     const result = await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { maxAttempts: 2, checks: [], gitMode: "none", report: "none" },
         engineLayer: retryEngine,
       }).pipe(Effect.provide(linearLayer)),
@@ -280,6 +284,7 @@ describe("runIssue", () => {
     const result = await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { maxAttempts: 1, checks: [], gitMode: "none", report: "none" },
         engineLayer: makeEngineLayer("Done!", "resume-token-abc"),
       }).pipe(Effect.provide(linearLayer)),
@@ -307,6 +312,7 @@ describe("runIssue", () => {
     await Effect.runPromise(
       runIssue({
         work,
+        workspace: "/tmp/test-workspace",
         config: { maxAttempts: 1, checks: [], gitMode: "none", report: "none" },
         engineLayer,
         retryFeedback: "Previous attempt failed: tests broken",

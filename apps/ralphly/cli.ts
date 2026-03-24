@@ -141,6 +141,7 @@ const run = Command.make(
 
       const summary: WorkerRunSummary = yield* runWorkerLoop({
         agentId: cfg.linear.agentId,
+        workspace: cfg.workspacePath,
         config: runConfig,
         engineLayer: ClaudeEngineLayer,
       }).pipe(Effect.provide(linearLayer))
