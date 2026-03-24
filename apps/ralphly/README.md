@@ -154,11 +154,14 @@ bun run dev run --dry-run
 # Run tests
 bun test
 
+# Lint
+bun run lint
+
 # Type-check
 bun run typecheck
 
 # Link the CLI globally so `ralphly` is available on your PATH
-bun link
+bun run link
 ```
 
 ## Logs

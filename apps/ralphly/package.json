@@ -13,7 +13,8 @@
     "dev": "bun run cli.ts",
     "build": "echo 'Add build script here'",
     "test": "bun test tests/",
-    "lint": "echo 'Add lint script here'",
+    "lint": "oxlint -c ./.oxlintrc.json --disable-nested-config src tests cli.ts",
+    "link": "bun link",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
