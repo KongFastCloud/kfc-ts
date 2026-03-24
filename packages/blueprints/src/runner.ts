@@ -1,16 +1,15 @@
 /**
- * ABOUTME: The canonical execution runner for blueprints.
- * Composes agent → checks → report → git into a retry loop with lifecycle events.
- * Callers provide prepared task input, an explicit workspace path, an Engine layer,
- * and run configuration. All steps execute within the provided workspace.
- * The runner is agnostic to Linear, Beads, and tracker-specific concerns — callers
- * handle external integrations via the onEvent callback.
+ * ABOUTME: Transitional shared runner — will be removed once apps own their workflows.
  *
- * Preserves ralphe loop semantics:
- * - Caller context refreshed each attempt (feedback propagation)
- * - Failure feedback appended on retry
- * - Structured run results with resume token
- * - Lifecycle events for observer pattern
+ * This module provides the legacy `run()` orchestrator that composes
+ * agent → checks → report → git into a retry loop. It exists for backward
+ * compatibility while ralphly migrates to primitives-based composition.
+ *
+ * New code should NOT depend on `run()`. Instead, compose workflows from
+ * the exported primitives: loop, agent, cmd, report, git steps, and error types.
+ *
+ * @deprecated Use primitives-based workflow assembly instead of the shared runner.
+ * See the package README for composition examples.
  */
 
 import { Effect, Layer, pipe } from "effect"
@@ -20,35 +19,27 @@ import { agent } from "./agent.js"
 import { cmd } from "./cmd.js"
 import { loop } from "./loop.js"
 import { report } from "./report.js"
-import { gitCommit, gitPush, gitWaitForCi } from "./git.js"
-import type { CheckFailure, FatalError } from "./errors.js"
-import type { GitCommitResult, GitPushResult, GitHubCiResult } from "./git.js"
+// Re-export git-steps types and functions for backward compatibility.
+// These are the canonical exports — this module just re-exports them.
+export type { GitMode, GitOps } from "./git-steps.js"
+export { buildCiGitStep, executePostLoopGitOps } from "./git-steps.js"
+
+import { type GitOps, defaultGitOps, buildCiGitStep, executePostLoopGitOps } from "./git-steps.js"
 
 // ---------------------------------------------------------------------------
 // Configuration types
 // ---------------------------------------------------------------------------
 
 /**
- * Canonical git operation mode.
- * - "none": No automatic git operations after task completion
- * - "commit": Stage and commit changes but do not push
- * - "commit_and_push": Stage, commit, and push changes
- * - "commit_and_push_and_wait_ci": Stage, commit, push, and wait for CI
- */
-export type GitMode =
-  | "none"
-  | "commit"
-  | "commit_and_push"
-  | "commit_and_push_and_wait_ci"
-
-/**
  * Run configuration for the execution runner.
  * Callers prepare this from their own config format.
+ *
+ * @deprecated Prefer assembling workflows from primitives directly.
  */
 export interface RunConfig {
   readonly maxAttempts: number
   readonly checks: string[]
-  readonly gitMode: GitMode
+  readonly gitMode: "none" | "commit" | "commit_and_push" | "commit_and_push_and_wait_ci"
   readonly report: "browser" | "basic" | "none"
 }
 
@@ -65,96 +56,12 @@ export interface RunResult {
 }
 
 // ---------------------------------------------------------------------------
-// Git operations (injectable for testing)
-// ---------------------------------------------------------------------------
-
-/**
- * Git operation callbacks for dependency injection.
- * Allows tests to provide fake implementations without module mocking.
- * Each operation receives the explicit workspace path to execute within.
- */
-export interface GitOps {
-  readonly commit: (workspace: string) => Effect.Effect<GitCommitResult | undefined, FatalError, Engine>
-  readonly push: (workspace: string) => Effect.Effect<GitPushResult, FatalError>
-  readonly waitCi: (workspace: string) => Effect.Effect<GitHubCiResult, FatalError | CheckFailure>
-}
-
-const defaultGitOps: GitOps = {
-  commit: gitCommit,
-  push: gitPush,
-  waitCi: gitWaitForCi,
-}
-
-// ---------------------------------------------------------------------------
-// Git step helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Build the in-loop git step for commit_and_push_and_wait_ci mode.
- * Commits, pushes, and waits for CI. Returns CheckFailure on CI failure
- * so the retry loop can feed structured annotations back to the agent.
- */
-export const buildCiGitStep = (
-  ops: GitOps,
-  workspace: string,
-): Effect.Effect<void, FatalError | CheckFailure, Engine> =>
-  Effect.gen(function* () {
-    const commitResult = yield* ops.commit(workspace)
-    if (!commitResult) {
-      yield* Effect.logDebug("Push/CI skipped: no commit created.")
-      return
-    }
-
-    yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
-    const pushResult = yield* ops.push(workspace)
-    yield* Effect.logInfo(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
-    const ciResult = yield* ops.waitCi(workspace)
-    yield* Effect.logInfo(`CI passed: run ${ciResult.runId}`)
-  })
-
-/**
- * Execute post-loop git operations based on the git mode.
- * Handles "commit" and "commit_and_push" modes.
- * "none" and "commit_and_push_and_wait_ci" are no-ops here
- * (CI mode runs inside the retry loop via buildCiGitStep).
- */
-export const executePostLoopGitOps = (
-  gitMode: GitMode,
-  ops: GitOps,
-  workspace: string,
-): Effect.Effect<void, FatalError, Engine> =>
-  Effect.gen(function* () {
-    yield* Effect.logInfo(`Git mode: ${gitMode}`)
-    switch (gitMode) {
-      case "none":
-      case "commit_and_push_and_wait_ci":
-        break
-      case "commit": {
-        const commitResult = yield* ops.commit(workspace)
-        if (commitResult) {
-          yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
-        }
-        break
-      }
-      case "commit_and_push": {
-        const commitResult = yield* ops.commit(workspace)
-        if (!commitResult) {
-          yield* Effect.logDebug("Push skipped: no commit created.")
-          break
-        }
-
-        yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
-        const pushResult = yield* ops.push(workspace)
-        yield* Effect.logInfo(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
-        break
-      }
-    }
-  })
-
-// ---------------------------------------------------------------------------
 // Runner options
 // ---------------------------------------------------------------------------
 
+/**
+ * @deprecated Prefer assembling workflows from primitives directly.
+ */
 export interface RunnerOptions {
   /** The task prompt to execute. */
   readonly task: string
@@ -186,23 +93,21 @@ export interface RunnerOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Main runner
+// Main runner (transitional — apps should compose from primitives)
 // ---------------------------------------------------------------------------
 
 /**
  * Execute a task through the full blueprints pipeline:
  * agent → checks → report → loop with retries → git mode flow.
  *
- * This is the canonical execution runner. Callers (ralphly, ralphe, etc.)
- * prepare task input, an explicit workspace path, and configuration, then
- * delegate to this function. All execution steps (agent, checks, reports,
- * git) run within the provided workspace — the runner never falls back to
- * process.cwd().
- *
- * The runner handles retries, feedback propagation, engine/check/report
- * orchestration, lifecycle events, and final result shaping.
+ * **Transitional.** This shared runner exists for backward compatibility.
+ * The intended steady state is for apps to compose their own workflows
+ * from the exported primitives (loop, agent, cmd, report, git steps).
+ * See the package README for composition examples.
  *
  * The runner never fails — errors are captured in RunResult.
+ *
+ * @deprecated Use primitives-based workflow assembly instead.
  */
 export const run = (opts: RunnerOptions): Effect.Effect<RunResult, never> => {
   const { task, workspace, config, engineLayer, onEvent, onAgentResult, gitOps } = opts
