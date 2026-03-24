@@ -32,4 +32,32 @@ describe("identity", () => {
     const discord = qualifyId("discord", "123")
     assert.notEqual(gchat.qualified, discord.qualified)
   })
+
+  it("qualifyThreadId and qualifyUserId use the same format as qualifyId", () => {
+    const generic = qualifyId("gchat", "spaces/X/threads/Y")
+    const thread = qualifyThreadId("gchat", "spaces/X/threads/Y")
+    assert.equal(generic.qualified, thread.qualified)
+    assert.equal(generic.platform, thread.platform)
+    assert.equal(generic.raw, thread.raw)
+  })
+
+  it("thread and user IDs from the same platform share the platform prefix", () => {
+    const thread = qualifyThreadId("gchat", "spaces/X/threads/Y")
+    const user = qualifyUserId("gchat", "users/112233")
+    assert.ok(thread.qualified.startsWith("gchat:"))
+    assert.ok(user.qualified.startsWith("gchat:"))
+    assert.equal(thread.platform, user.platform)
+  })
+
+  it("same raw thread ID on different platforms produces isolated memory keys", () => {
+    const gchat = qualifyThreadId("gchat", "spaces/X/threads/Y")
+    const discord = qualifyThreadId("discord", "spaces/X/threads/Y")
+    assert.notEqual(gchat.qualified, discord.qualified, "thread memory should be isolated by platform")
+  })
+
+  it("same raw user ID on different platforms produces isolated resource keys", () => {
+    const gchat = qualifyUserId("gchat", "users/112233")
+    const discord = qualifyUserId("discord", "users/112233")
+    assert.notEqual(gchat.qualified, discord.qualified, "user memory should be isolated by platform")
+  })
 })

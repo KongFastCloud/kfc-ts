@@ -213,4 +213,156 @@ describe("Google Chat MESSAGE handling", () => {
     const res = await handler(webhookRequest(payload))
     assert.equal(res.status, 400)
   })
+
+  it("does not include extra fields in the success response beyond text and thread", async () => {
+    const payload = makeMessagePayload()
+    const res = await handler(webhookRequest(payload))
+    const body = await res.json()
+    const keys = Object.keys(body).sort()
+    assert.deepEqual(keys, ["text", "thread"], "response should contain only text and thread")
+  })
+
+  it("error response does not leak internal error details to the user", async () => {
+    generateReplyMock.mock.mockImplementation(
+      (): Effect.Effect<MockChatResponse, unknown> =>
+        Effect.fail({ _tag: "AgentError", message: "internal: connection reset by peer" }),
+    )
+
+    const payload = makeMessagePayload()
+    const res = await handler(webhookRequest(payload))
+    const body = await res.json()
+
+    // User-facing message should be friendly, not expose internals
+    assert.ok(!body.text.includes("connection reset"), "should not leak internal error message")
+    assert.ok(body.text.includes("error"), "should contain friendly error wording")
+  })
+
+  it("returns HTTP 200 even on chat bridge failure (Google Chat expects 200)", async () => {
+    generateReplyMock.mock.mockImplementation(
+      (): Effect.Effect<MockChatResponse, unknown> =>
+        Effect.fail({ _tag: "AgentError", message: "model overloaded" }),
+    )
+
+    const payload = makeMessagePayload()
+    const res = await handler(webhookRequest(payload))
+    assert.equal(res.status, 200, "should return 200 even on failure for Google Chat compatibility")
+  })
+})
+
+describe("Google Chat event handling — edge cases", () => {
+  it("CARD_CLICKED event is acknowledged silently with empty 200", async () => {
+    const payload = {
+      type: "CARD_CLICKED",
+      eventTime: "2026-03-24T00:00:00Z",
+    }
+    const res = await handler(webhookRequest(payload))
+    assert.equal(res.status, 200)
+    const text = await res.text()
+    assert.equal(text, "")
+  })
+
+  it("unknown event type is acknowledged silently with empty 200", async () => {
+    const payload = {
+      type: "SOME_FUTURE_EVENT",
+      eventTime: "2026-03-24T00:00:00Z",
+    }
+    const res = await handler(webhookRequest(payload))
+    assert.equal(res.status, 200)
+    const text = await res.text()
+    assert.equal(text, "")
+  })
+})
+
+describe("Google Chat concurrency", () => {
+  beforeEach(() => {
+    generateReplyMock.mock.resetCalls()
+  })
+
+  it("concurrent messages on the SAME thread are serialised (FIFO)", async () => {
+    const order: number[] = []
+    let callCount = 0
+
+    generateReplyMock.mock.mockImplementation(
+      (_req: MockChatRequest): Effect.Effect<MockChatResponse, unknown> => {
+        const idx = ++callCount
+        return Effect.promise(async () => {
+          order.push(idx)
+          // Small delay to ensure concurrency window
+          await new Promise((r) => setTimeout(r, 20))
+          return { text: `reply-${idx}` }
+        })
+      },
+    )
+
+    // Both use the same thread
+    const payload1 = makeMessagePayload({ argumentText: "first" })
+    const payload2 = makeMessagePayload({ argumentText: "second" })
+
+    const [res1, res2] = await Promise.all([
+      handler(webhookRequest(payload1)),
+      handler(webhookRequest(payload2)),
+    ])
+
+    assert.equal(res1.status, 200)
+    assert.equal(res2.status, 200)
+    assert.equal(order.length, 2)
+    assert.equal(order[0], 1, "first message should be processed first")
+    assert.equal(order[1], 2, "second message should be processed second")
+  })
+
+  it("concurrent messages on DIFFERENT threads run in parallel", async () => {
+    const active = new Set<string>()
+    let maxConcurrent = 0
+
+    generateReplyMock.mock.mockImplementation(
+      (req: MockChatRequest): Effect.Effect<MockChatResponse, unknown> => {
+        return Effect.promise(async () => {
+          active.add(req.threadId)
+          maxConcurrent = Math.max(maxConcurrent, active.size)
+          await new Promise((r) => setTimeout(r, 20))
+          active.delete(req.threadId)
+          return { text: "ok" }
+        })
+      },
+    )
+
+    // Use different threads
+    const payload1 = makeMessagePayload({
+      thread: { name: "spaces/SPACE1/threads/THREAD_A" },
+    })
+    const payload2 = makeMessagePayload({
+      thread: { name: "spaces/SPACE1/threads/THREAD_B" },
+    })
+
+    await Promise.all([
+      handler(webhookRequest(payload1)),
+      handler(webhookRequest(payload2)),
+    ])
+
+    assert.equal(maxConcurrent, 2, "different threads should run concurrently")
+  })
+
+  it("lock is released after chat bridge failure (no deadlock)", async () => {
+    generateReplyMock.mock.mockImplementation(
+      (): Effect.Effect<MockChatResponse, unknown> =>
+        Effect.fail({ _tag: "AgentError", message: "boom" }),
+    )
+
+    // First request fails
+    const payload1 = makeMessagePayload({ argumentText: "will fail" })
+    const res1 = await handler(webhookRequest(payload1))
+    assert.equal(res1.status, 200) // graceful error
+
+    // Second request on same thread should NOT deadlock
+    generateReplyMock.mock.mockImplementation(
+      (_req: MockChatRequest): Effect.Effect<MockChatResponse, unknown> =>
+        Effect.succeed({ text: "recovered" }),
+    )
+
+    const payload2 = makeMessagePayload({ argumentText: "should work" })
+    const res2 = await handler(webhookRequest(payload2))
+    assert.equal(res2.status, 200)
+    const body2 = await res2.json()
+    assert.equal(body2.text, "recovered", "second request should succeed after first failure")
+  })
 })

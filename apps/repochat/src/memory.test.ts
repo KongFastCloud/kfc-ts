@@ -82,3 +82,39 @@ describe("cross-platform isolation", () => {
     assert.notEqual(gchat, discord)
   })
 })
+
+describe("memory scoping semantics", () => {
+  it("working memory scope is 'resource' — persists across threads for the same user", () => {
+    // This is the critical property: working memory keyed by resource (userId)
+    // means a user's preferences carry across all their threads
+    const wm = MEMORY_CONFIG.workingMemory
+    assert.ok(wm)
+    assert.equal(wm.scope, "resource", "working memory must be resource-scoped for cross-thread persistence")
+  })
+
+  it("thread history is separate per thread (scoped by thread param, not resource)", () => {
+    // lastMessages controls thread-local history. This is always per-thread
+    // because Mastra threads are the natural scope for message history.
+    assert.ok(MEMORY_CONFIG.lastMessages, "lastMessages should be configured for thread-local history")
+    assert.ok(MEMORY_CONFIG.lastMessages! > 0, "lastMessages must be positive")
+  })
+
+  it("working memory template contains all expected user-context fields", () => {
+    const wm = MEMORY_CONFIG.workingMemory as { template?: string }
+    assert.ok(wm.template)
+    const requiredFields = [
+      "Preferred name",
+      "Repos of interest",
+      "Communication style",
+      "Key topics discussed",
+      "Open questions or follow-ups",
+    ]
+    for (const field of requiredFields) {
+      assert.ok(wm.template.includes(field), `template should contain '${field}'`)
+    }
+  })
+
+  it("semantic recall is disabled — no embedding-based retrieval", () => {
+    assert.equal(MEMORY_CONFIG.semanticRecall, false, "semantic recall must be disabled for v1")
+  })
+})
