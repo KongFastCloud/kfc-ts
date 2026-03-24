@@ -53,7 +53,16 @@ const run = Command.make(
         return yield* Effect.fail(
           new FatalError({
             command: "run",
-            message: `Missing required configuration:\n${result.error.missing.map((m) => `  - ${m}`).join("\n")}\n\nRun 'ralphly config' to see current configuration status.`,
+            message: [
+              "Missing required configuration:",
+              ...result.error.missing.map((m) => `  ✗ ${m}`),
+              "",
+              "To get started:",
+              "  1. Copy .env.example to .env and fill in your values",
+              "  2. Run 'ralphly config' to verify everything resolves",
+              "",
+              "See the README for the full setup guide.",
+            ].join("\n"),
           }),
         )
       }
@@ -173,7 +182,12 @@ const configCmd = Command.make("config", {}, () =>
         yield* Console.log(`  ✗ ${m}`)
       }
       yield* Console.log("")
-      yield* Console.log("Set these via environment variables or .ralphly/config.json.")
+      yield* Console.log("To get started:")
+      yield* Console.log("  1. Copy .env.example to .env and fill in your values")
+      yield* Console.log("  2. Re-run 'ralphly config' to verify")
+      yield* Console.log("")
+      yield* Console.log("You can also set values in .ralphly/config.json (env vars take precedence).")
+      yield* Console.log("See the README for the full setup guide.")
       return
     }
 
