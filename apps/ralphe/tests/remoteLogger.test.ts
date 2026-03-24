@@ -341,6 +341,41 @@ describe("fail-open behavior", () => {
     initRemoteLogger() // no env vars
     await expect(shutdownRemoteLogger()).resolves.toBeUndefined()
   })
+
+  test("shutdownRemoteLogger posts buffered entries to the edge ingest endpoint", async () => {
+    process.env.AXIOM_TOKEN = "test-token"
+    process.env.AXIOM_LOG_DATASET = "test-logs"
+    process.env.AXIOM_DOMAIN = "https://example.axiom.co"
+    initRemoteLogger()
+
+    const originalFetch = globalThis.fetch
+    let requestUrl = ""
+    let requestBody = ""
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      requestUrl = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url
+      requestBody = String(init?.body ?? "")
+      return new Response("", { status: 200 })
+    }) as typeof fetch
+
+    try {
+      const logger = getRemoteLogger()
+      Effect.runSync(
+        Effect.logInfo("flush-me").pipe(Effect.provide(Logger.replace(Logger.defaultLogger, logger))),
+      )
+
+      await shutdownRemoteLogger()
+
+      expect(requestUrl).toBe("https://example.axiom.co/v1/ingest/test-logs")
+      expect(requestBody).toContain("flush-me")
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
 })
 
 describe("integration with AppLoggerLayer", () => {

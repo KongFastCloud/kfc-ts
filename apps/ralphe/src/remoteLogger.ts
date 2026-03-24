@@ -128,7 +128,7 @@ const flush = async (entries: Array<Record<string, unknown>>): Promise<void> => 
   if (entries.length === 0 || !config) return
 
   try {
-    const url = `${config.domain}/v1/datasets/${config.dataset}/ingest`
+    const url = `${config.domain}/v1/ingest/${config.dataset}`
     const response = await fetch(url, {
       method: "POST",
       headers: {
