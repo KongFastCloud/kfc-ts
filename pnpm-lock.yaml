@@ -206,6 +206,9 @@ importers:
 
   apps/repochat:
     dependencies:
+      '@mastra/core':
+        specifier: ^0.10.5
+        version: 0.10.15(@sinclair/typebox@0.31.28)(effect@3.19.19)(openapi-types@12.1.3)(react@19.2.4)(zod@4.3.6)
       '@workspace/mastra':
         specifier: workspace:*
         version: link:../../packages/mastra
@@ -215,6 +218,9 @@ importers:
       dotenv:
         specifier: ^17.2.2
         version: 17.3.1
+      effect:
+        specifier: ^3.19.19
+        version: 3.19.19
     devDependencies:
       '@types/node':
         specifier: ^24.6.0
@@ -10420,6 +10426,57 @@ snapshots:
       - valibot
       - zod-openapi
 
+  '@mastra/core@0.10.15(@sinclair/typebox@0.31.28)(effect@3.19.19)(openapi-types@12.1.3)(react@19.2.4)(zod@4.3.6)':
+    dependencies:
+      '@ai-sdk/provider': 1.1.3
+      '@ai-sdk/provider-utils': 2.2.8(zod@4.3.6)
+      '@ai-sdk/ui-utils': 1.2.11(zod@4.3.6)
+      '@mastra/schema-compat': 0.10.5(ai@4.3.19(react@19.2.4)(zod@4.3.6))(zod@4.3.6)
+      '@opentelemetry/api': 1.9.0
+      '@opentelemetry/auto-instrumentations-node': 0.59.0(@opentelemetry/api@1.9.0)(@opentelemetry/core@2.6.0(@opentelemetry/api@1.9.0))
+      '@opentelemetry/core': 2.6.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/exporter-trace-otlp-grpc': 0.201.1(@opentelemetry/api@1.9.0)
+      '@opentelemetry/exporter-trace-otlp-http': 0.201.1(@opentelemetry/api@1.9.0)
+      '@opentelemetry/otlp-exporter-base': 0.201.1(@opentelemetry/api@1.9.0)
+      '@opentelemetry/otlp-transformer': 0.201.1(@opentelemetry/api@1.9.0)
+      '@opentelemetry/resources': 2.6.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-metrics': 2.6.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-node': 0.201.1(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-trace-base': 2.6.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-trace-node': 2.6.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/semantic-conventions': 1.40.0
+      '@sindresorhus/slugify': 2.2.1
+      ai: 4.3.19(react@19.2.4)(zod@4.3.6)
+      date-fns: 3.6.0
+      dotenv: 16.6.1
+      hono: 4.12.5
+      hono-openapi: 0.4.8(@sinclair/typebox@0.31.28)(effect@3.19.19)(hono@4.12.5)(openapi-types@12.1.3)(zod@4.3.6)
+      json-schema: 0.4.0
+      json-schema-to-zod: 2.7.0
+      pino: 9.14.0
+      pino-pretty: 13.1.3
+      radash: 12.1.1
+      sift: 17.1.3
+      xstate: 5.28.0
+      zod: 4.3.6
+      zod-to-json-schema: 3.25.1(zod@4.3.6)
+    transitivePeerDependencies:
+      - '@hono/arktype-validator'
+      - '@hono/effect-validator'
+      - '@hono/typebox-validator'
+      - '@hono/valibot-validator'
+      - '@hono/zod-validator'
+      - '@sinclair/typebox'
+      - '@valibot/to-json-schema'
+      - arktype
+      - effect
+      - encoding
+      - openapi-types
+      - react
+      - supports-color
+      - valibot
+      - zod-openapi
+
   '@mastra/schema-compat@0.10.5(ai@4.3.19(react@19.2.4)(zod@3.25.76))(zod@3.25.76)':
     dependencies:
       ai: 4.3.19(react@19.2.4)(zod@3.25.76)
@@ -10427,6 +10484,14 @@ snapshots:
       zod: 3.25.76
       zod-from-json-schema: 0.0.5
       zod-to-json-schema: 3.25.1(zod@3.25.76)
+
+  '@mastra/schema-compat@0.10.5(ai@4.3.19(react@19.2.4)(zod@4.3.6))(zod@4.3.6)':
+    dependencies:
+      ai: 4.3.19(react@19.2.4)(zod@4.3.6)
+      json-schema: 0.4.0
+      zod: 4.3.6
+      zod-from-json-schema: 0.0.5
+      zod-to-json-schema: 3.25.1(zod@4.3.6)
 
   '@modelcontextprotocol/sdk@1.27.1(zod@3.25.76)':
     dependencies:
@@ -15334,6 +15399,16 @@ snapshots:
       effect: 3.19.19
       hono: 4.12.5
       zod: 3.25.76
+
+  hono-openapi@0.4.8(@sinclair/typebox@0.31.28)(effect@3.19.19)(hono@4.12.5)(openapi-types@12.1.3)(zod@4.3.6):
+    dependencies:
+      json-schema-walker: 2.0.0
+      openapi-types: 12.1.3
+    optionalDependencies:
+      '@sinclair/typebox': 0.31.28
+      effect: 3.19.19
+      hono: 4.12.5
+      zod: 4.3.6
 
   hono@4.12.5: {}
 

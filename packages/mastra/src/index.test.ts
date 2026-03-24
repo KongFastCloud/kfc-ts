@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chat, gateway, mastra } from "./index";
+import { chat, gateway, mastra, generate, createAgent } from "./index";
 
 describe("package exports", () => {
   it("exports a Mastra instance", () => {
@@ -14,5 +14,15 @@ describe("package exports", () => {
   it("exports the chat function", () => {
     expect(chat).toBeDefined();
     expect(typeof chat).toBe("function");
+  });
+
+  it("exports the generate function", () => {
+    expect(generate).toBeDefined();
+    expect(typeof generate).toBe("function");
+  });
+
+  it("exports the createAgent factory", () => {
+    expect(createAgent).toBeDefined();
+    expect(typeof createAgent).toBe("function");
   });
 });

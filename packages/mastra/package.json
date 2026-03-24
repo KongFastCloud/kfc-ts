@@ -26,6 +26,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./chat": "./src/chat.ts",
-    "./provider": "./src/provider.ts"
+    "./provider": "./src/provider.ts",
+    "./generate": "./src/generate.ts",
+    "./agent-factory": "./src/agent-factory.ts"
   }
 }

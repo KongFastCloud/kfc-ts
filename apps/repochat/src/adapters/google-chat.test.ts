@@ -1,15 +1,16 @@
 /**
  * Google Chat adapter integration tests.
  *
- * These tests exercise the full handler chain. The chat bridge is
- * mocked via node:test mock.module so tests run without real API
- * credentials while still verifying the complete request path.
+ * These tests exercise the full handler chain. The chat bridge and
+ * runtime are mocked via node:test mock.module so tests run without
+ * real API credentials while still verifying the complete request path.
  *
- * Run with: npx tsx --test src/adapters/google-chat.test.ts
+ * Run with: pnpm test:integration
  */
 
 import { describe, it, mock, beforeEach } from "node:test"
 import assert from "node:assert/strict"
+import { Effect, Exit } from "effect"
 
 // ── Mock the chat bridge ────────────────────────────────────────
 interface MockChatRequest {
@@ -18,17 +19,30 @@ interface MockChatRequest {
   text: string
 }
 
+interface MockChatResponse {
+  text: string
+}
+
 const generateReplyMock = mock.fn(
-  async (_req: MockChatRequest) => ({
-    text: "Mock reply from Repochat",
-  }),
+  (_req: MockChatRequest): Effect.Effect<MockChatResponse, unknown> =>
+    Effect.succeed({ text: "Mock reply from Repochat" }),
 )
 
 mock.module("../chat.ts", {
   namedExports: { generateReply: generateReplyMock },
 })
 
-// Import handler AFTER the mock is registered
+// Mock the runtime to run Effect programs directly
+mock.module("../runtime.ts", {
+  namedExports: {
+    runtime: {
+      runPromiseExit: async (effect: Effect.Effect<unknown, unknown, never>) =>
+        Effect.runPromiseExit(effect as Effect.Effect<unknown, unknown, never>),
+    },
+  },
+})
+
+// Import handler AFTER the mocks are registered
 const { handler } = await import("../handler.ts")
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -112,6 +126,10 @@ describe("handler routing", () => {
 describe("Google Chat MESSAGE handling", () => {
   beforeEach(() => {
     generateReplyMock.mock.resetCalls()
+    generateReplyMock.mock.mockImplementation(
+      (_req: MockChatRequest): Effect.Effect<MockChatResponse, unknown> =>
+        Effect.succeed({ text: "Mock reply from Repochat" }),
+    )
   })
 
   it("routes a MESSAGE event through the chat bridge and returns the reply", async () => {
@@ -163,9 +181,10 @@ describe("Google Chat MESSAGE handling", () => {
   })
 
   it("returns a friendly error when the chat bridge fails", async () => {
-    generateReplyMock.mock.mockImplementationOnce(async () => {
-      throw new Error("gateway timeout")
-    })
+    generateReplyMock.mock.mockImplementation(
+      (): Effect.Effect<MockChatResponse, unknown> =>
+        Effect.fail({ _tag: "AgentError", message: "gateway timeout" }),
+    )
 
     const payload = makeMessagePayload()
     const res = await handler(webhookRequest(payload))

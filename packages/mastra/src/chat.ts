@@ -1,5 +1,5 @@
 import {  streamText } from "ai";
-import { gateway } from "./provider";
+import { gateway } from "./provider.ts";
 import type {CoreMessage} from "ai";
 
 export type ChatOptions = {

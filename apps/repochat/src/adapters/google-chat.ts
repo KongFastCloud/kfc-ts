@@ -3,8 +3,8 @@
  *
  * Handles incoming Google Chat webhook POST payloads, extracts
  * platform-qualified thread and user identifiers, and routes the
- * message through the chat bridge. Returns a synchronous JSON
- * response that Google Chat renders as the bot reply.
+ * message through the Effect-based chat bridge. Returns a synchronous
+ * JSON response that Google Chat renders as the bot reply.
  *
  * Reference: https://developers.google.com/workspace/chat/api/reference/rest/v1/spaces.messages
  *
@@ -19,9 +19,11 @@
  *   - Async follow-up via Google Chat API
  */
 
+import { Exit } from "effect"
 import { qualifyThreadId, qualifyUserId } from "../identity.ts"
 import { acquireThreadLock } from "../state.ts"
 import { generateReply } from "../chat.ts"
+import { runtime } from "../runtime.ts"
 import { log } from "../log.ts"
 
 // ── Google Chat Webhook Payload Types ────────────────────────────
@@ -153,27 +155,34 @@ const handleMessage = async (
   const release = await acquireThreadLock(threadId.qualified)
 
   try {
-    const reply = await generateReply({
+    // Build the Effect program and run it through the managed runtime
+    const program = generateReply({
       threadId: threadId.qualified,
       userId: userId.qualified,
       text: userText,
     })
 
-    log("google-chat: reply generated", {
-      threadId: threadId.qualified,
-      replyLength: reply.text.length,
-    })
+    const exit = await runtime.runPromiseExit(program)
 
-    return {
-      status: 200,
-      body: textReply(reply.text, message.thread.name),
+    if (Exit.isSuccess(exit)) {
+      log("google-chat: reply generated", {
+        threadId: threadId.qualified,
+        replyLength: exit.value.text.length,
+      })
+
+      return {
+        status: 200,
+        body: textReply(exit.value.text, message.thread.name),
+      }
     }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error)
+
+    // ── Failure path — extract cause for logging ──
+    const failure = Exit.isFailure(exit) ? exit.cause : undefined
     log("google-chat: reply generation failed", {
       threadId: threadId.qualified,
-      error: errorMessage,
+      error: failure ? String(failure) : "unknown",
     })
+
     return {
       status: 200,
       body: textReply("Sorry, I ran into an error processing your request. Please try again."),
