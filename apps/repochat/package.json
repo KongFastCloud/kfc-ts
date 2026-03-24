@@ -1,0 +1,23 @@
+{
+  "name": "repochat",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --experimental-strip-types src/index.ts",
+    "start": "node --experimental-strip-types src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test src/*.test.ts",
+    "test:integration": "node --experimental-strip-types --experimental-test-module-mocks --test src/adapters/*.test.ts"
+  },
+  "dependencies": {
+    "@workspace/mastra": "workspace:*",
+    "ai": "^4.3.16",
+    "dotenv": "^17.2.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.3"
+  }
+}
