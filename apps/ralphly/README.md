@@ -93,13 +93,15 @@ ralphly requires three values to run. You can provide them via environment varia
 
 ### Environment variables
 
-Export the required variables in your shell or add them to your shell profile:
+Copy `.env.example` to `.env` and fill in your values, or export the variables directly in your shell profile:
 
 ```sh
 export RALPHLY_REPO_PATH=/absolute/path/to/your/repo
 export LINEAR_API_KEY=lin_api_...
 export LINEAR_AGENT_ID=your-agent-id
 ```
+
+See `.env.example` for inline descriptions of each variable.
 
 ### Config file
 
