@@ -59,7 +59,7 @@ describe("generateReply", () => {
     assert.equal(error.message, "gateway timeout")
   })
 
-  it("passes threadId and userId through to the agent", async () => {
+  it("passes memory thread and resource through to the agent", async () => {
     let capturedArgs: Record<string, unknown> = {}
 
     const spyAgent: AgentService = {
@@ -75,7 +75,30 @@ describe("generateReply", () => {
     )
 
     await Effect.runPromise(program)
-    assert.equal(capturedArgs.threadId, "gchat:spaces/S1/threads/T1")
-    assert.equal(capturedArgs.resourceId, "gchat:users/U1")
+
+    const memory = capturedArgs.memory as { thread: string; resource: string }
+    assert.ok(memory, "memory option should be provided")
+    assert.equal(memory.thread, "gchat:spaces/S1/threads/T1")
+    assert.equal(memory.resource, "gchat:users/U1")
+  })
+
+  it("does not pass deprecated resourceId or threadId", async () => {
+    let capturedArgs: Record<string, unknown> = {}
+
+    const spyAgent: AgentService = {
+      name: "repochat-spy",
+      generate: async (_msg, opts) => {
+        capturedArgs = opts ?? {}
+        return { text: "ok" }
+      },
+    }
+
+    const program = generateReply(request).pipe(
+      Effect.provide(Layer.succeed(RepochatAgent, spyAgent)),
+    )
+
+    await Effect.runPromise(program)
+    assert.equal(capturedArgs.resourceId, undefined, "should not pass deprecated resourceId")
+    assert.equal(capturedArgs.threadId, undefined, "should not pass deprecated threadId")
   })
 })

@@ -6,6 +6,7 @@ vi.mock("@mastra/core/agent", () => {
       name: config.name,
       instructions: config.instructions,
       model: config.model,
+      memory: config.memory,
       _isMockAgent: true,
     })),
   };
@@ -51,5 +52,29 @@ describe("createAgent", () => {
       modelId: string;
     };
     expect(model.modelId).toBe("openai/gpt-4o");
+  });
+
+  it("passes memory option through to Agent constructor when provided", () => {
+    const mockMemory = { _isMockMemory: true } as unknown;
+    const agent = createAgent({
+      name: "test-agent",
+      instructions: "Test",
+      memory: mockMemory as import("@mastra/core/memory").MastraMemory,
+    });
+
+    expect(
+      (agent as unknown as Record<string, unknown>).memory,
+    ).toBe(mockMemory);
+  });
+
+  it("omits memory from Agent config when not provided", () => {
+    const agent = createAgent({
+      name: "test-agent",
+      instructions: "Test",
+    });
+
+    expect(
+      (agent as unknown as Record<string, unknown>).memory,
+    ).toBeUndefined();
   });
 });

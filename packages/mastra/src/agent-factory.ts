@@ -1,4 +1,5 @@
 import { Agent } from "@mastra/core/agent";
+import type { MastraMemory } from "@mastra/core/memory";
 import { gateway } from "./provider.ts";
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
@@ -10,6 +11,8 @@ export interface AgentOptions {
   readonly instructions: string;
   /** Model string routed through Vercel AI Gateway. Defaults to Claude Sonnet. */
   readonly model?: string;
+  /** Optional memory instance for thread history and working memory. */
+  readonly memory?: MastraMemory;
 }
 
 /**
@@ -26,6 +29,7 @@ export function createAgent(opts: AgentOptions): Agent {
     name: opts.name,
     instructions: opts.instructions,
     model: gateway(opts.model ?? DEFAULT_MODEL),
+    ...(opts.memory ? { memory: opts.memory } : {}),
   });
 }
 

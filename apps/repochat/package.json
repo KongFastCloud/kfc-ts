@@ -12,10 +12,12 @@
   },
   "dependencies": {
     "@mastra/core": "^0.10.5",
+    "@mastra/memory": "^0.10.4",
     "@workspace/mastra": "workspace:*",
     "ai": "^4.3.16",
     "dotenv": "^17.2.2",
-    "effect": "^3.19.19"
+    "effect": "^3.19.19",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",

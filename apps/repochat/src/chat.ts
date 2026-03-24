@@ -8,6 +8,13 @@
  *
  * The adapter layer calls `generateReply` and runs it through the
  * managed runtime to get a plain Promise back.
+ *
+ * Memory wiring:
+ *   - `request.threadId` → `memory.thread` (thread-local history)
+ *   - `request.userId`   → `memory.resource` (resource-scoped working memory)
+ *
+ * Both IDs are platform-qualified (e.g. "gchat:spaces/X/threads/Y")
+ * so Mastra memory naturally isolates per-platform state.
  */
 
 import { Effect } from "effect"
@@ -29,6 +36,10 @@ export interface ChatResponse {
  *
  * Requires `RepochatAgent` in the Effect context. Failures from the
  * model/gateway are captured as `AgentError`.
+ *
+ * Uses the `memory` option to pass platform-qualified thread and
+ * resource identifiers to Mastra, enabling thread-local history and
+ * resource-scoped working memory.
  */
 export const generateReply = (
   request: ChatRequest,
@@ -39,8 +50,10 @@ export const generateReply = (
     const result = yield* Effect.tryPromise({
       try: () =>
         agent.generate(request.text, {
-          resourceId: request.userId,
-          threadId: request.threadId,
+          memory: {
+            thread: request.threadId,
+            resource: request.userId,
+          },
         }),
       catch: (cause) =>
         new AgentError({
