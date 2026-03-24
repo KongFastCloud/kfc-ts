@@ -1,5 +1,6 @@
 import { Agent } from "@mastra/core/agent";
 import type { MastraMemory } from "@mastra/core/memory";
+import type { ToolsInput } from "@mastra/core/agent";
 import { gateway } from "./provider.ts";
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
@@ -13,6 +14,8 @@ export interface AgentOptions {
   readonly model?: string;
   /** Optional memory instance for thread history and working memory. */
   readonly memory?: MastraMemory;
+  /** Optional tools to bind to this agent (e.g. from MCP integrations). */
+  readonly tools?: ToolsInput;
 }
 
 /**
@@ -30,6 +33,7 @@ export function createAgent(opts: AgentOptions): Agent {
     instructions: opts.instructions,
     model: gateway(opts.model ?? DEFAULT_MODEL),
     ...(opts.memory ? { memory: opts.memory } : {}),
+    ...(opts.tools ? { tools: opts.tools } : {}),
   });
 }
 

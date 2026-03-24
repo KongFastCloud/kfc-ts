@@ -262,6 +262,9 @@ importers:
       '@mastra/core':
         specifier: ^0.10.5
         version: 0.10.15(@sinclair/typebox@0.31.28)(effect@3.19.19)(openapi-types@12.1.3)(react@19.2.4)(zod@3.25.76)
+      '@mastra/mcp':
+        specifier: 0.10.13-alpha.1
+        version: 0.10.13-alpha.1(@mastra/core@0.10.15(@sinclair/typebox@0.31.28)(effect@3.19.19)(openapi-types@12.1.3)(react@19.2.4)(zod@3.25.76))(@types/json-schema@7.0.15)(zod@3.25.76)
       ai:
         specifier: ^4.3.16
         version: 4.3.19(react@19.2.4)(zod@3.25.76)
@@ -424,6 +427,12 @@ packages:
   '@apidevtools/json-schema-ref-parser@11.9.3':
     resolution: {integrity: sha512-60vepv88RwcJtSHrD6MjIL6Ta3SOYbgfnkHb+ppAVK+o9mXprRtulx7VlRl3lN3bbvysAfCS7WMVfhUYemB0IQ==}
     engines: {node: '>= 16'}
+
+  '@apidevtools/json-schema-ref-parser@14.2.1':
+    resolution: {integrity: sha512-HmdFw9CDYqM6B25pqGBpNeLCKvGPlIx1EbLrVL0zPvj50CJQUHyBNBw45Muk0kEIkogo1VZvOKHajdMuAzSxRg==}
+    engines: {node: '>= 20'}
+    peerDependencies:
+      '@types/json-schema': ^7.0.15
 
   '@asamuzakjp/css-color@5.0.1':
     resolution: {integrity: sha512-2SZFvqMyvboVV1d15lMf7XiI3m7SDqXUuKaTymJYLN6dSGadqp+fVojqJlVoMlbZnlTmu3S0TLwLTJpvBMO1Aw==}
@@ -1947,6 +1956,12 @@ packages:
     engines: {node: '>=20'}
     peerDependencies:
       zod: ^3.0.0
+
+  '@mastra/mcp@0.10.13-alpha.1':
+    resolution: {integrity: sha512-AVvZLPE/sthMH03KmkQkLm4AQ7XhK5ahWoEwZe39aV2PwWwvFFgajQ8K73KS2J9A3H12bPVqgqtqysnrtmiSVQ==}
+    peerDependencies:
+      '@mastra/core': '>=0.10.2-0 <0.15.0-0'
+      zod: ^3.0.0 || ^4.0.0
 
   '@mastra/memory@0.10.4':
     resolution: {integrity: sha512-ZYDwMQYljtRqp5vBN+HpiL5oR/9OTMXM/d5zkA9iVGC9u1uNzvh2SJD0cE81ujVAOpmYRBCr5V7VkFtuR+OkyQ==}
@@ -5575,6 +5590,9 @@ packages:
   date-fns@3.6.0:
     resolution: {integrity: sha512-fRHTG8g/Gif+kSh50gaGEdToemgfj74aRX3swtiouboip5JDLAyDE9F11nHMIcvOaXeOC6D7SpNhi7uFyB7Uww==}
 
+  date-fns@4.1.0:
+    resolution: {integrity: sha512-Ukq0owbQXxa/U3EGtsdVBkR1w7KOQ5gIBqdH2hkvknzZPYvBxb/aa6E8L7tmjFtkwZBu3UXBbjIgPo/Ez4xaNg==}
+
   dateformat@4.6.3:
     resolution: {integrity: sha512-2P0p0pFGzHS5EMnhdxQi7aJN+iMheud0UhG4dlE1DLAlvL8JHjJJTX/CSm4JXwV0Ka5nGk3zC5mcb5bUQUxxMA==}
 
@@ -6071,6 +6089,10 @@ packages:
 
   exif-parser@0.1.12:
     resolution: {integrity: sha512-c2bQfLNbMzLPmzQuOr8fy0csy84WmwnER81W88DzTp9CYNPJ6yzOj2EZAh9pywYpqHnshVLHQJ8WzldAyfY+Iw==}
+
+  exit-hook@4.0.0:
+    resolution: {integrity: sha512-Fqs7ChZm72y40wKjOFXBKg7nJZvQJmewP5/7LtePDdnah/+FH9Hp5sgMujSCMPXlxOAW2//1jrW9pnsY7o20vQ==}
+    engines: {node: '>=18'}
 
   expect-type@1.3.0:
     resolution: {integrity: sha512-knvyeauYhqjOYvQ66MznSMs83wmHrCycNEN6Ao+2AeYEfxUIkuiVxdEa1qlGEPK+We3n0THiDciYSsCcgW/DoA==}
@@ -9003,6 +9025,11 @@ snapshots:
       '@types/json-schema': 7.0.15
       js-yaml: 4.1.1
 
+  '@apidevtools/json-schema-ref-parser@14.2.1(@types/json-schema@7.0.15)':
+    dependencies:
+      '@types/json-schema': 7.0.15
+      js-yaml: 4.1.1
+
   '@asamuzakjp/css-color@5.0.1':
     dependencies:
       '@csstools/css-calc': 3.1.1(@csstools/css-parser-algorithms@4.0.0(@csstools/css-tokenizer@4.0.0))(@csstools/css-tokenizer@4.0.0)
@@ -10472,6 +10499,22 @@ snapshots:
       - supports-color
       - valibot
       - zod-openapi
+
+  '@mastra/mcp@0.10.13-alpha.1(@mastra/core@0.10.15(@sinclair/typebox@0.31.28)(effect@3.19.19)(openapi-types@12.1.3)(react@19.2.4)(zod@3.25.76))(@types/json-schema@7.0.15)(zod@3.25.76)':
+    dependencies:
+      '@apidevtools/json-schema-ref-parser': 14.2.1(@types/json-schema@7.0.15)
+      '@mastra/core': 0.10.15(@sinclair/typebox@0.31.28)(effect@3.19.19)(openapi-types@12.1.3)(react@19.2.4)(zod@3.25.76)
+      '@modelcontextprotocol/sdk': 1.27.1(zod@3.25.76)
+      date-fns: 4.1.0
+      exit-hook: 4.0.0
+      fast-deep-equal: 3.1.3
+      uuid: 11.1.0
+      zod: 3.25.76
+      zod-from-json-schema: 0.0.5
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - '@types/json-schema'
+      - supports-color
 
   '@mastra/memory@0.10.4(@mastra/core@0.10.15(@sinclair/typebox@0.31.28)(effect@3.19.19)(openapi-types@12.1.3)(react@19.2.4)(zod@3.25.76))(react@19.2.4)':
     dependencies:
@@ -14560,6 +14603,8 @@ snapshots:
 
   date-fns@3.6.0: {}
 
+  date-fns@4.1.0: {}
+
   dateformat@4.6.3: {}
 
   db0@0.3.4(drizzle-orm@0.44.7(@neondatabase/serverless@1.0.2)(@opentelemetry/api@1.9.0)(@types/pg@8.18.0)(@upstash/redis@1.37.0)(bun-types@1.3.11)(kysely@0.28.11)(pg@8.20.0)(postgres@3.4.8)):
@@ -15030,6 +15075,8 @@ snapshots:
       yoctocolors: 2.1.2
 
   exif-parser@0.1.12: {}
+
+  exit-hook@4.0.0: {}
 
   expect-type@1.3.0: {}
 

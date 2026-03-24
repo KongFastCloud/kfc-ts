@@ -7,6 +7,7 @@ vi.mock("@mastra/core/agent", () => {
       instructions: config.instructions,
       model: config.model,
       memory: config.memory,
+      tools: config.tools,
       _isMockAgent: true,
     })),
   };
@@ -75,6 +76,30 @@ describe("createAgent", () => {
 
     expect(
       (agent as unknown as Record<string, unknown>).memory,
+    ).toBeUndefined();
+  });
+
+  it("passes tools option through to Agent constructor when provided", () => {
+    const mockTools = { myTool: { description: "test" } } as unknown;
+    const agent = createAgent({
+      name: "test-agent",
+      instructions: "Test",
+      tools: mockTools as import("@mastra/core/agent").ToolsInput,
+    });
+
+    expect(
+      (agent as unknown as Record<string, unknown>).tools,
+    ).toBe(mockTools);
+  });
+
+  it("omits tools from Agent config when not provided", () => {
+    const agent = createAgent({
+      name: "test-agent",
+      instructions: "Test",
+    });
+
+    expect(
+      (agent as unknown as Record<string, unknown>).tools,
     ).toBeUndefined();
   });
 });
