@@ -94,6 +94,12 @@ export interface ConfigError {
 }
 
 /**
+ * Deprecation warnings emitted when backward-compatibility aliases are used.
+ * Callers should display these to the operator so they can migrate.
+ */
+export type DeprecationWarning = string
+
+/**
  * Load ralphly configuration from config file + environment.
  *
  * Resolution order (highest priority first):
@@ -108,13 +114,24 @@ export interface ConfigError {
  */
 export const loadConfig = (
   workDir = process.cwd(),
-): { ok: true; config: RalphlyConfig } | { ok: false; error: ConfigError } => {
+): { ok: true; config: RalphlyConfig; warnings: DeprecationWarning[] } | { ok: false; error: ConfigError } => {
   const raw = readConfigFile(workDir)
+  const warnings: DeprecationWarning[] = []
 
   // New names take precedence; fall back to deprecated aliases.
-  const workspacePath =
-    envOr("RALPHLY_WORKSPACE_PATH", raw.workspacePath) ??
-    envOr("RALPHLY_REPO_PATH", raw.repoPath)
+  const newWorkspace = envOr("RALPHLY_WORKSPACE_PATH", raw.workspacePath)
+  const deprecatedWorkspace = envOr("RALPHLY_REPO_PATH", raw.repoPath)
+  const workspacePath = newWorkspace ?? deprecatedWorkspace
+
+  // Track deprecation warnings for operator visibility
+  if (!newWorkspace && deprecatedWorkspace) {
+    if (process.env.RALPHLY_REPO_PATH) {
+      warnings.push("RALPHLY_REPO_PATH is deprecated — use RALPHLY_WORKSPACE_PATH instead")
+    } else if (raw.repoPath) {
+      warnings.push("Config key \"repoPath\" is deprecated — use \"workspacePath\" instead")
+    }
+  }
+
   const apiKey = envOr("LINEAR_API_KEY", raw.linear?.apiKey)
   const agentId = envOr("LINEAR_AGENT_ID", raw.linear?.agentId)
   const maxAttempts = raw.maxAttempts ?? DEFAULTS.maxAttempts
@@ -138,6 +155,7 @@ export const loadConfig = (
       maxAttempts,
       checks,
     },
+    warnings,
   }
 }
 

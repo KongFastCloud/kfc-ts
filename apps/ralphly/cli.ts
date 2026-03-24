@@ -75,6 +75,9 @@ const run = Command.make(
       yield* Console.log(`  Workspace:    ${cfg.workspacePath}`)
       yield* Console.log(`  Max attempts: ${cfg.maxAttempts}`)
       yield* Console.log(`  Checks:       ${cfg.checks.length > 0 ? cfg.checks.join(", ") : "(none)"}`)
+      for (const warning of result.warnings) {
+        yield* Console.log(`  ⚠ ${warning}`)
+      }
       yield* Console.log("")
 
       const linearLayer = makeLinearLayer(cfg.linear)
@@ -120,6 +123,7 @@ const run = Command.make(
 
         if (selection.next) {
           yield* Console.log(`Would process: ${selection.next.issue.identifier} — ${selection.next.issue.title}`)
+          yield* Console.log(`  in workspace: ${cfg.workspacePath}`)
         } else {
           yield* Console.log("No actionable work. Nothing would be processed.")
         }
@@ -130,6 +134,8 @@ const run = Command.make(
 
       // Full run: drain the backlog through the worker loop
       yield* Console.log("─── Worker Run ───")
+      yield* Console.log(`  Targeting workspace: ${cfg.workspacePath}`)
+      yield* Console.log("")
       yield* Effect.logInfo("Starting worker loop — draining backlog sequentially")
 
       const runConfig: RunConfig = {
@@ -206,6 +212,10 @@ const configCmd = Command.make("config", {}, () =>
     yield* Console.log(`  Max attempts: ${cfg.maxAttempts}`)
     yield* Console.log(`  Checks:       ${cfg.checks.length > 0 ? cfg.checks.join(", ") : "(none)"}`)
     yield* Console.log("")
+    for (const warning of result.warnings) {
+      yield* Console.log(`  ⚠ ${warning}`)
+    }
+    if (result.warnings.length > 0) yield* Console.log("")
     yield* Console.log("Configuration is complete. Ready to run.")
   }),
 )
