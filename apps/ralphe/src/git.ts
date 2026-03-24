@@ -209,7 +209,7 @@ export const gitCommit = (): Effect.Effect<GitCommitResult | undefined, FatalErr
   Effect.gen(function* () {
     const status = yield* run(["status", "--porcelain"])
     if (!status.stdout.trim()) {
-      yield* Effect.logDebug("No changes to commit.")
+      yield* Effect.logInfo("No changes to commit.")
       return undefined
     }
 
@@ -217,7 +217,7 @@ export const gitCommit = (): Effect.Effect<GitCommitResult | undefined, FatalErr
 
     const diff = yield* run(["diff", "--staged"])
 
-    yield* Effect.logInfo("Generating commit message...")
+    yield* Effect.logDebug("Generating commit message...")
     const engine = yield* Engine
     const result = yield* engine.execute(
       COMMIT_MSG_PROMPT + diff.stdout,
@@ -229,7 +229,7 @@ export const gitCommit = (): Effect.Effect<GitCommitResult | undefined, FatalErr
     )
 
     const message = result.response.trim()
-    yield* Effect.logInfo(`Commit: ${message}`)
+    yield* Effect.logDebug(`Commit message: ${message}`)
 
     yield* run(["commit", "-m", message])
     const hash = (yield* run(["rev-parse", "--short", "HEAD"])).stdout.trim()
@@ -246,7 +246,7 @@ export const gitPush = (): Effect.Effect<GitPushResult, FatalError> =>
       Effect.catchTag("FatalError", () => Effect.succeed("origin")),
     )
 
-    yield* Effect.logInfo("Pushing...")
+    yield* Effect.logDebug("Pushing...")
     const pushOutput = (yield* run(["push"])).stdout.trim()
     yield* Effect.logInfo("Pushed.")
 
@@ -314,6 +314,7 @@ export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError | Check
         run.conclusion !== "neutral"
       )
       if (failingRun) {
+        yield* Effect.logWarning(`CI failed: run ${failingRun.databaseId} concluded "${failingRun.conclusion}".`)
         const annotations = yield* fetchCiAnnotations(failingRun.databaseId)
 
         return yield* Effect.fail(

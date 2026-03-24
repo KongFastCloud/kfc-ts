@@ -46,7 +46,7 @@ export const loop = <R>(
           yield* Effect.logInfo(`Attempt ${state.attempt}/${maxAttempts}`)
 
           if (state.feedback) {
-            yield* Effect.logDebug(`Retrying with feedback from previous failure`)
+            yield* Effect.logInfo("Retrying with feedback from previous failure.")
           }
 
           return yield* fn(state.feedback, state.attempt, maxAttempts).pipe(

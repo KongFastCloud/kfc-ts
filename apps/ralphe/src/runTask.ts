@@ -54,7 +54,7 @@ export const buildCiGitStep = (
   Effect.gen(function* () {
     const commitResult = yield* withSpan("git.commit", undefined, ops.commit())
     if (!commitResult) {
-      yield* Effect.logDebug("Push/CI skipped: no commit created.")
+      yield* Effect.logInfo("Push/CI skipped: no commit created.")
       return
     }
 
@@ -91,7 +91,7 @@ export const executePostLoopGitOps = (
       case "commit_and_push": {
         const commitResult = yield* withSpan("git.commit", undefined, ops.commit())
         if (!commitResult) {
-          yield* Effect.logDebug("Push skipped: no commit created.")
+          yield* Effect.logInfo("Push skipped: no commit created.")
           break
         }
 
@@ -185,7 +185,11 @@ export const runTask = (
         }),
       )
       for (const check of config.checks) {
-        pipeline = pipe(pipeline, Effect.andThen(withSpan("check.run", { "check.name": check }, cmd(check))))
+        pipeline = pipe(pipeline, Effect.andThen(
+          withSpan("check.run", { "check.name": check },
+            cmd(check).pipe(Effect.annotateLogs({ "check.name": check })),
+          ),
+        ))
       }
       if (config.report !== "none") {
         pipeline = pipe(pipeline, Effect.andThen(withSpan("report.verify", undefined, report(task, config.report))))
@@ -228,7 +232,7 @@ export const runTask = (
       resumeToken: lastResumeToken,
       engine: engineChoice,
     } satisfies TaskResult
-  }).pipe(Effect.annotateLogs({ gitMode }))
+  }).pipe(Effect.annotateLogs({ gitMode, engine: engineChoice }))
 
   // Wrap in an OTel task.run span for Axiom export (proof-of-life)
   const spanAttributes: Record<string, string | number> = { engine: engineChoice }
@@ -236,12 +240,15 @@ export const runTask = (
 
   return withSpan("task.run", spanAttributes, fullWorkflow).pipe(
     Effect.catchTag("FatalError", (err) =>
-      Effect.succeed({
-        success: false,
-        resumeToken: lastResumeToken,
-        engine: engineChoice,
-        error: err.message,
-      } satisfies TaskResult),
+      Effect.gen(function* () {
+        yield* Effect.logError(`Task failed: ${err.message}`)
+        return {
+          success: false,
+          resumeToken: lastResumeToken,
+          engine: engineChoice,
+          error: err.message,
+        } satisfies TaskResult
+      }),
     ),
   )
 }

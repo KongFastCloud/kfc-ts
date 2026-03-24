@@ -59,7 +59,7 @@ export const watch = (
             return yield* isWorktreeDirty()
           }),
       })
-      yield* Effect.logDebug("Worktree is clean — resuming automatic pickup.")
+      yield* Effect.logInfo("Worktree is clean — resuming automatic pickup.")
     }
 
     let tasksProcessed = 0

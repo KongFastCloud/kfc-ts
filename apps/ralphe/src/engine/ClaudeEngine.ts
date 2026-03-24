@@ -41,7 +41,7 @@ const make: Engine = {
     }).pipe(
       Effect.tap((result) =>
         result.sessionId
-          ? Effect.logInfo(`Resume this Claude session with: claude --resume ${result.sessionId}`)
+          ? Effect.logDebug(`Resume this Claude session with: claude --resume ${result.sessionId}`)
           : Effect.void,
       ),
       Effect.map(({ response, sessionId }) => ({ response, resumeToken: sessionId }) satisfies AgentResult),

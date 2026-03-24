@@ -55,6 +55,7 @@ export const cmd = (
       },
     })
 
-    yield* Effect.logInfo(`Passed: ${command}`)
+    yield* Effect.logInfo("Check passed.")
+    yield* Effect.logDebug(`Passed: ${command}`)
     return result
   })

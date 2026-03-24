@@ -379,7 +379,7 @@ export const recoverStaleTasks = (
     const stale = yield* queryAllStaleInProgress()
 
     for (const issue of stale) {
-      yield* Effect.logInfo(`Recovering stale task: ${issue.id} (${issue.title})`)
+      yield* Effect.logInfo(`Recovering stale task: ${issue.id}`)
       // Clear stale assignee/claim residue
       yield* clearAssignee(issue.id)
       // Apply error state: remove ready label, add error label, persist metadata & notes

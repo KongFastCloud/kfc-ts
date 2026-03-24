@@ -102,7 +102,7 @@ const make: Engine = {
     }).pipe(
       Effect.tap((result) =>
         result.threadId
-          ? Effect.logInfo(`Resume this Codex session with: codex resume ${result.threadId}`)
+          ? Effect.logDebug(`Resume this Codex session with: codex resume ${result.threadId}`)
           : Effect.void,
       ),
       Effect.map(({ response, threadId }) => ({ response, resumeToken: threadId }) satisfies AgentResult),

@@ -197,12 +197,12 @@ export const pollClaimAndProcess = (
     }
 
     const issue = ready[0]!
-    yield* Effect.logInfo(`Found ready task: ${issue.id} — ${issue.title}`)
+    yield* Effect.logInfo(`Found ready task: ${issue.id}`)
 
     // Claim atomically
     const claimed = yield* deps.claimTask(issue.id)
     if (!claimed) {
-      yield* Effect.logDebug(`Task ${issue.id} already claimed by another worker. Skipping.`)
+      yield* Effect.logInfo(`Task ${issue.id} already claimed by another worker. Skipping.`)
       return { _tag: "ClaimContention" as const, taskId: issue.id, title: issue.title }
     }
 
