@@ -199,7 +199,96 @@ Default `GitOps` implementation using the real git primitives. Pass this to `bui
 
 ---
 
-## Workspace threading
+## Workspace contract
 
-All primitives that interact with the filesystem accept an explicit `workspace` parameter. There is no fallback to `process.cwd()`. The caller decides the execution directory and threads it through to each primitive.
+Blueprints enforces an **explicit workspace contract**: every primitive that interacts with the filesystem accepts a `workspace` parameter, and no primitive falls back to `process.cwd()`.
+
+### The contract
+
+```
+Caller selects or prepares a workspace directory.
+Blueprints primitives execute exclusively inside that workspace.
+```
+
+This is a hard invariant, not a convention. The workspace parameter is required (not optional) on every execution surface: `agent()`, `cmd()`, `report()`, `gitCommit()`, `gitPush()`, `gitWaitForCi()`, `isWorktreeDirty()`, `buildCiGitStep()`, and `executePostLoopGitOps()`.
+
+### Why not process.cwd()?
+
+When execution defaults to `process.cwd()`, the runner can silently operate in the wrong directory — a real bug when the CLI is launched from a different location than the target workspace. The explicit workspace contract eliminates this class of bug entirely.
+
+### What "workspace" means
+
+The workspace is the single directory where:
+
+- The agent executes tasks
+- Shell check commands run (`cmd()`)
+- Verification reports are written (`report()`)
+- Git operations apply (`gitCommit()`, `gitPush()`, etc.)
+
+It is the execution root for the entire pipeline. When an app composes primitives into a workflow, the same workspace is threaded through every step.
+
+### Workspace is opaque
+
+Blueprints treats the workspace path as an opaque string. It does not assume the path is:
+
+- The repository root
+- The caller's current directory
+- A fixed location
+
+This means the workspace can be:
+
+- A repository root (the common case today)
+- A subdirectory within a repository
+- A git worktree directory (future)
+- Any valid filesystem path
+
+### Future worktree readiness
+
+The workspace contract is shaped for future worktree support. The abstraction boundary is:
+
+```
+┌─────────────────────────────┐
+│  Caller (ralphly, ralphe)   │  ← selects or prepares workspace
+│  ┌───────────────────────┐  │
+│  │  Worktree layer       │  │  ← (future) provisions temp worktree
+│  │  (not yet implemented)│  │
+│  └───────────────────────┘  │
+│  workspace path ─────────────┼──→ blueprints primitives execute inside it
+└─────────────────────────────┘
+```
+
+When worktree support is added:
+
+1. A worktree preparation layer will create a temporary git worktree for the issue
+2. It will pass the worktree path as the `workspace` parameter
+3. Blueprints will execute inside it — no code changes to primitives needed
+4. The caller will handle worktree cleanup after execution
+
+No primitive needs to know whether the workspace is a worktree or a repo root. The contract remains: caller provides the path, blueprints executes inside it.
+
+### Threading workspace through a workflow
+
+Apps are responsible for threading the workspace through their composed workflows:
+
+```ts
+const workspace = config.workspacePath // from config or worktree prep
+
+// Every primitive receives the same workspace
+const pipeline = pipe(
+  agent(task, workspace, { feedback }),
+  Effect.andThen(cmd("bun test", workspace)),
+  Effect.andThen(report(task, workspace, "basic")),
+)
+
+// Git operations also receive workspace
+yield* executePostLoopGitOps(gitMode, ops, workspace)
+```
+
+### Test coverage
+
+The workspace contract is tested at two levels:
+
+1. **Primitives level** (`packages/blueprints/tests/workspace-cwd.test.ts`, `workspace-contract.test.ts`) — proves each primitive operates in the configured workspace and never falls back to `process.cwd()`.
+
+2. **App level** (`apps/ralphly/tests/workspace-propagation.test.ts`) — proves the full flow from config loading through the runner to every primitive invocation.
 
