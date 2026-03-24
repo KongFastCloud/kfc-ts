@@ -29,6 +29,8 @@ export { buildRunWorkflow } from "./buildRunWorkflow.js"
 export type { RunRequest } from "./RunRequest.js"
 export { RunObserver, SilentRunObserver, LogRunObserver, composeObservers } from "./RunObserver.js"
 export { EngineResolver, DefaultEngineResolver, DefaultEngineResolverLayer } from "./EngineResolver.js"
+export { makeBeadsRunObserver, buildWatchRequest } from "./BeadsRunObserver.js"
+export type { BeadsObserverDeps } from "./BeadsRunObserver.js"
 export {
   buildPromptFromIssue,
   queryReady,

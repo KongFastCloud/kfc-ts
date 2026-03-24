@@ -13,10 +13,12 @@
  */
 
 import { describe, test, expect, beforeAll, beforeEach } from "bun:test"
-import { Effect, Logger, ManagedRuntime } from "effect"
+import { Effect, Logger, Layer, ManagedRuntime } from "effect"
 import type { BeadsIssue, BeadsMetadata } from "../src/beads.js"
-import type { TaskResult } from "../src/runTask.js"
+import type { TaskResult } from "../src/TaskResult.js"
 import type { RalpheConfig } from "../src/config.js"
+import { Engine, type AgentResult } from "../src/engine/Engine.js"
+import { EngineResolver } from "../src/EngineResolver.js"
 import type {
   WorkerStatus,
   WorkerLogEntry,
@@ -84,21 +86,19 @@ const baseConfig: RalpheConfig = {
   git: { mode: "none" },
 }
 
+let engineResult: Effect.Effect<AgentResult, never> =
+  Effect.succeed({ response: "done", resumeToken: "tok-test" })
+
+const makeMockEngineResolverLayer = (): Layer.Layer<EngineResolver> => {
+  const mockResolver: EngineResolver = {
+    resolve: () => Layer.succeed(Engine, { execute: () => engineResult }),
+  }
+  return Layer.succeed(EngineResolver, mockResolver)
+}
+
 function makeWorkflowDeps(): WatchWorkflowDeps {
   return {
     loadConfig: () => baseConfig,
-    runTask: (prompt: string, _config: unknown, _opts?: unknown) => {
-      runTaskCalls.push({ prompt })
-      if (taskExecutionDelay > 0) {
-        return Effect.promise(
-          () =>
-            new Promise<TaskResult>((resolve) =>
-              setTimeout(() => resolve(taskResult), taskExecutionDelay),
-            ),
-        )
-      }
-      return Effect.succeed(taskResult)
-    },
     queryQueued: () =>
       Effect.succeed((() => {
         calls.push({ op: "queryQueued" })
@@ -126,12 +126,15 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
     buildPromptFromIssue: (issue: BeadsIssue) => {
       const sections: string[] = [issue.title]
       if (issue.description) sections.push(`\n## Description\n${issue.description}`)
+      runTaskCalls.push({ prompt: sections.join("\n") })
       return sections.join("\n")
     },
     markTaskExhaustedFailure: (id: string, reason: string, metadata: BeadsMetadata) => {
       calls.push({ op: "markTaskExhaustedFailure", id, reason, metadata })
       return Effect.succeed(undefined)
     },
+    addComment: (_id: string, _text: string) => Effect.succeed(undefined),
+    engineResolverLayer: makeMockEngineResolverLayer(),
   }
 }
 

@@ -62,8 +62,13 @@ export const formatSuccessComment = (
   `[attempt ${attempt}/${maxAttempts}] all checks passed`
 
 /**
- * Shared task executor used by both direct CLI runs and Beads watcher runs.
- * Runs the full pipeline: agent → checks → report → loop with retries → git mode flow.
+ * Legacy task executor. Direct CLI runs now use {@link buildRunWorkflow} with
+ * RunRequest + RunObserver services. Watch-mode runs also use buildRunWorkflow
+ * with {@link makeBeadsRunObserver} for Beads lifecycle writes.
+ *
+ * Retained for backward compatibility; prefer buildRunWorkflow for new code.
+ *
+ * @deprecated Use {@link buildRunWorkflow} with appropriate services instead.
  */
 export const runTask = (
   task: string,

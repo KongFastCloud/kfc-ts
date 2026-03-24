@@ -1,17 +1,23 @@
 /**
  * ABOUTME: Shared Effect-native watch-task workflow.
  * Canonical task-processing pipeline covering queued-task discovery,
- * claim handling, previous-error loading, metadata writes, task execution,
- * and success or exhausted-failure finalization.
+ * claim handling, previous-error loading, and task execution through
+ * the shared workflow builder (buildRunWorkflow).
  *
  * Both headless watch and TUI watch consume this shared workflow to avoid
- * duplicated watch-domain logic.
+ * duplicated watch-domain logic. In-flight Beads lifecycle writes (metadata,
+ * comments) are owned by the BeadsRunObserver. Post-execution status
+ * transitions (close, mark exhausted) remain here because they need to
+ * propagate FatalError.
  */
 
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
 import { FatalError } from "./errors.js"
 import { loadConfig, type RalpheConfig } from "./config.js"
-import { runTask } from "./runTask.js"
+import { buildRunWorkflow } from "./buildRunWorkflow.js"
+import { makeBeadsRunObserver, buildWatchRequest, type BeadsObserverState } from "./BeadsRunObserver.js"
+import { RunObserver } from "./RunObserver.js"
+import { EngineResolver, DefaultEngineResolverLayer } from "./EngineResolver.js"
 import { queryQueued } from "./beadsAdapter.js"
 import {
   claimTask,
@@ -20,6 +26,7 @@ import {
   readMetadata,
   buildPromptFromIssue,
   markTaskExhaustedFailure,
+  addComment,
   type BeadsIssue,
   type BeadsMetadata,
 } from "./beads.js"
@@ -49,18 +56,22 @@ export type PollResult =
 
 export interface WatchWorkflowDeps {
   readonly loadConfig: typeof loadConfig
-  readonly runTask: typeof runTask
   readonly queryQueued: typeof queryQueued
   readonly claimTask: typeof claimTask
-  readonly closeTaskSuccess: typeof closeTaskSuccess
-  readonly writeMetadata: typeof writeMetadata
   readonly readMetadata: typeof readMetadata
   readonly buildPromptFromIssue: typeof buildPromptFromIssue
+  // Beads write operations (observer uses writeMetadata + addComment;
+  // processClaimedTask uses closeTaskSuccess + markTaskExhaustedFailure)
+  readonly writeMetadata: typeof writeMetadata
+  readonly closeTaskSuccess: typeof closeTaskSuccess
   readonly markTaskExhaustedFailure: typeof markTaskExhaustedFailure
+  readonly addComment: typeof addComment
+  // Engine resolver layer for the workflow builder
+  readonly engineResolverLayer: Layer.Layer<EngineResolver>
 }
 
 // ---------------------------------------------------------------------------
-// Core task lifecycle: claim → read metadata → execute → finalize
+// Core task lifecycle: claim -> read metadata -> execute -> finalize
 // ---------------------------------------------------------------------------
 
 /**
@@ -68,11 +79,10 @@ export interface WatchWorkflowDeps {
  *
  * Assumes the task has already been claimed by the caller. Handles:
  * - Previous-error loading from metadata
- * - Start metadata write
- * - Prompt building with previous-error context
- * - Task execution via runTask
- * - Final metadata write with resume token and timing
- * - Success finalization (close) or exhausted-failure marking
+ * - Request assembly via the watch-specific factory
+ * - Task execution through the shared workflow builder (buildRunWorkflow)
+ * - In-flight Beads lifecycle writes via BeadsRunObserver (metadata, comments)
+ * - Post-execution status transitions (close or mark exhausted)
  *
  * Logs are annotated with taskId and issueTitle, wrapped in a "task" span
  * for structured observability.
@@ -86,59 +96,66 @@ export const processClaimedTask = (
   Effect.gen(function* () {
     const deps: WatchWorkflowDeps = {
       loadConfig,
-      runTask,
       queryQueued,
       claimTask,
-      closeTaskSuccess,
-      writeMetadata,
       readMetadata,
       buildPromptFromIssue,
+      writeMetadata,
+      closeTaskSuccess,
       markTaskExhaustedFailure,
+      addComment,
+      engineResolverLayer: DefaultEngineResolverLayer,
       ...depsOverride,
     }
+
     // Read existing metadata before overwriting to capture previous error
     const existingMeta = yield* Effect.either(deps.readMetadata(issue.id))
     const previousError = existingMeta._tag === "Right" ? existingMeta.right?.error : undefined
 
-    // Write initial metadata
-    const startedAt = new Date().toISOString()
-    const startMetadata: BeadsMetadata = {
-      engine: config.engine,
-      workerId,
-      timestamp: startedAt,
-      startedAt,
-    }
-    yield* deps.writeMetadata(issue.id, startMetadata)
+    // Build pure-data request via watch-specific factory
+    const request = buildWatchRequest(issue, config, previousError, deps.buildPromptFromIssue)
 
-    // Build prompt and execute
-    let prompt = deps.buildPromptFromIssue(issue)
-    if (previousError) {
-      prompt += `\n\n## Previous Error\n${previousError}`
-    }
-    const result = yield* deps.runTask(prompt, config, { issueId: issue.id })
+    // Observer state is shared so processClaimedTask can read startedAt
+    // for the final metadata written during status transitions.
+    const observerState: BeadsObserverState = { startedAt: undefined, engine: config.engine }
 
-    // Write final metadata with resume token
-    const finishedAt = new Date().toISOString()
-    const finalMetadata: BeadsMetadata = {
-      engine: result.engine,
-      resumeToken: result.resumeToken,
-      workerId,
-      timestamp: finishedAt,
-      startedAt,
-      finishedAt,
-    }
+    // Build observer with injected Beads operations for testability
+    const beadsObserver = makeBeadsRunObserver(
+      { issueId: issue.id, workerId },
+      {
+        writeMetadata: deps.writeMetadata,
+        addComment: deps.addComment,
+      },
+      observerState,
+    )
 
-    // Close with appropriate outcome
+    // Execute through the shared workflow builder — same path as direct runs
+    const result = yield* Effect.provide(
+      buildRunWorkflow(request),
+      Layer.merge(
+        deps.engineResolverLayer,
+        Layer.succeed(RunObserver, beadsObserver),
+      ),
+    )
+
+    // Post-execution status transitions (can propagate FatalError)
     if (result.success) {
-      yield* deps.writeMetadata(issue.id, finalMetadata)
       yield* deps.closeTaskSuccess(issue.id)
       yield* Effect.logInfo(`Task completed successfully.`)
     } else {
       // Exhausted failure: keep task open, remove eligibility, mark error
+      const finishedAt = new Date().toISOString()
       yield* deps.markTaskExhaustedFailure(
         issue.id,
-        result.error ?? "execution failed",
-        finalMetadata,
+        result.error || "execution failed",
+        {
+          engine: result.engine,
+          resumeToken: result.resumeToken,
+          workerId,
+          timestamp: finishedAt,
+          startedAt: observerState.startedAt ?? finishedAt,
+          finishedAt,
+        },
       )
       yield* Effect.logWarning(`Task exhausted all retries — marked as error (task remains open).`)
     }
@@ -177,14 +194,15 @@ export const pollClaimAndProcess = (
   Effect.gen(function* () {
     const deps: WatchWorkflowDeps = {
       loadConfig,
-      runTask,
       queryQueued,
       claimTask,
-      closeTaskSuccess,
-      writeMetadata,
       readMetadata,
       buildPromptFromIssue,
+      writeMetadata,
+      closeTaskSuccess,
       markTaskExhaustedFailure,
+      addComment,
+      engineResolverLayer: DefaultEngineResolverLayer,
       ...depsOverride,
     }
     const config = deps.loadConfig(workDir)

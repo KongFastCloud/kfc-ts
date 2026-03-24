@@ -31,7 +31,9 @@ import {
 } from "../src/watchWorkflow.js"
 import type { RalpheConfig } from "../src/config.js"
 import type { BeadsIssue, BeadsMetadata } from "../src/beads.js"
-import type { TaskResult } from "../src/runTask.js"
+import { Engine, type AgentResult } from "../src/engine/Engine.js"
+import { EngineResolver } from "../src/EngineResolver.js"
+import { FatalError } from "../src/errors.js"
 import {
   createTuiWatchController,
   type TuiWatchControllerDeps,
@@ -58,15 +60,19 @@ function makeIssue(id: string, title = `Task ${id}`): BeadsIssue {
 }
 
 let workflowCalls: Array<{ op: string; id?: string }> = []
-let taskResult: TaskResult = { success: true, engine: "claude" }
+let engineResult: Effect.Effect<AgentResult, FatalError> =
+  Effect.succeed({ response: "done", resumeToken: "tok-test" })
+
+const makeMockEngineResolverLayer = (): Layer.Layer<EngineResolver> => {
+  const mockResolver: EngineResolver = {
+    resolve: () => Layer.succeed(Engine, { execute: () => engineResult }),
+  }
+  return Layer.succeed(EngineResolver, mockResolver)
+}
 
 function makeWorkflowDeps(overrides?: Partial<WatchWorkflowDeps>): WatchWorkflowDeps {
   return {
     loadConfig: () => baseConfig,
-    runTask: (prompt, _config, opts) => {
-      workflowCalls.push({ op: "runTask", id: opts?.issueId })
-      return Effect.succeed(taskResult)
-    },
     queryQueued: () => Effect.succeed([]),
     claimTask: () => Effect.succeed(true),
     closeTaskSuccess: (id) => {
@@ -86,6 +92,8 @@ function makeWorkflowDeps(overrides?: Partial<WatchWorkflowDeps>): WatchWorkflow
       workflowCalls.push({ op: "markTaskExhaustedFailure", id })
       return Effect.succeed(undefined)
     },
+    addComment: (_id, _text) => Effect.succeed(undefined),
+    engineResolverLayer: makeMockEngineResolverLayer(),
     ...overrides,
   }
 }
@@ -102,7 +110,7 @@ beforeEach(() => {
   delete process.env.AXIOM_LOG_DATASET
   delete process.env.AXIOM_DOMAIN
   workflowCalls = []
-  taskResult = { success: true, engine: "claude" }
+  engineResult = Effect.succeed({ response: "done" })
 
   originalCwd = process.cwd()
   const fs = require("node:fs")
@@ -135,7 +143,7 @@ describe("Watch workflow milestone logs reach remote buffer", () => {
 
   test("processClaimedTask success emits info-level milestone to remote buffer", async () => {
     const issue = makeIssue("MS-1", "Feature work")
-    taskResult = { success: true, engine: "claude" }
+    engineResult = Effect.succeed({ response: "done" })
 
     // Run with a layer that includes the remote logger
     const remoteLogger = getRemoteLogger()
@@ -156,7 +164,7 @@ describe("Watch workflow milestone logs reach remote buffer", () => {
 
   test("processClaimedTask failure emits warning-level milestone to remote buffer", async () => {
     const issue = makeIssue("MS-2", "Failing task")
-    taskResult = { success: false, engine: "claude", error: "lint failed" }
+    engineResult = Effect.fail(new FatalError({ command: "agent", message: "lint failed" }))
 
     const remoteLogger = getRemoteLogger()
     const layer = Logger.replace(Logger.defaultLogger, remoteLogger)
@@ -177,7 +185,7 @@ describe("Watch workflow milestone logs reach remote buffer", () => {
 
   test("processClaimedTask milestone carries normalized annotation fields", async () => {
     const issue = makeIssue("MS-3", "Annotated task")
-    taskResult = { success: true, engine: "claude" }
+    engineResult = Effect.succeed({ response: "done" })
 
     const remoteLogger = getRemoteLogger()
     const layer = Logger.replace(Logger.defaultLogger, remoteLogger)
@@ -312,7 +320,7 @@ describe("Watch workflow completes normally without remote config", () => {
   test("processClaimedTask succeeds with no AXIOM env vars (remote is no-op)", async () => {
     // No AXIOM env vars set — remote logger is a silent no-op
     const issue = makeIssue("FO-1", "No remote config")
-    taskResult = { success: true, engine: "claude" }
+    engineResult = Effect.succeed({ response: "done" })
 
     const result = await Effect.runPromise(
       processClaimedTask(issue, baseConfig, "w-1", makeWorkflowDeps()).pipe(
@@ -326,7 +334,7 @@ describe("Watch workflow completes normally without remote config", () => {
   })
 
   test("processClaimedTask failure path works with no remote config", async () => {
-    taskResult = { success: false, engine: "claude", error: "build failed" }
+    engineResult = Effect.fail(new FatalError({ command: "agent", message: "build failed" }))
     const issue = makeIssue("FO-2", "Failing without remote")
 
     const result = await Effect.runPromise(
@@ -354,7 +362,7 @@ describe("Watch workflow completes normally without remote config", () => {
 
   test("pollClaimAndProcess full success path works with no remote config", async () => {
     const issue = makeIssue("FO-3", "Full cycle no remote")
-    taskResult = { success: true, engine: "claude" }
+    engineResult = Effect.succeed({ response: "done" })
     const deps = makeWorkflowDeps({
       queryQueued: () => Effect.succeed([issue]),
       claimTask: () => Effect.succeed(true),
@@ -380,7 +388,7 @@ describe("Watch workflow completes normally when remote is partially configured"
     initRemoteLogger()
 
     const issue = makeIssue("PC-1", "Partial config")
-    taskResult = { success: true, engine: "claude" }
+    engineResult = Effect.succeed({ response: "done" })
 
     const result = await Effect.runPromise(
       processClaimedTask(issue, baseConfig, "w-1", makeWorkflowDeps()).pipe(
@@ -407,7 +415,7 @@ describe("TUI orchestration with active remote shipping", () => {
 
   test("processClaimedTask under TuiLoggerLayer: stderr suppressed, remote buffered, file written", async () => {
     const issue = makeIssue("TUI-1", "TUI remote task")
-    taskResult = { success: true, engine: "claude" }
+    engineResult = Effect.succeed({ response: "done" })
 
     const originalConsoleError = console.error
     let stderrOutput = ""
@@ -450,7 +458,7 @@ describe("TUI orchestration with active remote shipping", () => {
 
   test("pollClaimAndProcess failure under TuiLoggerLayer: stderr clean, warning in remote buffer", async () => {
     const issue = makeIssue("TUI-2", "TUI failing task")
-    taskResult = { success: false, engine: "claude", error: "type error" }
+    engineResult = Effect.fail(new FatalError({ command: "agent", message: "type error" }))
     const deps = makeWorkflowDeps({
       queryQueued: () => Effect.succeed([issue]),
       claimTask: () => Effect.succeed(true),
@@ -572,7 +580,7 @@ describe("Run mode (AppLoggerLayer) fail-open with remote logger", () => {
     initRemoteLogger()
 
     const issue = makeIssue("RUN-1", "Run mode task")
-    taskResult = { success: true, engine: "claude" }
+    engineResult = Effect.succeed({ response: "done" })
 
     const result = await Effect.runPromise(
       processClaimedTask(issue, baseConfig, "w-1", makeWorkflowDeps()).pipe(
@@ -600,7 +608,7 @@ describe("Run mode (AppLoggerLayer) fail-open with remote logger", () => {
   test("AppLoggerLayer logs work with remote unconfigured — local-only fallback", async () => {
     // No AXIOM env vars
     const issue = makeIssue("RUN-2", "Local only run")
-    taskResult = { success: true, engine: "claude" }
+    engineResult = Effect.succeed({ response: "done" })
 
     const result = await Effect.runPromise(
       processClaimedTask(issue, baseConfig, "w-1", makeWorkflowDeps()).pipe(
@@ -708,7 +716,7 @@ describe("Milestone annotation forwarding through workflow", () => {
 
   test("processClaimedTask milestones carry issue.id from taskId annotation", async () => {
     const issue = makeIssue("ANN-1", "Annotated milestone")
-    taskResult = { success: true, engine: "claude" }
+    engineResult = Effect.succeed({ response: "done" })
 
     const remoteLogger = getRemoteLogger()
     const layer = Logger.replace(Logger.defaultLogger, remoteLogger)
@@ -728,7 +736,7 @@ describe("Milestone annotation forwarding through workflow", () => {
 
   test("disallowed fields (issueTitle) from workflow annotations do not leak to remote", async () => {
     const issue = makeIssue("ANN-2", "Secret Title Should Not Ship")
-    taskResult = { success: true, engine: "claude" }
+    engineResult = Effect.succeed({ response: "done" })
 
     const remoteLogger = getRemoteLogger()
     const layer = Logger.replace(Logger.defaultLogger, remoteLogger)
