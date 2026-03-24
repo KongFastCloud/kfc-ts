@@ -1,8 +1,9 @@
 /**
  * ABOUTME: Tests that the full span hierarchy (task.run → loop.attempt →
  * agent.execute / check.run / report.verify / git.*) is produced by the
- * orchestration layer. Uses an in-memory exporter so no live Axiom access
- * is required.
+ * orchestration layer. Verifies real trace structure — shared trace IDs and
+ * correct parent-child relationships — not just span name presence. Uses an
+ * in-memory exporter so no live Axiom access is required.
  */
 
 import { beforeEach, afterEach, describe, expect, test } from "bun:test"
@@ -12,6 +13,7 @@ import {
   BasicTracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
+  type ReadableSpan,
 } from "@opentelemetry/sdk-trace-base"
 import { Engine, type AgentResult } from "../src/engine/Engine.js"
 import { CheckFailure, FatalError } from "../src/errors.js"
@@ -48,6 +50,15 @@ const spanNames = (): string[] =>
 
 const spanAttrs = (name: string) =>
   exporter.getFinishedSpans().filter((s) => s.name === name).map((s) => s.attributes)
+
+const spanByName = (name: string): ReadableSpan | undefined =>
+  exporter.getFinishedSpans().find((s) => s.name === name)
+
+const spansByName = (name: string): ReadableSpan[] =>
+  exporter.getFinishedSpans().filter((s) => s.name === name)
+
+const parentSpanIdOf = (span: ReadableSpan): string | undefined =>
+  span.parentSpanContext?.spanId
 
 // ---------------------------------------------------------------------------
 // Engine layers for tests
@@ -164,34 +175,76 @@ describe("span hierarchy", () => {
     expect(names).toContain("loop.attempt")
     expect(names).toContain("agent.execute")
     expect(names.filter((n) => n === "check.run")).toHaveLength(2)
+
+    // Verify real trace structure: all spans share one trace ID
+    const taskSpan = spanByName("task.run")!
+    const loopSpan = spanByName("loop.attempt")!
+    const traceId = taskSpan.spanContext().traceId
+
+    expect(loopSpan.spanContext().traceId).toBe(traceId)
+    expect(spanByName("agent.execute")!.spanContext().traceId).toBe(traceId)
+    for (const cs of spansByName("check.run")) {
+      expect(cs.spanContext().traceId).toBe(traceId)
+    }
+
+    // Verify parent-child: task.run is root, loop.attempt is its child
+    expect(parentSpanIdOf(taskSpan)).toBeUndefined()
+    expect(parentSpanIdOf(loopSpan)).toBe(taskSpan.spanContext().spanId)
+
+    // Step spans are children of loop.attempt
+    const loopSpanId = loopSpan.spanContext().spanId
+    expect(parentSpanIdOf(spanByName("agent.execute")!)).toBe(loopSpanId)
+    for (const cs of spansByName("check.run")) {
+      expect(parentSpanIdOf(cs)).toBe(loopSpanId)
+    }
   })
 
-  test("retry produces two loop.attempt spans with incrementing attempt numbers", async () => {
+  test("retry produces two loop.attempt spans under one trace with correct parents", async () => {
     let attemptCalls = 0
-    const workflow = loop(
-      () => {
-        attemptCalls++
-        if (attemptCalls === 1) {
-          return Effect.fail(
-            new CheckFailure({ command: "test", stderr: "fail", exitCode: 1 }),
-          )
-        }
-        return Effect.succeed("ok")
-      },
-      {
-        maxAttempts: 2,
-        spanAttributes: { engine: "claude" },
-      },
+    const workflow = withSpan(
+      "task.run",
+      { engine: "claude" },
+      loop(
+        () => {
+          attemptCalls++
+          if (attemptCalls === 1) {
+            return Effect.fail(
+              new CheckFailure({ command: "test", stderr: "fail", exitCode: 1 }),
+            )
+          }
+          return Effect.succeed("ok")
+        },
+        {
+          maxAttempts: 2,
+          spanAttributes: { engine: "claude" },
+        },
+      ),
     )
 
     await Effect.runPromise(workflow)
 
-    const attemptSpans = exporter
-      .getFinishedSpans()
-      .filter((s) => s.name === "loop.attempt")
+    const taskSpan = spanByName("task.run")!
+    const attemptSpans = spansByName("loop.attempt")
     expect(attemptSpans).toHaveLength(2)
     expect(attemptSpans[0]!.attributes["loop.attempt"]).toBe(1)
     expect(attemptSpans[1]!.attributes["loop.attempt"]).toBe(2)
+
+    // Both attempts share the same trace ID as task.run
+    const traceId = taskSpan.spanContext().traceId
+    for (const attempt of attemptSpans) {
+      expect(attempt.spanContext().traceId).toBe(traceId)
+    }
+
+    // Both attempts are children of task.run
+    const taskSpanId = taskSpan.spanContext().spanId
+    for (const attempt of attemptSpans) {
+      expect(parentSpanIdOf(attempt)).toBe(taskSpanId)
+    }
+
+    // Each attempt has a distinct span ID
+    expect(attemptSpans[0]!.spanContext().spanId).not.toBe(
+      attemptSpans[1]!.spanContext().spanId,
+    )
   })
 
   test("all agreed span names are emitted for a full pipeline with git", async () => {
@@ -222,6 +275,18 @@ describe("span hierarchy", () => {
     expect(names).toContain("git.commit")
     expect(names).toContain("git.push")
     expect(names).toContain("git.wait_ci")
+
+    // All spans belong to the same trace — none exported as a separate trace
+    const taskSpan = spanByName("task.run")!
+    const traceId = taskSpan.spanContext().traceId
+    for (const span of exporter.getFinishedSpans()) {
+      expect(span.spanContext().traceId).toBe(traceId)
+    }
+
+    // task.run → loop.attempt parent-child backbone
+    const loopSpan = spanByName("loop.attempt")!
+    expect(parentSpanIdOf(taskSpan)).toBeUndefined()
+    expect(parentSpanIdOf(loopSpan)).toBe(taskSpan.spanContext().spanId)
   })
 
   test("no span names outside the agreed set appear", async () => {
