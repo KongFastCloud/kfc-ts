@@ -29,7 +29,7 @@ export const handler = async (request: Request): Promise<Response> => {
 
   // ── Health ──
   if (request.method === "GET" && url.pathname === "/health") {
-    return json({ ok: true, service: "repochat" })
+    return json({ ok: true, service: "seer" })
   }
 
   // ── Google Chat webhook (SDK-backed) ──

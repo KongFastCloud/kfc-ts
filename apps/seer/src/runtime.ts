@@ -1,5 +1,5 @@
 /**
- * Effect runtime for repochat.
+ * Effect runtime for seer.
  *
  * Builds the Layer graph and exposes a ManagedRuntime that is created
  * once at startup and shared across all HTTP requests. Each request
@@ -13,7 +13,7 @@
 
 import { Effect, Layer, Logger, ManagedRuntime } from "effect"
 import type { ToolsInput } from "@mastra/core/agent"
-import { RepochatAgent, makeRepochatAgent } from "./agent.ts"
+import { SeerAgent, makeSeerAgent } from "./agent.ts"
 import { createGlitchTipClient, createCodemoggerClient } from "./mcp.ts"
 import { readFileTool } from "./tools/index.ts"
 
@@ -55,7 +55,7 @@ function loadMCPTools(
 }
 
 /**
- * Layer that provides the RepochatAgent service.
+ * Layer that provides the SeerAgent service.
  *
  * Attempts to load all available tool sources:
  *   - Codemogger MCP — semantic and keyword code search (grounding)
@@ -65,8 +65,8 @@ function loadMCPTools(
  * Missing or failed integrations degrade gracefully — the agent is
  * always created, with whatever tools were successfully loaded.
  */
-const RepochatAgentLayer: Layer.Layer<RepochatAgent> = Layer.effect(
-  RepochatAgent,
+const SeerAgentLayer: Layer.Layer<SeerAgent> = Layer.effect(
+  SeerAgent,
   Effect.gen(function* () {
     const glitchtipTools = yield* loadMCPTools("GlitchTip", createGlitchTipClient)
     const codemoggerTools = yield* loadMCPTools("Codemogger", createCodemoggerClient)
@@ -84,18 +84,18 @@ const RepochatAgentLayer: Layer.Layer<RepochatAgent> = Layer.effect(
       Effect.annotateLogs("tools", Object.keys(allTools).join(", ")),
     )
 
-    return makeRepochatAgent(allTools)
+    return makeSeerAgent(allTools)
   }),
 )
 
-/** Structured logger with [repochat] prefix for Effect log calls. */
+/** Structured logger with [seer] prefix for Effect log calls. */
 const LoggerLayer: Layer.Layer<never> = Logger.replace(
   Logger.defaultLogger,
   Logger.withLeveledConsole(Logger.logfmtLogger),
 )
 
 /** Full application layer combining all services. */
-export const AppLayer: Layer.Layer<RepochatAgent> = RepochatAgentLayer.pipe(
+export const AppLayer: Layer.Layer<SeerAgent> = SeerAgentLayer.pipe(
   Layer.provideMerge(LoggerLayer),
 )
 

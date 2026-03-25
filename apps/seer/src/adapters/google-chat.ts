@@ -110,7 +110,7 @@ export const handleGoogleChatWebhook = async (
     return {
       status: 200,
       body: textReply(
-        "👋 Hi! I'm Repochat — a codebase exploration assistant. Ask me anything about the repo.",
+        "👋 Hi! I'm Seer — a codebase exploration assistant. Ask me anything about the repo.",
       ),
     }
   }

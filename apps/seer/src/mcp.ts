@@ -1,5 +1,5 @@
 /**
- * MCP client factories for repochat.
+ * MCP client factories for seer.
  *
  * Builds MCP clients using the reusable server registrations from
  * @workspace/mastra/mcp. Each factory returns null when required

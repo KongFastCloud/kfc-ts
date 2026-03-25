@@ -1,5 +1,5 @@
 /**
- * Repochat memory configuration.
+ * Seer memory configuration.
  *
  * Wires Mastra Memory with:
  *   - Thread-local message history for conversational continuity
@@ -66,7 +66,7 @@ const storage = createLocalLibSQLStorage({
   url: MEMORY_DB_URL,
 })
 
-/** Concrete Memory instance for the repochat agent. */
+/** Concrete Memory instance for the seer agent. */
 export const memory = new Memory({
   storage,
   options: MEMORY_CONFIG,

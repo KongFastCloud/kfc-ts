@@ -1,5 +1,5 @@
 /**
- * Chat SDK instance for repochat.
+ * Chat SDK instance for seer.
  *
  * Configures the Vercel Chat SDK (`chat`) with the Google Chat adapter
  * and an in-memory state adapter. Event handlers bridge incoming
@@ -8,7 +8,7 @@
  * This module replaces the hand-rolled Google Chat webhook parser
  * that previously lived in adapters/google-chat.ts. The SDK handles
  * payload parsing, event dispatch, thread subscription, and per-thread
- * locking — repochat only needs to provide the message→reply logic.
+ * locking — seer only needs to provide the message→reply logic.
  *
  * Webhook routing:
  *   handler.ts delegates POST /google-chat/webhook → bot.webhooks.gchat
@@ -33,7 +33,7 @@ const PLATFORM = "gchat" as const
 // ── Chat SDK instance ───────────────────────────────────────────
 
 export const bot = new Chat({
-  userName: "repochat",
+  userName: "seer",
   adapters: {
     gchat: createGoogleChatAdapter(),
   },

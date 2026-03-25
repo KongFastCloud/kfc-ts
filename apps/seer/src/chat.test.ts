@@ -2,30 +2,30 @@
  * Chat bridge unit tests.
  *
  * These tests exercise the Effect-based generateReply function by
- * providing a mock RepochatAgent via Layer injection — no module
+ * providing a mock SeerAgent via Layer injection — no module
  * mocking needed.
  */
 
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { Effect, Layer } from "effect"
-import { RepochatAgent, type AgentService } from "./agent.ts"
+import { SeerAgent, type AgentService } from "./agent.ts"
 import { generateReply } from "./chat.ts"
 import { AgentError } from "./errors.ts"
 
 // ── Mock Agent ──────────────────────────────────────────────────
 
 const makeMockAgent = (response: string): AgentService => ({
-  name: "repochat-mock",
+  name: "seer-mock",
   generate: async () => ({ text: response }),
 })
 
 const makeMockAgentLayer = (response: string) =>
-  Layer.succeed(RepochatAgent, makeMockAgent(response))
+  Layer.succeed(SeerAgent, makeMockAgent(response))
 
 const makeFailingAgentLayer = (error: Error) =>
-  Layer.succeed(RepochatAgent, {
-    name: "repochat-mock",
+  Layer.succeed(SeerAgent, {
+    name: "seer-mock",
     generate: async () => { throw error },
   } satisfies AgentService)
 
@@ -63,7 +63,7 @@ describe("generateReply", () => {
     let capturedArgs: Record<string, unknown> = {}
 
     const spyAgent: AgentService = {
-      name: "repochat-spy",
+      name: "seer-spy",
       generate: async (_msg, opts) => {
         capturedArgs = opts ?? {}
         return { text: "ok" }
@@ -71,7 +71,7 @@ describe("generateReply", () => {
     }
 
     const program = generateReply(request).pipe(
-      Effect.provide(Layer.succeed(RepochatAgent, spyAgent)),
+      Effect.provide(Layer.succeed(SeerAgent, spyAgent)),
     )
 
     await Effect.runPromise(program)
@@ -86,7 +86,7 @@ describe("generateReply", () => {
     let capturedArgs: Record<string, unknown> = {}
 
     const spyAgent: AgentService = {
-      name: "repochat-spy",
+      name: "seer-spy",
       generate: async (_msg, opts) => {
         capturedArgs = opts ?? {}
         return { text: "ok" }
@@ -94,7 +94,7 @@ describe("generateReply", () => {
     }
 
     const program = generateReply(request).pipe(
-      Effect.provide(Layer.succeed(RepochatAgent, spyAgent)),
+      Effect.provide(Layer.succeed(SeerAgent, spyAgent)),
     )
 
     await Effect.runPromise(program)
@@ -117,8 +117,8 @@ describe("generateReply", () => {
   // ── Error handling contract ─────────────────────────────────────
 
   it("wraps non-Error thrown values as AgentError with stringified cause", async () => {
-    const throwStringLayer = Layer.succeed(RepochatAgent, {
-      name: "repochat-mock",
+    const throwStringLayer = Layer.succeed(SeerAgent, {
+      name: "seer-mock",
       generate: async () => { throw "raw string failure" },
     } satisfies AgentService)
 
@@ -162,7 +162,7 @@ describe("generateReply", () => {
     const capturedResources: string[] = []
 
     const spyAgent: AgentService = {
-      name: "repochat-spy",
+      name: "seer-spy",
       generate: async (_msg, opts) => {
         const mem = opts?.memory as { resource: string } | undefined
         if (mem) capturedResources.push(mem.resource)
@@ -170,7 +170,7 @@ describe("generateReply", () => {
       },
     }
 
-    const layer = Layer.succeed(RepochatAgent, spyAgent)
+    const layer = Layer.succeed(SeerAgent, spyAgent)
 
     const req1 = { threadId: "gchat:spaces/S1/threads/T1", userId: "gchat:users/U1", text: "hi" }
     const req2 = { threadId: "gchat:spaces/S1/threads/T2", userId: "gchat:users/U1", text: "hello" }
@@ -186,7 +186,7 @@ describe("generateReply", () => {
     const capturedResources: string[] = []
 
     const spyAgent: AgentService = {
-      name: "repochat-spy",
+      name: "seer-spy",
       generate: async (_msg, opts) => {
         const mem = opts?.memory as { resource: string } | undefined
         if (mem) capturedResources.push(mem.resource)
@@ -194,7 +194,7 @@ describe("generateReply", () => {
       },
     }
 
-    const layer = Layer.succeed(RepochatAgent, spyAgent)
+    const layer = Layer.succeed(SeerAgent, spyAgent)
 
     const req1 = { threadId: "gchat:spaces/S1/threads/T1", userId: "gchat:users/U1", text: "hi" }
     const req2 = { threadId: "gchat:spaces/S1/threads/T1", userId: "gchat:users/U2", text: "hello" }
@@ -210,7 +210,7 @@ describe("generateReply", () => {
     const capturedThreads: string[] = []
 
     const spyAgent: AgentService = {
-      name: "repochat-spy",
+      name: "seer-spy",
       generate: async (_msg, opts) => {
         const mem = opts?.memory as { thread: string } | undefined
         if (mem) capturedThreads.push(mem.thread)
@@ -218,7 +218,7 @@ describe("generateReply", () => {
       },
     }
 
-    const layer = Layer.succeed(RepochatAgent, spyAgent)
+    const layer = Layer.succeed(SeerAgent, spyAgent)
 
     const req1 = { threadId: "gchat:spaces/S1/threads/T1", userId: "gchat:users/U1", text: "hi" }
     const req2 = { threadId: "gchat:spaces/S1/threads/T2", userId: "gchat:users/U1", text: "hello" }

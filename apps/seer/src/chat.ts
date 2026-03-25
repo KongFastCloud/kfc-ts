@@ -18,7 +18,7 @@
  */
 
 import { Effect } from "effect"
-import { RepochatAgent } from "./agent.ts"
+import { SeerAgent } from "./agent.ts"
 import { AgentError } from "./errors.ts"
 
 export interface ChatRequest {
@@ -34,7 +34,7 @@ export interface ChatResponse {
 /**
  * Send a user message through the Mastra agent and return the final answer.
  *
- * Requires `RepochatAgent` in the Effect context. Failures from the
+ * Requires `SeerAgent` in the Effect context. Failures from the
  * model/gateway are captured as `AgentError`.
  *
  * Uses the `memory` option to pass platform-qualified thread and
@@ -43,9 +43,9 @@ export interface ChatResponse {
  */
 export const generateReply = (
   request: ChatRequest,
-): Effect.Effect<ChatResponse, AgentError, RepochatAgent> =>
+): Effect.Effect<ChatResponse, AgentError, SeerAgent> =>
   Effect.gen(function* () {
-    const agent = yield* RepochatAgent
+    const agent = yield* SeerAgent
 
     const result = yield* Effect.tryPromise({
       try: () =>

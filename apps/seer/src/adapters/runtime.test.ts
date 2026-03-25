@@ -1,7 +1,7 @@
 /**
  * Runtime layer integration tests — tool composition and degradation paths.
  *
- * Verifies that the RepochatAgent layer correctly composes tools from
+ * Verifies that the SeerAgent layer correctly composes tools from
  * all sources (codemogger MCP, GlitchTip MCP, native read_file) and
  * degrades gracefully when any integration is unavailable.
  *
@@ -28,13 +28,13 @@ let mockGlitchtipFactory: () => unknown = () => null
 /** Controls what createCodemoggerClient returns in each test. */
 let mockCodemoggerFactory: () => unknown = () => null
 
-/** Records calls to makeRepochatAgent for assertions. */
-const makeRepochatAgentCalls: Array<{ tools?: Record<string, unknown> }> = []
+/** Records calls to makeSeerAgent for assertions. */
+const makeSeerAgentCalls: Array<{ tools?: Record<string, unknown> }> = []
 
 function resetMocks() {
   mockGlitchtipFactory = () => null
   mockCodemoggerFactory = () => null
-  makeRepochatAgentCalls.length = 0
+  makeSeerAgentCalls.length = 0
 }
 
 // ── Build a proper Effect Context.Tag for the mock ───────────────
@@ -44,8 +44,8 @@ interface MockAgentService {
   generate(msg: string): Promise<{ text: string }>
 }
 
-class MockRepochatAgent extends Context.Tag("RepochatAgent")<
-  MockRepochatAgent,
+class MockSeerAgent extends Context.Tag("SeerAgent")<
+  MockSeerAgent,
   MockAgentService
 >() {}
 
@@ -74,14 +74,14 @@ mock.module("../tools/index.ts", {
 
 mock.module("../agent.ts", {
   namedExports: {
-    makeRepochatAgent: (tools?: Record<string, unknown>) => {
-      makeRepochatAgentCalls.push({ tools })
+    makeSeerAgent: (tools?: Record<string, unknown>) => {
+      makeSeerAgentCalls.push({ tools })
       return {
-        name: "repochat-mock",
+        name: "seer-mock",
         generate: async (msg: string) => ({ text: `echo: ${msg}` }),
       }
     },
-    RepochatAgent: MockRepochatAgent,
+    SeerAgent: MockSeerAgent,
   },
 })
 
@@ -91,20 +91,20 @@ const { AppLayer } = await import("../runtime.ts")
 // ── Helpers ──────────────────────────────────────────────────────
 
 /**
- * Materialize the AppLayer and extract the RepochatAgent service.
+ * Materialize the AppLayer and extract the SeerAgent service.
  * This simulates the startup path that runs once before serving requests.
  */
 async function buildAgent() {
   const program = Effect.gen(function* () {
-    return yield* MockRepochatAgent
-  }).pipe(Effect.provide(AppLayer as Layer.Layer<MockRepochatAgent>))
+    return yield* MockSeerAgent
+  }).pipe(Effect.provide(AppLayer as Layer.Layer<MockSeerAgent>))
 
   return Effect.runPromise(program)
 }
 
-/** Extract the tool names passed to the last makeRepochatAgent call. */
+/** Extract the tool names passed to the last makeSeerAgent call. */
 function lastToolNames(): string[] {
-  const last = makeRepochatAgentCalls[makeRepochatAgentCalls.length - 1]
+  const last = makeSeerAgentCalls[makeSeerAgentCalls.length - 1]
   if (!last?.tools) return []
   return Object.keys(last.tools)
 }
@@ -113,7 +113,7 @@ function lastToolNames(): string[] {
 
 // ── read_file is always present ──────────────────────────────────
 
-describe("RepochatAgent layer — read_file native tool", () => {
+describe("SeerAgent layer — read_file native tool", () => {
   beforeEach(() => resetMocks())
 
   it("always includes read_file even when both MCP sources are unavailable", async () => {
@@ -122,7 +122,7 @@ describe("RepochatAgent layer — read_file native tool", () => {
 
     await buildAgent()
 
-    assert.equal(makeRepochatAgentCalls.length, 1)
+    assert.equal(makeSeerAgentCalls.length, 1)
     const tools = lastToolNames()
     assert.ok(tools.includes("read_file"), "read_file should always be present")
   })
@@ -152,7 +152,7 @@ describe("RepochatAgent layer — read_file native tool", () => {
 
 // ── Codemogger integration ───────────────────────────────────────
 
-describe("RepochatAgent layer — codemogger available", () => {
+describe("SeerAgent layer — codemogger available", () => {
   beforeEach(() => resetMocks())
 
   it("includes codemogger tools when getTools() succeeds", async () => {
@@ -198,7 +198,7 @@ describe("RepochatAgent layer — codemogger available", () => {
 
 // ── Codemogger degradation ───────────────────────────────────────
 
-describe("RepochatAgent layer — codemogger unavailable", () => {
+describe("SeerAgent layer — codemogger unavailable", () => {
   beforeEach(() => resetMocks())
 
   it("creates agent without codemogger tools when client is null", async () => {
@@ -254,7 +254,7 @@ describe("RepochatAgent layer — codemogger unavailable", () => {
 
 // ── GlitchTip unavailable (preserved from original tests) ────────
 
-describe("RepochatAgent layer — GlitchTip unavailable", () => {
+describe("SeerAgent layer — GlitchTip unavailable", () => {
   beforeEach(() => resetMocks())
 
   it("creates agent with only read_file when both MCP sources are not configured", async () => {
@@ -264,8 +264,8 @@ describe("RepochatAgent layer — GlitchTip unavailable", () => {
     const agent = await buildAgent()
 
     assert.ok(agent, "agent should be created")
-    assert.equal(agent.name, "repochat-mock")
-    assert.equal(makeRepochatAgentCalls.length, 1)
+    assert.equal(agent.name, "seer-mock")
+    assert.equal(makeSeerAgentCalls.length, 1)
     const tools = lastToolNames()
     assert.deepEqual(tools, ["read_file"],
       "only read_file should be present when both MCP sources are unavailable")
@@ -282,7 +282,7 @@ describe("RepochatAgent layer — GlitchTip unavailable", () => {
   })
 })
 
-describe("RepochatAgent layer — GlitchTip getTools() failure", () => {
+describe("SeerAgent layer — GlitchTip getTools() failure", () => {
   beforeEach(() => resetMocks())
 
   it("falls back to read_file-only when GlitchTip getTools() throws (unreachable)", async () => {
@@ -330,10 +330,10 @@ describe("RepochatAgent layer — GlitchTip getTools() failure", () => {
 
 // ── GlitchTip tools loaded successfully ──────────────────────────
 
-describe("RepochatAgent layer — GlitchTip tools loaded successfully", () => {
+describe("SeerAgent layer — GlitchTip tools loaded successfully", () => {
   beforeEach(() => resetMocks())
 
-  it("passes GlitchTip tools alongside read_file to makeRepochatAgent", async () => {
+  it("passes GlitchTip tools alongside read_file to makeSeerAgent", async () => {
     const fakeTools = {
       "list-issues": { description: "List GlitchTip issues", execute: async () => ({}) },
       "get-issue": { description: "Get issue details", execute: async () => ({}) },
@@ -345,7 +345,7 @@ describe("RepochatAgent layer — GlitchTip tools loaded successfully", () => {
 
     await buildAgent()
 
-    assert.equal(makeRepochatAgentCalls.length, 1)
+    assert.equal(makeSeerAgentCalls.length, 1)
     const tools = lastToolNames()
     assert.ok(tools.includes("list-issues"), "GlitchTip list-issues should be present")
     assert.ok(tools.includes("get-issue"), "GlitchTip get-issue should be present")
@@ -368,7 +368,7 @@ describe("RepochatAgent layer — GlitchTip tools loaded successfully", () => {
 
 // ── Malformed responses ──────────────────────────────────────────
 
-describe("RepochatAgent layer — malformed getTools() responses", () => {
+describe("SeerAgent layer — malformed getTools() responses", () => {
   beforeEach(() => resetMocks())
 
   it("handles codemogger getTools() returning null gracefully", async () => {

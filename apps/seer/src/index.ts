@@ -1,5 +1,5 @@
 /**
- * Repochat — codebase exploration chat service.
+ * Seer — codebase exploration chat service.
  *
  * HTTP server that exposes platform-specific webhook endpoints
  * for chat-based codebase Q&A. Google Chat is the first adapter;

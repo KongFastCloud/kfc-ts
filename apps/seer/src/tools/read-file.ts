@@ -1,7 +1,7 @@
 /**
  * Direct file-read tool for codebase grounding.
  *
- * Allows the repochat agent to read exact source files after codemogger
+ * Allows the seer agent to read exact source files after codemogger
  * retrieval, providing verification of search results against the actual
  * codebase. This is the "trust but verify" complement to semantic search.
  *

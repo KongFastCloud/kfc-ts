@@ -1,5 +1,5 @@
 /**
- * Typed error hierarchy for the repochat Effect boundary.
+ * Typed error hierarchy for the seer Effect boundary.
  *
  * Each error is a tagged discriminated union member so Effect's
  * `catchTag` can route specific failures without instanceof checks.

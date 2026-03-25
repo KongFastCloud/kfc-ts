@@ -58,7 +58,7 @@ describe("handler routing (preserved routes)", () => {
     assert.equal(res.status, 200)
     const body = await res.json()
     assert.equal(body.ok, true)
-    assert.equal(body.service, "repochat")
+    assert.equal(body.service, "seer")
   })
 
   it("unknown route returns 404", async () => {

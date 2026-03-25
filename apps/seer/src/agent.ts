@@ -1,7 +1,7 @@
 /**
- * Repochat Mastra agent composition.
+ * Seer Mastra agent composition.
  *
- * This file defines the repochat-specific agent using the generic
+ * This file defines the seer-specific agent using the generic
  * `createAgent` factory from @workspace/mastra. The system prompt,
  * agent name, memory wiring, and tool bindings live here — not in
  * the shared package.
@@ -31,7 +31,7 @@ import type { ToolsInput } from "@mastra/core/agent"
 import { memory } from "./memory.ts"
 
 const SYSTEM_PROMPT = [
-  "You are Repochat, a codebase exploration assistant.",
+  "You are Seer, a codebase exploration assistant.",
   "You help engineers understand a codebase by answering questions about its structure, patterns, and conventions.",
   "Keep answers concise and grounded in actual source code. If you are unsure, say so.",
   "Do not store repository facts (file paths, code snippets, architecture details) in working memory.",
@@ -77,26 +77,26 @@ export interface AgentService {
 }
 
 /**
- * Build the concrete Mastra Agent instance for repochat.
+ * Build the concrete Mastra Agent instance for seer.
  *
  * Accepts an optional tools map (e.g. from MCP integrations) so the
  * agent can be created with or without external tool bindings.
  * When no tools are provided the agent operates in codebase-only mode.
  */
-export function makeRepochatAgent(tools?: ToolsInput): AgentService {
+export function makeSeerAgent(tools?: ToolsInput): AgentService {
   return createAgent({
-    name: "repochat",
+    name: "seer",
     instructions: SYSTEM_PROMPT,
     memory,
     ...(tools ? { tools } : {}),
   }) as unknown as AgentService
 }
 
-/** The concrete Mastra Agent instance for repochat (no MCP tools). */
-export const repochatAgent: AgentService = makeRepochatAgent()
+/** The concrete Mastra Agent instance for seer (no MCP tools). */
+export const seerAgent: AgentService = makeSeerAgent()
 
 /** Effect service tag for the Mastra agent dependency. */
-export class RepochatAgent extends Context.Tag("RepochatAgent")<
-  RepochatAgent,
+export class SeerAgent extends Context.Tag("SeerAgent")<
+  SeerAgent,
   AgentService
 >() {}

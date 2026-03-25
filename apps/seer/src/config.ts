@@ -1,5 +1,5 @@
 /**
- * Repochat configuration.
+ * Seer configuration.
  *
  * Centralises environment variable reads and defaults so the rest of
  * the app can import typed config values rather than reading
