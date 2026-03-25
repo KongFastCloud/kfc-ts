@@ -78,7 +78,7 @@ function makeWorkflowDeps(overrides?: Partial<WatchWorkflowDeps>): WatchWorkflow
     queryQueued: () => Effect.succeed([]),
     queryTaskDetail: (id) => Effect.succeed(
       id === DEFAULT_EPIC_ID
-        ? { id: DEFAULT_EPIC_ID, title: "Default Epic", status: "backlog" as const, description: "Default epic PRD.", labels: ["epic"] }
+        ? { id: DEFAULT_EPIC_ID, title: "Default Epic", status: "backlog" as const, description: "Default epic PRD.", labels: ["epic"], branch: `epic/${DEFAULT_EPIC_ID}` }
         : undefined,
     ),
     claimTask: () => Effect.succeed(true),
@@ -101,6 +101,7 @@ function makeWorkflowDeps(overrides?: Partial<WatchWorkflowDeps>): WatchWorkflow
     },
     addComment: (_id, _text) => Effect.succeed(undefined),
     engineResolverLayer: makeMockEngineResolverLayer(),
+    ensureEpicWorktree: () => Effect.succeed("/tmp/ralphe-worktrees/mock"),
     ...overrides,
   }
 }

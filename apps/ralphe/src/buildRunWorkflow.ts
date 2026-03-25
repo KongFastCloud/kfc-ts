@@ -44,6 +44,7 @@ export const buildRunWorkflow = (
 ): Effect.Effect<TaskResult, never, EngineResolver | RunObserver> => {
   let lastResumeToken: string | undefined
   const ops = gitOpsOverride ?? defaultGitOps
+  const cwd = request.cwd
 
   const workflow = Effect.gen(function* () {
     const resolver = yield* EngineResolver
@@ -59,7 +60,7 @@ export const buildRunWorkflow = (
     const loopWorkflow = loop(
       (feedback, attempt, maxAttempts) => {
         // Step 1: Agent execution
-        let pipeline: Effect.Effect<unknown, CheckFailure | FatalError, Engine> = agent(request.task, { feedback }).pipe(
+        let pipeline: Effect.Effect<unknown, CheckFailure | FatalError, Engine> = agent(request.task, { feedback, cwd }).pipe(
           Effect.withSpan("agent.execute"),
         ).pipe(
           Effect.tap((result: AgentResult) => {
@@ -73,7 +74,7 @@ export const buildRunWorkflow = (
           pipeline = pipe(
             pipeline,
             Effect.andThen(
-              cmd(check).pipe(
+              cmd(check, cwd).pipe(
                 Effect.annotateLogs({ "check.name": check }),
                 Effect.withSpan("check.run", { attributes: { "check.name": check } }),
               ),
@@ -93,7 +94,7 @@ export const buildRunWorkflow = (
 
         // Step 4: In-loop git step (CI mode only)
         if (request.gitMode === "commit_and_push_and_wait_ci") {
-          pipeline = pipe(pipeline, Effect.andThen(buildCiGitStep(ops)))
+          pipeline = pipe(pipeline, Effect.andThen(buildCiGitStep(ops, cwd)))
         }
 
         return pipeline
@@ -111,7 +112,7 @@ export const buildRunWorkflow = (
 
     const result = yield* Effect.gen(function* () {
       yield* Effect.provide(loopWorkflow, engineLayer)
-      yield* Effect.provide(executePostLoopGitOps(request.gitMode, ops), engineLayer)
+      yield* Effect.provide(executePostLoopGitOps(request.gitMode, ops, cwd), engineLayer)
 
       return {
         success: true,

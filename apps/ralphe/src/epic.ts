@@ -33,6 +33,8 @@ export interface EpicContext {
   readonly body: string
   /** Labels on the epic issue (must include "epic"). */
   readonly labels: readonly string[]
+  /** Canonical branch name owned by this epic. */
+  readonly branch: string
 }
 
 // ---------------------------------------------------------------------------
@@ -51,6 +53,9 @@ export const EPIC_ERROR_MISSING_LABEL = (parentId: string) =>
 export const EPIC_ERROR_EMPTY_BODY = (parentId: string) =>
   `Epic "${parentId}" has no PRD body (empty description). A non-empty PRD is required for task execution.`
 
+export const EPIC_ERROR_MISSING_BRANCH = (parentId: string) =>
+  `Epic "${parentId}" has no canonical branch in its metadata. A branch must be set before tasks can execute.`
+
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
@@ -61,6 +66,7 @@ export const EPIC_ERROR_EMPTY_BODY = (parentId: string) =>
  * Validation rules:
  * 1. Must have the `epic` label
  * 2. Must have a non-empty description (PRD body)
+ * 3. Must have a non-empty canonical branch name
  *
  * Returns an EpicContext on success or a descriptive error string on failure.
  */
@@ -78,6 +84,11 @@ export const validateEpicContext = (
     return { _tag: "Err", reason: EPIC_ERROR_EMPTY_BODY(epicIssue.id) }
   }
 
+  const branch = epicIssue.branch?.trim()
+  if (!branch) {
+    return { _tag: "Err", reason: EPIC_ERROR_MISSING_BRANCH(epicIssue.id) }
+  }
+
   return {
     _tag: "Ok",
     context: {
@@ -85,6 +96,7 @@ export const validateEpicContext = (
       title: epicIssue.title,
       body,
       labels,
+      branch,
     },
   }
 }

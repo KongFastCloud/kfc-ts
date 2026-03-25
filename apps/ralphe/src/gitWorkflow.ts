@@ -17,11 +17,12 @@ import type { GitCommitResult, GitPushResult, GitHubCiResult } from "./git.js"
 /**
  * Git operation callbacks for dependency injection.
  * Allows tests to provide fake implementations without module mocking.
+ * Each operation accepts an optional cwd for worktree-based execution.
  */
 export interface GitOps {
-  readonly commit: () => Effect.Effect<GitCommitResult | undefined, FatalError, Engine>
-  readonly push: () => Effect.Effect<GitPushResult, FatalError>
-  readonly waitCi: () => Effect.Effect<GitHubCiResult, FatalError | CheckFailure>
+  readonly commit: (cwd?: string) => Effect.Effect<GitCommitResult | undefined, FatalError, Engine>
+  readonly push: (cwd?: string) => Effect.Effect<GitPushResult, FatalError>
+  readonly waitCi: (cwd?: string) => Effect.Effect<GitHubCiResult, FatalError | CheckFailure>
 }
 
 export const defaultGitOps: GitOps = {
@@ -37,18 +38,19 @@ export const defaultGitOps: GitOps = {
  */
 export const buildCiGitStep = (
   ops: GitOps,
+  cwd?: string,
 ): Effect.Effect<void, FatalError | CheckFailure, Engine> =>
   Effect.gen(function* () {
-    const commitResult = yield* ops.commit().pipe(Effect.withSpan("git.commit"))
+    const commitResult = yield* ops.commit(cwd).pipe(Effect.withSpan("git.commit"))
     if (!commitResult) {
       yield* Effect.logInfo("Push/CI skipped: no commit created.")
       return
     }
 
     yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
-    const pushResult = yield* ops.push().pipe(Effect.withSpan("git.push"))
+    const pushResult = yield* ops.push(cwd).pipe(Effect.withSpan("git.push"))
     yield* Effect.logInfo(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
-    const ciResult = yield* ops.waitCi().pipe(Effect.withSpan("git.wait_ci"))
+    const ciResult = yield* ops.waitCi(cwd).pipe(Effect.withSpan("git.wait_ci"))
     yield* Effect.logInfo(`CI passed: run ${ciResult.runId}`)
   })
 
@@ -61,6 +63,7 @@ export const buildCiGitStep = (
 export const executePostLoopGitOps = (
   gitMode: GitMode,
   ops: GitOps,
+  cwd?: string,
 ): Effect.Effect<void, FatalError, Engine> =>
   Effect.gen(function* () {
     yield* Effect.logInfo(`Git mode: ${gitMode}`)
@@ -69,21 +72,21 @@ export const executePostLoopGitOps = (
       case "commit_and_push_and_wait_ci":
         break
       case "commit": {
-        const commitResult = yield* ops.commit().pipe(Effect.withSpan("git.commit"))
+        const commitResult = yield* ops.commit(cwd).pipe(Effect.withSpan("git.commit"))
         if (commitResult) {
           yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
         }
         break
       }
       case "commit_and_push": {
-        const commitResult = yield* ops.commit().pipe(Effect.withSpan("git.commit"))
+        const commitResult = yield* ops.commit(cwd).pipe(Effect.withSpan("git.commit"))
         if (!commitResult) {
           yield* Effect.logInfo("Push skipped: no commit created.")
           break
         }
 
         yield* Effect.logInfo(`Commit hash: ${commitResult.hash}`)
-        const pushResult = yield* ops.push().pipe(Effect.withSpan("git.push"))
+        const pushResult = yield* ops.push(cwd).pipe(Effect.withSpan("git.push"))
         yield* Effect.logInfo(`Pushed: ${pushResult.remote}/${pushResult.ref}`)
         break
       }

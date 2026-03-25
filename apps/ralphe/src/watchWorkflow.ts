@@ -31,6 +31,7 @@ import {
   type BeadsMetadata,
 } from "./beads.js"
 import { loadEpicContext, buildEpicPreamble, type EpicContext } from "./epic.js"
+import { ensureEpicWorktree } from "./epicWorktree.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -70,6 +71,8 @@ export interface WatchWorkflowDeps {
   readonly addComment: typeof addComment
   // Engine resolver layer for the workflow builder
   readonly engineResolverLayer: Layer.Layer<EngineResolver>
+  // Epic worktree lifecycle (lazily create or reuse the epic worktree)
+  readonly ensureEpicWorktree: typeof ensureEpicWorktree
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +111,7 @@ export const processClaimedTask = (
       markTaskExhaustedFailure,
       addComment,
       engineResolverLayer: DefaultEngineResolverLayer,
+      ensureEpicWorktree,
       ...depsOverride,
     }
 
@@ -147,12 +151,43 @@ export const processClaimedTask = (
     const epicContext: EpicContext = epicResult.right
     const epicPreamble = buildEpicPreamble(epicContext)
 
+    // -----------------------------------------------------------------------
+    // Epic worktree lifecycle: lazily create or reuse the epic worktree
+    // -----------------------------------------------------------------------
+
+    const worktreeResult = yield* deps.ensureEpicWorktree(epicContext).pipe(Effect.either)
+
+    if (worktreeResult._tag === "Left") {
+      const reason = `Failed to ensure epic worktree: ${worktreeResult.left.message}`
+      yield* Effect.logWarning(`Worktree setup failed for task ${issue.id}: ${reason}`)
+      const now = new Date().toISOString()
+      yield* deps.markTaskExhaustedFailure(
+        issue.id,
+        reason,
+        {
+          engine: config.engine,
+          workerId,
+          timestamp: now,
+          startedAt: now,
+          finishedAt: now,
+        },
+      )
+      return {
+        success: false,
+        taskId: issue.id,
+        engine: config.engine,
+        error: reason,
+      }
+    }
+
+    const epicWorktreePath = worktreeResult.right
+
     // Read existing metadata before overwriting to capture previous error
     const existingMeta = yield* Effect.either(deps.readMetadata(issue.id))
     const previousError = existingMeta._tag === "Right" ? existingMeta.right?.error : undefined
 
-    // Build pure-data request via watch-specific factory (now with epic preamble)
-    const request = buildWatchRequest(issue, config, previousError, deps.buildPromptFromIssue, epicPreamble)
+    // Build pure-data request via watch-specific factory (now with epic preamble and worktree cwd)
+    const request = buildWatchRequest(issue, config, previousError, deps.buildPromptFromIssue, epicPreamble, epicWorktreePath)
 
     // Observer state is shared so processClaimedTask can read startedAt
     // for the final metadata written during status transitions.
@@ -243,6 +278,7 @@ export const pollClaimAndProcess = (
       markTaskExhaustedFailure,
       addComment,
       engineResolverLayer: DefaultEngineResolverLayer,
+      ensureEpicWorktree,
       ...depsOverride,
     }
     const config = deps.loadConfig(workDir)

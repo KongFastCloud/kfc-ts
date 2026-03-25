@@ -2,7 +2,7 @@
  * ABOUTME: Tests for the epic domain model and validation logic.
  *
  * Owned contracts:
- *  1. validateEpicContext — label and body validation
+ *  1. validateEpicContext — label, body, and branch validation
  *  2. loadEpicContext    — parent resolution, validation, error messages
  *  3. buildEpicPreamble  — prompt preamble formatting
  */
@@ -18,6 +18,7 @@ import {
   EPIC_ERROR_PARENT_NOT_FOUND,
   EPIC_ERROR_MISSING_LABEL,
   EPIC_ERROR_EMPTY_BODY,
+  EPIC_ERROR_MISSING_BRANCH,
   type EpicContext,
 } from "../src/epic.js"
 
@@ -32,6 +33,7 @@ function makeEpicIssue(overrides?: Partial<WatchTask>): WatchTask {
     status: "backlog",
     description: "Full PRD content for user authentication feature.",
     labels: ["epic"],
+    branch: "epic/user-auth",
     ...overrides,
   }
 }
@@ -41,7 +43,7 @@ function makeEpicIssue(overrides?: Partial<WatchTask>): WatchTask {
 // ===========================================================================
 
 describe("validateEpicContext", () => {
-  test("valid epic with label and body returns Ok", () => {
+  test("valid epic with label, body, and branch returns Ok", () => {
     const issue = makeEpicIssue()
     const result = validateEpicContext(issue)
 
@@ -51,6 +53,7 @@ describe("validateEpicContext", () => {
       expect(result.context.title).toBe("Implement user authentication")
       expect(result.context.body).toBe("Full PRD content for user authentication feature.")
       expect(result.context.labels).toContain("epic")
+      expect(result.context.branch).toBe("epic/user-auth")
     }
   })
 
@@ -135,6 +138,49 @@ describe("validateEpicContext", () => {
       expect(result.context.labels).toEqual(["priority-high", "epic", "v2"])
     }
   })
+
+  // Branch validation tests
+
+  test("epic with no branch returns Err", () => {
+    const issue = makeEpicIssue({ branch: undefined })
+    const result = validateEpicContext(issue)
+
+    expect(result._tag).toBe("Err")
+    if (result._tag === "Err") {
+      expect(result.reason).toBe(EPIC_ERROR_MISSING_BRANCH("epic-1"))
+      expect(result.reason).toContain("no canonical branch")
+    }
+  })
+
+  test("epic with empty branch returns Err", () => {
+    const issue = makeEpicIssue({ branch: "" })
+    const result = validateEpicContext(issue)
+
+    expect(result._tag).toBe("Err")
+    if (result._tag === "Err") {
+      expect(result.reason).toBe(EPIC_ERROR_MISSING_BRANCH("epic-1"))
+    }
+  })
+
+  test("epic with whitespace-only branch returns Err", () => {
+    const issue = makeEpicIssue({ branch: "   " })
+    const result = validateEpicContext(issue)
+
+    expect(result._tag).toBe("Err")
+    if (result._tag === "Err") {
+      expect(result.reason).toBe(EPIC_ERROR_MISSING_BRANCH("epic-1"))
+    }
+  })
+
+  test("epic branch is trimmed", () => {
+    const issue = makeEpicIssue({ branch: "  epic/my-branch  " })
+    const result = validateEpicContext(issue)
+
+    expect(result._tag).toBe("Ok")
+    if (result._tag === "Ok") {
+      expect(result.context.branch).toBe("epic/my-branch")
+    }
+  })
 })
 
 // ===========================================================================
@@ -201,12 +247,31 @@ describe("loadEpicContext", () => {
     }
   })
 
-  test("valid parent returns EpicContext", async () => {
+  test("parent with no branch fails with missing-branch error", async () => {
+    const mockQuery = () => Effect.succeed(makeEpicIssue({
+      id: "parent-3",
+      labels: ["epic"],
+      description: "Valid PRD body",
+      branch: undefined,
+    }))
+
+    const result = await Effect.runPromise(
+      loadEpicContext("parent-3", mockQuery).pipe(Effect.either),
+    )
+
+    expect(result._tag).toBe("Left")
+    if (result._tag === "Left") {
+      expect(result.left).toBe(EPIC_ERROR_MISSING_BRANCH("parent-3"))
+    }
+  })
+
+  test("valid parent returns EpicContext with branch", async () => {
     const mockQuery = () => Effect.succeed(makeEpicIssue({
       id: "epic-ok",
       title: "Auth PRD",
       description: "Implement OAuth2 flow",
       labels: ["epic"],
+      branch: "epic/oauth2",
     }))
 
     const result = await Effect.runPromise(
@@ -220,6 +285,7 @@ describe("loadEpicContext", () => {
       expect(ctx.title).toBe("Auth PRD")
       expect(ctx.body).toBe("Implement OAuth2 flow")
       expect(ctx.labels).toContain("epic")
+      expect(ctx.branch).toBe("epic/oauth2")
     }
   })
 
@@ -252,6 +318,7 @@ describe("buildEpicPreamble", () => {
       title: "User Authentication",
       body: "Implement OAuth2 login flow with social providers.",
       labels: ["epic"],
+      branch: "epic/user-auth",
     }
 
     const preamble = buildEpicPreamble(ctx)
@@ -267,6 +334,7 @@ describe("buildEpicPreamble", () => {
       title: "Database Migration",
       body: "Migrate from SQLite to Postgres.",
       labels: ["epic"],
+      branch: "epic/db-migration",
     }
 
     const preamble = buildEpicPreamble(ctx)

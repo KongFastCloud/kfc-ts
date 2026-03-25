@@ -24,4 +24,6 @@ export interface RunRequest {
   readonly gitMode: GitMode
   /** Verification report mode. */
   readonly reportMode: "browser" | "basic" | "none"
+  /** Working directory for execution. Defaults to process.cwd() when omitted. */
+  readonly cwd?: string | undefined
 }

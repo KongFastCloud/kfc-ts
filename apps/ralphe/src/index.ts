@@ -39,8 +39,16 @@ export {
   EPIC_ERROR_PARENT_NOT_FOUND,
   EPIC_ERROR_MISSING_LABEL,
   EPIC_ERROR_EMPTY_BODY,
+  EPIC_ERROR_MISSING_BRANCH,
 } from "./epic.js"
 export type { EpicContext, QueryTaskDetail } from "./epic.js"
+export {
+  ensureEpicWorktree,
+  deriveEpicWorktreePath,
+  getWorktreeRoot,
+  getRepoRoot,
+  sanitizeEpicId,
+} from "./epicWorktree.js"
 export {
   buildPromptFromIssue,
   queryReady,

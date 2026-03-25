@@ -108,7 +108,7 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
       })()),
     queryTaskDetail: (id: string) => Effect.succeed(
       id === DEFAULT_EPIC_ID
-        ? { id: DEFAULT_EPIC_ID, title: "Default Epic", status: "backlog" as const, description: "Default epic PRD.", labels: ["epic"] }
+        ? { id: DEFAULT_EPIC_ID, title: "Default Epic", status: "backlog" as const, description: "Default epic PRD.", labels: ["epic"], branch: `epic/${DEFAULT_EPIC_ID}` }
         : undefined,
     ),
     claimTask: (id: string) =>
@@ -140,6 +140,7 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
     },
     addComment: (_id: string, _text: string) => Effect.succeed(undefined),
     engineResolverLayer: makeMockEngineResolverLayer(),
+    ensureEpicWorktree: () => Effect.succeed("/tmp/ralphe-worktrees/mock"),
   }
 }
 

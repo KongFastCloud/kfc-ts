@@ -4,6 +4,8 @@ import { Engine, type AgentResult } from "./engine/Engine.js"
 
 export interface AgentOptions {
   readonly feedback?: string | undefined
+  /** Working directory for agent execution. Defaults to process.cwd(). */
+  readonly cwd?: string | undefined
 }
 
 export const agent = (
@@ -18,8 +20,9 @@ export const agent = (
       prompt += `\n\nPrevious attempt failed:\n${opts.feedback}`
     }
 
+    const cwd = opts?.cwd ?? process.cwd()
     yield* Effect.logInfo(`Running agent...`)
-    const result = yield* engine.execute(prompt, process.cwd())
+    const result = yield* engine.execute(prompt, cwd)
     yield* Effect.logInfo(`Agent done.`)
 
     return result

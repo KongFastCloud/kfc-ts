@@ -43,12 +43,13 @@ interface CliResult {
   readonly stdout: string
 }
 
-const runCommand = (command: string, args: string[]): Effect.Effect<CliResult, FatalError> =>
+const runCommand = (command: string, args: string[], cwd?: string): Effect.Effect<CliResult, FatalError> =>
   Effect.tryPromise({
     try: async () => {
       const proc = Bun.spawn([command, ...args], {
         stdout: "pipe",
         stderr: "pipe",
+        cwd,
       })
 
       const stdout = await new Response(proc.stdout).text()
@@ -76,18 +77,18 @@ const runCommand = (command: string, args: string[]): Effect.Effect<CliResult, F
     },
   })
 
-const run = (args: string[]): Effect.Effect<GitResult, FatalError> =>
-  runCommand("git", args)
+const run = (args: string[], cwd?: string): Effect.Effect<GitResult, FatalError> =>
+  runCommand("git", args, cwd)
 
-const runGh = (args: string[]): Effect.Effect<CliResult, FatalError> =>
-  runCommand("gh", args)
+const runGh = (args: string[], cwd?: string): Effect.Effect<CliResult, FatalError> =>
+  runCommand("gh", args, cwd)
 
 /**
  * Check whether the git worktree has uncommitted changes (staged or unstaged).
  * Returns `true` when the working tree is dirty.
  */
-export const isWorktreeDirty = (): Effect.Effect<boolean, FatalError> =>
-  run(["status", "--porcelain"]).pipe(
+export const isWorktreeDirty = (cwd?: string): Effect.Effect<boolean, FatalError> =>
+  run(["status", "--porcelain"], cwd).pipe(
     Effect.map((result) => result.stdout.trim().length > 0),
   )
 
@@ -195,33 +196,33 @@ const fetchCiAnnotations = (runId: number): Effect.Effect<string, never> =>
     Effect.catchTag("FatalError", () => Effect.succeed("(failed to fetch CI annotations)")),
   )
 
-export const gitCommitAndPush = (): Effect.Effect<void, FatalError, Engine> =>
+export const gitCommitAndPush = (cwd?: string): Effect.Effect<void, FatalError, Engine> =>
   Effect.gen(function* () {
-    const commitResult = yield* gitCommit()
+    const commitResult = yield* gitCommit(cwd)
     if (!commitResult) {
       return
     }
 
-    yield* gitPush()
+    yield* gitPush(cwd)
   })
 
-export const gitCommit = (): Effect.Effect<GitCommitResult | undefined, FatalError, Engine> =>
+export const gitCommit = (cwd?: string): Effect.Effect<GitCommitResult | undefined, FatalError, Engine> =>
   Effect.gen(function* () {
-    const status = yield* run(["status", "--porcelain"])
+    const status = yield* run(["status", "--porcelain"], cwd)
     if (!status.stdout.trim()) {
       yield* Effect.logInfo("No changes to commit.")
       return undefined
     }
 
-    yield* run(["add", "-A"])
+    yield* run(["add", "-A"], cwd)
 
-    const diff = yield* run(["diff", "--staged"])
+    const diff = yield* run(["diff", "--staged"], cwd)
 
     yield* Effect.logDebug("Generating commit message...")
     const engine = yield* Engine
     const result = yield* engine.execute(
       COMMIT_MSG_PROMPT + diff.stdout,
-      process.cwd(),
+      cwd ?? process.cwd(),
     ).pipe(
       Effect.catchTag("CheckFailure", (err) =>
         Effect.fail(new FatalError({ command: err.command, message: err.stderr })),
@@ -231,34 +232,34 @@ export const gitCommit = (): Effect.Effect<GitCommitResult | undefined, FatalErr
     const message = result.response.trim()
     yield* Effect.logDebug(`Commit message: ${message}`)
 
-    yield* run(["commit", "-m", message])
-    const hash = (yield* run(["rev-parse", "--short", "HEAD"])).stdout.trim()
+    yield* run(["commit", "-m", message], cwd)
+    const hash = (yield* run(["rev-parse", "--short", "HEAD"], cwd)).stdout.trim()
     yield* Effect.logInfo("Committed.")
 
     return { message, hash }
   })
 
-export const gitPush = (): Effect.Effect<GitPushResult, FatalError> =>
+export const gitPush = (cwd?: string): Effect.Effect<GitPushResult, FatalError> =>
   Effect.gen(function* () {
-    const ref = (yield* run(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim()
-    const remote = yield* run(["config", `branch.${ref}.remote`]).pipe(
+    const ref = (yield* run(["rev-parse", "--abbrev-ref", "HEAD"], cwd)).stdout.trim()
+    const remote = yield* run(["config", `branch.${ref}.remote`], cwd).pipe(
       Effect.map((result) => result.stdout.trim() || "origin"),
       Effect.catchTag("FatalError", () => Effect.succeed("origin")),
     )
 
     yield* Effect.logDebug("Pushing...")
-    const pushOutput = (yield* run(["push"])).stdout.trim()
+    const pushOutput = (yield* run(["push"], cwd)).stdout.trim()
     yield* Effect.logInfo("Pushed.")
 
     return { remote, ref, output: pushOutput }
   })
 
-export const gitWaitForCi = (): Effect.Effect<GitHubCiResult, FatalError | CheckFailure> =>
+export const gitWaitForCi = (cwd?: string): Effect.Effect<GitHubCiResult, FatalError | CheckFailure> =>
   Effect.gen(function* () {
     // Early check produces a clear error when GitHub CLI is missing.
     yield* runGh(["--version"])
 
-    const sha = (yield* run(["rev-parse", "HEAD"])).stdout.trim()
+    const sha = (yield* run(["rev-parse", "HEAD"], cwd)).stdout.trim()
     yield* Effect.logInfo(`Waiting for GitHub Actions for commit ${sha.slice(0, 7)}...`)
 
     const listCommand = `gh run list --commit ${sha} --limit 20 --json databaseId,status,conclusion,url,workflowName`

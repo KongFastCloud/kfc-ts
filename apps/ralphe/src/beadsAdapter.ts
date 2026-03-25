@@ -77,6 +77,8 @@ export interface WatchTask {
   readonly error?: string | undefined
   /** Activity log comments (populated from bd show --json detail view). */
   readonly comments?: WatchTaskComment[] | undefined
+  /** Canonical branch name for epic-owned worktrees (from ralphe metadata). */
+  readonly branch?: string | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +245,8 @@ interface RalpheTimingMeta {
   readonly startedAt?: string | undefined
   readonly finishedAt?: string | undefined
   readonly error?: string | undefined
+  /** Canonical branch name for epic-owned worktrees (stored in ralphe metadata). */
+  readonly branch?: string | undefined
 }
 
 /**
@@ -259,10 +263,12 @@ function normalizeRalpheMeta(
 
   // Already a structured object
   if (typeof ralphe === "object") {
+    const obj = ralphe as Record<string, unknown>
     return {
       startedAt: typeof ralphe.startedAt === "string" ? ralphe.startedAt : undefined,
       finishedAt: typeof ralphe.finishedAt === "string" ? ralphe.finishedAt : undefined,
       error: typeof ralphe.error === "string" ? ralphe.error : undefined,
+      branch: typeof obj.branch === "string" ? obj.branch : undefined,
     }
   }
 
@@ -276,6 +282,7 @@ function normalizeRalpheMeta(
           startedAt: typeof obj.startedAt === "string" ? obj.startedAt : undefined,
           finishedAt: typeof obj.finishedAt === "string" ? obj.finishedAt : undefined,
           error: typeof obj.error === "string" ? obj.error : undefined,
+          branch: typeof obj.branch === "string" ? obj.branch : undefined,
         }
       }
     } catch {
@@ -395,6 +402,7 @@ function bdIssueToWatchTask(
     finishedAt: timing?.finishedAt,
     error: timing?.error,
     comments,
+    branch: timing?.branch,
   }
 }
 

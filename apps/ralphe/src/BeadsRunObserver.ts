@@ -175,6 +175,8 @@ export const buildWatchRequest = (
   buildPromptFromIssue: (issue: BeadsIssue) => string = defaultBuildPromptFromIssue,
   /** Optional epic PRD preamble to prepend to the task prompt. */
   epicPreamble?: string,
+  /** Optional working directory (epic worktree path) for execution. */
+  cwd?: string,
 ): RunRequest => {
   let task = ""
   if (epicPreamble) {
@@ -191,5 +193,6 @@ export const buildWatchRequest = (
     maxAttempts: config.maxAttempts,
     gitMode: config.git.mode,
     reportMode: config.report,
+    cwd,
   }
 }

@@ -36,6 +36,7 @@ import {
   EPIC_ERROR_PARENT_NOT_FOUND,
   EPIC_ERROR_MISSING_LABEL,
   EPIC_ERROR_EMPTY_BODY,
+  EPIC_ERROR_MISSING_BRANCH,
 } from "../src/epic.js"
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,13 @@ let assembledPrompts: string[] = []
 
 // Mock epic data returned by queryTaskDetail (for parent epic loading)
 let epicDetailsByParentId: Map<string, WatchTask | undefined> = new Map()
+
+// Mock worktree paths returned by ensureEpicWorktree
+let worktreePathsByEpicId: Map<string, string> = new Map()
+// Track ensureEpicWorktree calls
+let worktreeCalls: Array<{ epicId: string; branch: string }> = []
+// Optional failure override for ensureEpicWorktree
+let worktreeFailure: FatalError | undefined = undefined
 
 // ---------------------------------------------------------------------------
 // Local dependency harness
@@ -99,13 +107,14 @@ const makeMockEngineResolverLayer = (): Layer.Layer<EngineResolver> => {
 /**
  * Create a valid mock epic WatchTask for testing.
  */
-function makeEpic(id: string, title = `Epic ${id}`, description = `PRD for ${id}`): WatchTask {
+function makeEpic(id: string, title = `Epic ${id}`, description = `PRD for ${id}`, branch = `epic/${id}`): WatchTask {
   return {
     id,
     title,
     status: "backlog",
     description,
     labels: ["epic"],
+    branch,
   }
 }
 
@@ -156,6 +165,15 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
     },
     // Engine resolver layer for the workflow builder
     engineResolverLayer: makeMockEngineResolverLayer(),
+    // Epic worktree lifecycle
+    ensureEpicWorktree: (epic) => {
+      worktreeCalls.push({ epicId: epic.id, branch: epic.branch })
+      if (worktreeFailure) {
+        return Effect.fail(worktreeFailure)
+      }
+      const worktreePath = worktreePathsByEpicId.get(epic.id) ?? `/tmp/ralphe-worktrees/${epic.id}`
+      return Effect.succeed(worktreePath)
+    },
   }
 }
 
@@ -170,6 +188,9 @@ beforeEach(() => {
   previousMetadata = undefined
   calls = []
   assembledPrompts = []
+  worktreeCalls = []
+  worktreePathsByEpicId = new Map()
+  worktreeFailure = undefined
   // Pre-populate the default epic so existing tests pass with epic validation
   epicDetailsByParentId = new Map([
     [DEFAULT_EPIC_ID, makeEpic(DEFAULT_EPIC_ID, "Default Epic", "Default epic PRD body.")],
@@ -814,6 +835,7 @@ describe("processClaimedTask: epic context validation", () => {
       status: "backlog",
       description: "Some description",
       labels: ["feature"], // no "epic" label
+      branch: "epic/not-an-epic",
     })
     const issue = makeIssue("child-2", "Child task", "not-an-epic")
 
@@ -832,6 +854,7 @@ describe("processClaimedTask: epic context validation", () => {
       status: "backlog",
       description: "",
       labels: ["epic"],
+      branch: "epic/empty-epic",
     })
     const issue = makeIssue("child-3", "Child task", "empty-epic")
 
@@ -844,13 +867,7 @@ describe("processClaimedTask: epic context validation", () => {
   })
 
   test("task with valid epic parent executes successfully", async () => {
-    epicDetailsByParentId.set("valid-epic", {
-      id: "valid-epic",
-      title: "Auth Epic",
-      status: "backlog",
-      description: "Full PRD: implement OAuth2 login flow.",
-      labels: ["epic"],
-    })
+    epicDetailsByParentId.set("valid-epic", makeEpic("valid-epic", "Auth Epic", "Full PRD: implement OAuth2 login flow."))
     const issue = makeIssue("child-ok", "Implement login", "valid-epic")
     engineResult = Effect.succeed({ response: "done", resumeToken: "tok-ok" })
 
@@ -869,13 +886,7 @@ describe("processClaimedTask: epic context validation", () => {
   })
 
   test("epic PRD is prepended to task prompt", async () => {
-    epicDetailsByParentId.set("prd-epic", {
-      id: "prd-epic",
-      title: "Database Migration Epic",
-      status: "backlog",
-      description: "Migrate from SQLite to Postgres with zero downtime.",
-      labels: ["epic"],
-    })
+    epicDetailsByParentId.set("prd-epic", makeEpic("prd-epic", "Database Migration Epic", "Migrate from SQLite to Postgres with zero downtime."))
     const issue = makeIssue("child-prd", "Create migration script", "prd-epic")
     engineResult = Effect.succeed({ response: "done" })
 
@@ -929,5 +940,140 @@ describe("pollClaimAndProcess: epic context in poll cycle", () => {
       expect(result.result.success).toBe(false)
       expect(result.result.error).toBe(EPIC_ERROR_NO_PARENT)
     }
+  })
+})
+
+// ===========================================================================
+// Contract 9: epic worktree lifecycle
+// ===========================================================================
+
+describe("processClaimedTask: epic worktree lifecycle", () => {
+  test("ensureEpicWorktree is called with the epic context", async () => {
+    epicDetailsByParentId.set("wt-epic", makeEpic("wt-epic", "Worktree Epic", "PRD for worktree test"))
+    const issue = makeIssue("wt-task-1", "Worktree task", "wt-epic")
+    engineResult = Effect.succeed({ response: "done" })
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(true)
+    // Verify ensureEpicWorktree was called with the correct epic
+    expect(worktreeCalls.length).toBe(1)
+    expect(worktreeCalls[0]!.epicId).toBe("wt-epic")
+    expect(worktreeCalls[0]!.branch).toBe("epic/wt-epic")
+  })
+
+  test("worktree failure marks task as exhausted failure", async () => {
+    epicDetailsByParentId.set("wt-fail-epic", makeEpic("wt-fail-epic", "Failing Epic", "PRD body"))
+    const issue = makeIssue("wt-fail-task", "Task with worktree failure", "wt-fail-epic")
+    worktreeFailure = new FatalError({
+      command: "git worktree add",
+      message: "branch 'epic/wt-fail-epic' does not exist",
+    })
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain("Failed to ensure epic worktree")
+    expect(result.error).toContain("does not exist")
+
+    // Should have called markTaskExhaustedFailure
+    const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
+    expect(exhaustedCall).toBeTruthy()
+    expect(exhaustedCall?.id).toBe("wt-fail-task")
+
+    // Should NOT have executed the agent
+    const metaCalls = calls.filter((c) => c.op === "writeMetadata")
+    expect(metaCalls.length).toBe(0)
+  })
+
+  test("worktree path is set on the RunRequest (cwd)", async () => {
+    const customPath = "/tmp/ralphe-worktrees/cwd-epic"
+    worktreePathsByEpicId.set("cwd-epic", customPath)
+    epicDetailsByParentId.set("cwd-epic", makeEpic("cwd-epic", "CWD Epic", "PRD for cwd test"))
+    const issue = makeIssue("cwd-task", "CWD task", "cwd-epic")
+    engineResult = Effect.succeed({ response: "done" })
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(true)
+    // The worktree path should have been passed through to execution
+    expect(worktreeCalls.length).toBe(1)
+    expect(worktreeCalls[0]!.epicId).toBe("cwd-epic")
+  })
+
+  test("multiple tasks under same epic reuse the worktree", async () => {
+    epicDetailsByParentId.set("reuse-epic", makeEpic("reuse-epic", "Reuse Epic", "PRD for reuse test"))
+    worktreePathsByEpicId.set("reuse-epic", "/tmp/ralphe-worktrees/reuse-epic")
+    engineResult = Effect.succeed({ response: "done" })
+
+    // First task
+    const issue1 = makeIssue("reuse-task-1", "First task", "reuse-epic")
+    const result1 = await Effect.runPromise(
+      processClaimedTask(issue1, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+    expect(result1.success).toBe(true)
+
+    // Second task
+    const issue2 = makeIssue("reuse-task-2", "Second task", "reuse-epic")
+    const result2 = await Effect.runPromise(
+      processClaimedTask(issue2, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+    expect(result2.success).toBe(true)
+
+    // Both calls should have the same epic ID and branch
+    expect(worktreeCalls.length).toBe(2)
+    expect(worktreeCalls[0]!.epicId).toBe("reuse-epic")
+    expect(worktreeCalls[1]!.epicId).toBe("reuse-epic")
+    expect(worktreeCalls[0]!.branch).toBe("epic/reuse-epic")
+    expect(worktreeCalls[1]!.branch).toBe("epic/reuse-epic")
+  })
+
+  test("tasks under different epics get different worktree calls", async () => {
+    epicDetailsByParentId.set("epic-a", makeEpic("epic-a", "Epic A", "PRD A"))
+    epicDetailsByParentId.set("epic-b", makeEpic("epic-b", "Epic B", "PRD B"))
+    worktreePathsByEpicId.set("epic-a", "/tmp/ralphe-worktrees/epic-a")
+    worktreePathsByEpicId.set("epic-b", "/tmp/ralphe-worktrees/epic-b")
+    engineResult = Effect.succeed({ response: "done" })
+
+    const issue1 = makeIssue("task-a", "Task A", "epic-a")
+    await Effect.runPromise(
+      processClaimedTask(issue1, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    const issue2 = makeIssue("task-b", "Task B", "epic-b")
+    await Effect.runPromise(
+      processClaimedTask(issue2, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(worktreeCalls.length).toBe(2)
+    expect(worktreeCalls[0]!.epicId).toBe("epic-a")
+    expect(worktreeCalls[1]!.epicId).toBe("epic-b")
+  })
+
+  test("epic without branch is rejected before worktree creation", async () => {
+    epicDetailsByParentId.set("no-branch-epic", {
+      id: "no-branch-epic",
+      title: "Epic Without Branch",
+      status: "backlog",
+      description: "Valid PRD body",
+      labels: ["epic"],
+      // branch intentionally omitted
+    })
+    const issue = makeIssue("no-branch-task", "Task", "no-branch-epic")
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toBe(EPIC_ERROR_MISSING_BRANCH("no-branch-epic"))
+    // ensureEpicWorktree should NOT have been called
+    expect(worktreeCalls.length).toBe(0)
   })
 })

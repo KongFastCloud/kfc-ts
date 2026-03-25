@@ -9,6 +9,7 @@ export interface CmdResult {
 
 export const cmd = (
   command: string,
+  cwd?: string,
 ): Effect.Effect<CmdResult, CheckFailure | FatalError> =>
   Effect.gen(function* () {
     yield* Effect.logDebug(`Running: ${command}`)
@@ -18,6 +19,7 @@ export const cmd = (
         const proc = Bun.spawn(["sh", "-c", command], {
           stdout: "pipe",
           stderr: "pipe",
+          cwd,
         })
 
         const stdout = await new Response(proc.stdout).text()
