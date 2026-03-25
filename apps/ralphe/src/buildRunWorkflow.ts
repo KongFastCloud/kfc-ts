@@ -17,7 +17,6 @@ import { agent } from "./agent.js"
 import { cmd } from "./cmd.js"
 import { loop } from "./loop.js"
 import { report } from "./report.js"
-import { withSpan } from "./telemetry.js"
 import { buildCiGitStep, executePostLoopGitOps, defaultGitOps, type GitOps } from "./gitWorkflow.js"
 import type { RunRequest } from "./RunRequest.js"
 import { RunObserver } from "./RunObserver.js"
@@ -60,10 +59,8 @@ export const buildRunWorkflow = (
     const loopWorkflow = loop(
       (feedback, attempt, maxAttempts) => {
         // Step 1: Agent execution
-        let pipeline: Effect.Effect<unknown, CheckFailure | FatalError, Engine> = withSpan(
-          "agent.execute",
-          undefined,
-          agent(request.task, { feedback }),
+        let pipeline: Effect.Effect<unknown, CheckFailure | FatalError, Engine> = agent(request.task, { feedback }).pipe(
+          Effect.withSpan("agent.execute"),
         ).pipe(
           Effect.tap((result: AgentResult) => {
             lastResumeToken = result.resumeToken
@@ -76,10 +73,9 @@ export const buildRunWorkflow = (
           pipeline = pipe(
             pipeline,
             Effect.andThen(
-              withSpan(
-                "check.run",
-                { "check.name": check },
-                cmd(check).pipe(Effect.annotateLogs({ "check.name": check })),
+              cmd(check).pipe(
+                Effect.annotateLogs({ "check.name": check }),
+                Effect.withSpan("check.run", { attributes: { "check.name": check } }),
               ),
             ),
           )
@@ -90,7 +86,7 @@ export const buildRunWorkflow = (
           pipeline = pipe(
             pipeline,
             Effect.andThen(
-              withSpan("report.verify", undefined, report(request.task, request.reportMode)),
+              report(request.task, request.reportMode).pipe(Effect.withSpan("report.verify")),
             ),
           )
         }
@@ -143,5 +139,5 @@ export const buildRunWorkflow = (
   )
 
   // Wrap in an OTel task.run span
-  return withSpan("task.run", { engine: request.engine }, workflow)
+  return workflow.pipe(Effect.withSpan("task.run", { attributes: { engine: request.engine } }))
 }

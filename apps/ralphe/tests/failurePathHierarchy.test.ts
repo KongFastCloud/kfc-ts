@@ -6,9 +6,9 @@
  * no live Axiom access is required.
  */
 
-import { beforeEach, afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer, pipe } from "effect"
-import { trace, SpanStatusCode } from "@opentelemetry/api"
+import { SpanStatusCode, trace } from "@opentelemetry/api"
 import {
   BasicTracerProvider,
   InMemorySpanExporter,
@@ -17,9 +17,9 @@ import {
 } from "@opentelemetry/sdk-trace-base"
 import { Engine, type AgentResult } from "../src/engine/Engine.js"
 import { CheckFailure, FatalError } from "../src/errors.js"
-import { withSpan } from "../src/telemetry.js"
 import { type GitOps, buildCiGitStep } from "../src/runTask.js"
 import { loop } from "../src/loop.js"
+import { TracingLive } from "../src/telemetry.js"
 
 // ---------------------------------------------------------------------------
 // In-memory span capture
@@ -105,18 +105,11 @@ const failingCommitGitOps: GitOps = {
 
 describe("failed attempt spans belong to correct trace", () => {
   test("agent failure inside an attempt preserves hierarchy", async () => {
-    const pipeline = withSpan(
-      "task.run",
-      { engine: "claude" },
-      withSpan(
-        "loop.attempt",
-        { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" },
-        withSpan(
-          "agent.execute",
-          undefined,
-          Effect.fail(new FatalError({ command: "agent", message: "crash" })),
-        ),
-      ),
+    const pipeline = Effect.fail(new FatalError({ command: "agent", message: "crash" })).pipe(
+      Effect.withSpan("agent.execute"),
+      Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" } }),
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(TracingLive),
     )
 
     const exit = await Effect.runPromiseExit(pipeline)
@@ -140,26 +133,18 @@ describe("failed attempt spans belong to correct trace", () => {
 
   test("check failure after successful agent preserves both spans in hierarchy", async () => {
     const attemptBody = pipe(
-      withSpan("agent.execute", undefined, Effect.succeed("code generated")),
+      Effect.succeed("code generated").pipe(Effect.withSpan("agent.execute")),
       Effect.andThen(
-        withSpan(
-          "check.run",
-          { "check.name": "echo test" },
-          Effect.fail(
-            new CheckFailure({ command: "echo test", stderr: "fail", exitCode: 1 }),
-          ),
-        ),
+        Effect.fail(
+          new CheckFailure({ command: "echo test", stderr: "fail", exitCode: 1 }),
+        ).pipe(Effect.withSpan("check.run", { attributes: { "check.name": "echo test" } })),
       ),
     )
 
-    const pipeline = withSpan(
-      "task.run",
-      { engine: "claude" },
-      withSpan(
-        "loop.attempt",
-        { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" },
-        attemptBody,
-      ),
+    const pipeline = attemptBody.pipe(
+      Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" } }),
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(TracingLive),
     )
 
     const exit = await Effect.runPromiseExit(pipeline)
@@ -187,22 +172,17 @@ describe("failed attempt spans belong to correct trace", () => {
     // task.run > loop.attempt > agent.execute > (ok)
     //                         > check.run > (ok)
     //                         > git.commit > git.push > git.wait_ci > (fail)
-    const pipeline = withSpan(
-      "task.run",
-      { engine: "claude" },
-      withSpan(
-        "loop.attempt",
-        { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" },
-        Effect.gen(function* () {
-          yield* withSpan("agent.execute", undefined, Effect.succeed("ok"))
-          yield* withSpan(
-            "check.run",
-            { "check.name": "echo lint" },
-            Effect.succeed("pass"),
-          )
-          yield* buildCiGitStep(failingCiGitOps)
-        }).pipe(Effect.provide(successEngineLayer)),
-      ),
+    const pipeline = Effect.gen(function* () {
+      yield* Effect.succeed("ok").pipe(Effect.withSpan("agent.execute"))
+      yield* Effect.succeed("pass").pipe(
+        Effect.withSpan("check.run", { attributes: { "check.name": "echo lint" } }),
+      )
+      yield* buildCiGitStep(failingCiGitOps)
+    }).pipe(
+      Effect.provide(successEngineLayer),
+      Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" } }),
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(TracingLive),
     )
 
     const exit = await Effect.runPromiseExit(pipeline)
@@ -233,19 +213,18 @@ describe("failed attempt spans belong to correct trace", () => {
   })
 
   test("fatal error mid-pipeline skips later spans but preserves earlier ones", async () => {
-    const pipeline = withSpan(
-      "task.run",
-      { engine: "claude" },
-      withSpan(
-        "loop.attempt",
-        { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" },
-        Effect.gen(function* () {
-          yield* withSpan("agent.execute", undefined, Effect.succeed("ok"))
-          yield* buildCiGitStep(failingCommitGitOps)
-          // This span should never be reached
-          yield* withSpan("check.run", { "check.name": "unreachable" }, Effect.succeed("nope"))
-        }).pipe(Effect.provide(successEngineLayer)),
-      ),
+    const pipeline = Effect.gen(function* () {
+      yield* Effect.succeed("ok").pipe(Effect.withSpan("agent.execute"))
+      yield* buildCiGitStep(failingCommitGitOps)
+      // This span should never be reached
+      yield* Effect.succeed("nope").pipe(
+        Effect.withSpan("check.run", { attributes: { "check.name": "unreachable" } }),
+      )
+    }).pipe(
+      Effect.provide(successEngineLayer),
+      Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" } }),
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(TracingLive),
     )
 
     const exit = await Effect.runPromiseExit(pipeline)
@@ -280,31 +259,26 @@ describe("retry failures preserve attempt spans under one trace", () => {
     const maxAttempts = 3
     let callCount = 0
 
-    const workflow = withSpan(
-      "task.run",
-      { engine: "claude" },
-      loop(
-        () => {
-          callCount++
-          return pipe(
-            withSpan("agent.execute", undefined, Effect.succeed("code")),
-            Effect.andThen(
-              withSpan(
-                "check.run",
-                { "check.name": "echo test" },
-                Effect.fail(
-                  new CheckFailure({
-                    command: "echo test",
-                    stderr: `fail attempt ${callCount}`,
-                    exitCode: 1,
-                  }),
-                ),
-              ),
-            ),
-          )
-        },
-        { maxAttempts, spanAttributes: { engine: "claude" } },
-      ),
+    const workflow = loop(
+      () => {
+        callCount++
+        return pipe(
+          Effect.succeed("code").pipe(Effect.withSpan("agent.execute")),
+          Effect.andThen(
+            Effect.fail(
+              new CheckFailure({
+                command: "echo test",
+                stderr: `fail attempt ${callCount}`,
+                exitCode: 1,
+              }),
+            ).pipe(Effect.withSpan("check.run", { attributes: { "check.name": "echo test" } })),
+          ),
+        )
+      },
+      { maxAttempts, spanAttributes: { engine: "claude" } },
+    ).pipe(
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(TracingLive),
     )
 
     const exit = await Effect.runPromiseExit(workflow)
@@ -341,42 +315,35 @@ describe("retry failures preserve attempt spans under one trace", () => {
   test("retry with first attempt failing and second succeeding preserves both attempt trees", async () => {
     let callCount = 0
 
-    const workflow = withSpan(
-      "task.run",
-      { engine: "claude" },
-      loop(
-        () => {
-          callCount++
-          if (callCount === 1) {
-            return pipe(
-              withSpan("agent.execute", undefined, Effect.succeed("code")),
-              Effect.andThen(
-                withSpan(
-                  "check.run",
-                  { "check.name": "echo test" },
-                  Effect.fail(
-                    new CheckFailure({ command: "echo test", stderr: "fail", exitCode: 1 }),
-                  ),
-                ),
-              ),
-            )
-          }
+    const workflow = loop(
+      () => {
+        callCount++
+        if (callCount === 1) {
           return pipe(
-            withSpan("agent.execute", undefined, Effect.succeed("code")),
+            Effect.succeed("code").pipe(Effect.withSpan("agent.execute")),
             Effect.andThen(
-              withSpan(
-                "check.run",
-                { "check.name": "echo test" },
-                Effect.succeed("pass"),
-              ),
-            ),
-            Effect.andThen(
-              withSpan("report.verify", undefined, Effect.succeed("verified")),
+              Effect.fail(
+                new CheckFailure({ command: "echo test", stderr: "fail", exitCode: 1 }),
+              ).pipe(Effect.withSpan("check.run", { attributes: { "check.name": "echo test" } })),
             ),
           )
-        },
-        { maxAttempts: 2, spanAttributes: { engine: "claude" } },
-      ),
+        }
+        return pipe(
+          Effect.succeed("code").pipe(Effect.withSpan("agent.execute")),
+          Effect.andThen(
+            Effect.succeed("pass").pipe(
+              Effect.withSpan("check.run", { attributes: { "check.name": "echo test" } }),
+            ),
+          ),
+          Effect.andThen(
+            Effect.succeed("verified").pipe(Effect.withSpan("report.verify")),
+          ),
+        )
+      },
+      { maxAttempts: 2, spanAttributes: { engine: "claude" } },
+    ).pipe(
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(TracingLive),
     )
 
     await Effect.runPromise(workflow)
@@ -410,31 +377,28 @@ describe("retry failures preserve attempt spans under one trace", () => {
   test("retry with CI failure in first attempt and success in second attempt", async () => {
     let callCount = 0
 
-    const workflow = withSpan(
-      "task.run",
-      { engine: "claude" },
-      loop(
-        () => {
-          callCount++
-          return Effect.gen(function* () {
-            yield* withSpan("agent.execute", undefined, Effect.succeed("code"))
-            yield* withSpan(
-              "check.run",
-              { "check.name": "echo test" },
-              Effect.succeed("pass"),
-            )
-            if (callCount === 1) {
-              yield* buildCiGitStep(failingCiGitOps)
-            } else {
-              yield* buildCiGitStep(successGitOps)
-            }
-          })
-        },
-        { maxAttempts: 2, spanAttributes: { engine: "claude" } },
-      ),
+    const workflow = loop(
+      () => {
+        callCount++
+        return Effect.gen(function* () {
+          yield* Effect.succeed("code").pipe(Effect.withSpan("agent.execute"))
+          yield* Effect.succeed("pass").pipe(
+            Effect.withSpan("check.run", { attributes: { "check.name": "echo test" } }),
+          )
+          if (callCount === 1) {
+            yield* buildCiGitStep(failingCiGitOps)
+          } else {
+            yield* buildCiGitStep(successGitOps)
+          }
+        })
+      },
+      { maxAttempts: 2, spanAttributes: { engine: "claude" } },
+    ).pipe(
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(Layer.merge(successEngineLayer, TracingLive)),
     )
 
-    await Effect.runPromise(Effect.provide(workflow, successEngineLayer))
+    await Effect.runPromise(workflow)
 
     const taskSpan = spanByName("task.run")!
     const traceId = taskSpan.spanContext().traceId
@@ -468,132 +432,46 @@ describe("retry failures preserve attempt spans under one trace", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Telemetry remains fail-open under failure-path hierarchy scenarios
+// Fail-open: effects propagate correctly even without tracing layer
 // ---------------------------------------------------------------------------
 
-describe("fail-open under failure-path hierarchy", () => {
-  test("broken tracer with failing effect still propagates the effect error", async () => {
-    const { trace: traceApi } = require("@opentelemetry/api") as typeof import("@opentelemetry/api")
-    trace.disable()
-
-    const fakeTracer = {
-      startSpan: () => { throw new Error("tracer broken") },
-      startActiveSpan: () => { throw new Error("tracer broken") },
-    }
-    const fakeProvider = { getTracer: () => fakeTracer }
-    traceApi.setGlobalTracerProvider(fakeProvider as any)
-
-    try {
-      const exit = await Effect.runPromiseExit(
-        withSpan(
-          "task.run",
-          { engine: "claude" },
-          withSpan(
-            "loop.attempt",
-            { "loop.attempt": 1 },
-            withSpan(
-              "agent.execute",
-              undefined,
-              Effect.fail(new FatalError({ command: "agent", message: "crash" })),
-            ),
-          ),
-        ),
-      )
-
-      // The underlying effect error must propagate even though tracing is broken
-      expect(exit._tag).toBe("Failure")
-    } finally {
-      traceApi.disable()
-    }
-  })
-
-  test("broken span.end with failing effect still propagates the effect error", async () => {
-    const { trace: traceApi } = require("@opentelemetry/api") as typeof import("@opentelemetry/api")
-    trace.disable()
-
-    const fakeSpan = {
-      end: () => { throw new Error("end failed") },
-      setStatus: () => { throw new Error("setStatus failed") },
-      setAttribute: () => fakeSpan,
-      setAttributes: () => fakeSpan,
-      addEvent: () => fakeSpan,
-      recordException: () => {},
-      updateName: () => fakeSpan,
-      isRecording: () => true,
-      spanContext: () => ({ traceId: "0", spanId: "0", traceFlags: 0 }),
-    }
-    const fakeTracer = {
-      startSpan: () => fakeSpan,
-      startActiveSpan: () => {},
-    }
-    const fakeProvider = { getTracer: () => fakeTracer }
-    traceApi.setGlobalTracerProvider(fakeProvider as any)
-
-    try {
-      const exit = await Effect.runPromiseExit(
-        withSpan(
-          "task.run",
-          { engine: "claude" },
-          withSpan(
-            "loop.attempt",
-            { "loop.attempt": 1 },
-            Effect.fail(new CheckFailure({ command: "test", stderr: "fail", exitCode: 1 })),
-          ),
-        ),
-      )
-
-      // Effect failure propagates despite span.end and span.setStatus throwing
-      expect(exit._tag).toBe("Failure")
-    } finally {
-      traceApi.disable()
-    }
-  })
-
-  test("broken tracer with successful effect still returns the value", async () => {
-    const { trace: traceApi } = require("@opentelemetry/api") as typeof import("@opentelemetry/api")
-    trace.disable()
-
-    const fakeTracer = {
-      startSpan: () => { throw new Error("tracer broken") },
-      startActiveSpan: () => { throw new Error("tracer broken") },
-    }
-    const fakeProvider = { getTracer: () => fakeTracer }
-    traceApi.setGlobalTracerProvider(fakeProvider as any)
-
-    try {
-      const result = await Effect.runPromise(
-        withSpan(
-          "task.run",
-          { engine: "claude" },
-          withSpan(
-            "loop.attempt",
-            { "loop.attempt": 1 },
-            withSpan("agent.execute", undefined, Effect.succeed("done")),
-          ),
-        ),
-      )
-
-      expect(result).toBe("done")
-    } finally {
-      traceApi.disable()
-    }
-  })
-
-  test("span status is set to ERROR for failed attempts in a healthy tracer", async () => {
-    const pipeline = withSpan(
-      "task.run",
-      { engine: "claude" },
-      withSpan(
-        "loop.attempt",
-        { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" },
-        withSpan(
-          "check.run",
-          { "check.name": "echo test" },
-          Effect.fail(
-            new CheckFailure({ command: "echo test", stderr: "fail", exitCode: 1 }),
-          ),
-        ),
+describe("fail-open under failure paths", () => {
+  test("failing effect propagates error without tracing layer", async () => {
+    const exit = await Effect.runPromiseExit(
+      Effect.fail(new FatalError({ command: "agent", message: "crash" })).pipe(
+        Effect.withSpan("agent.execute"),
+        Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1 } }),
+        Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
       ),
+    )
+    expect(exit._tag).toBe("Failure")
+  })
+
+  test("successful effect returns value without tracing layer", async () => {
+    const result = await Effect.runPromise(
+      Effect.succeed("done").pipe(
+        Effect.withSpan("agent.execute"),
+        Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1 } }),
+        Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      ),
+    )
+    expect(result).toBe("done")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Error status on failure spans
+// ---------------------------------------------------------------------------
+
+describe("span error status", () => {
+  test("span status is set to ERROR for failed effects", async () => {
+    const pipeline = Effect.fail(
+      new CheckFailure({ command: "echo test", stderr: "fail", exitCode: 1 }),
+    ).pipe(
+      Effect.withSpan("check.run", { attributes: { "check.name": "echo test" } }),
+      Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" } }),
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(TracingLive),
     )
 
     await Effect.runPromiseExit(pipeline)
@@ -615,18 +493,11 @@ describe("fail-open under failure-path hierarchy", () => {
 
 describe("partial pipeline edge cases", () => {
   test("attempt with only agent.execute (no checks) that fails preserves hierarchy", async () => {
-    const pipeline = withSpan(
-      "task.run",
-      { engine: "claude" },
-      withSpan(
-        "loop.attempt",
-        { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" },
-        withSpan(
-          "agent.execute",
-          undefined,
-          Effect.fail(new FatalError({ command: "agent", message: "timeout" })),
-        ),
-      ),
+    const pipeline = Effect.fail(new FatalError({ command: "agent", message: "timeout" })).pipe(
+      Effect.withSpan("agent.execute"),
+      Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" } }),
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(TracingLive),
     )
 
     const exit = await Effect.runPromiseExit(pipeline)
@@ -648,10 +519,9 @@ describe("partial pipeline edge cases", () => {
 
   test("single span failure still completes and exports the span", async () => {
     const exit = await Effect.runPromiseExit(
-      withSpan(
-        "task.run",
-        { engine: "claude" },
-        Effect.fail(new FatalError({ command: "init", message: "boom" })),
+      Effect.fail(new FatalError({ command: "init", message: "boom" })).pipe(
+        Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+        Effect.provide(TracingLive),
       ),
     )
 
@@ -668,14 +538,10 @@ describe("partial pipeline edge cases", () => {
     // Run two separate task.run invocations, each with failures
     const runFailingTask = () =>
       Effect.runPromiseExit(
-        withSpan(
-          "task.run",
-          { engine: "claude" },
-          withSpan(
-            "loop.attempt",
-            { "loop.attempt": 1 },
-            Effect.fail(new FatalError({ command: "test", message: "fail" })),
-          ),
+        Effect.fail(new FatalError({ command: "test", message: "fail" })).pipe(
+          Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1 } }),
+          Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+          Effect.provide(TracingLive),
         ),
       )
 

@@ -6,7 +6,7 @@
  * in-memory exporter so no live Axiom access is required.
  */
 
-import { beforeEach, afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer, pipe } from "effect"
 import { trace } from "@opentelemetry/api"
 import {
@@ -17,11 +17,11 @@ import {
 } from "@opentelemetry/sdk-trace-base"
 import { Engine, type AgentResult } from "../src/engine/Engine.js"
 import { CheckFailure, FatalError } from "../src/errors.js"
-import { withSpan } from "../src/telemetry.js"
 import { type GitOps, buildCiGitStep } from "../src/runTask.js"
 import { loop } from "../src/loop.js"
 import { agent } from "../src/agent.js"
 import { cmd } from "../src/cmd.js"
+import { TracingLive } from "../src/telemetry.js"
 
 // ---------------------------------------------------------------------------
 // In-memory span capture
@@ -94,13 +94,12 @@ const successGitOps: GitOps = {
 
 describe("task.run span", () => {
   test("produces a task.run span wrapping the pipeline", async () => {
-    const pipeline = withSpan(
-      "task.run",
-      { engine: "claude" },
-      Effect.provide(
-        withSpan("agent.execute", undefined, agent("test")),
-        successEngineLayer,
-      ),
+    const pipeline = Effect.provide(
+      agent("test").pipe(Effect.withSpan("agent.execute")),
+      successEngineLayer,
+    ).pipe(
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(TracingLive),
     )
     await Effect.runPromise(pipeline)
 
@@ -108,12 +107,12 @@ describe("task.run span", () => {
   })
 
   test("task.run span carries engine attribute", async () => {
-    const pipeline = withSpan(
-      "task.run",
-      { engine: "claude" },
-      Effect.succeed("ok"),
+    await Effect.runPromise(
+      Effect.succeed("ok").pipe(
+        Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+        Effect.provide(TracingLive),
+      ),
     )
-    await Effect.runPromise(pipeline)
 
     const attrs = spanAttrs("task.run")
     expect(attrs).toHaveLength(1)
@@ -121,12 +120,12 @@ describe("task.run span", () => {
   })
 
   test("task.run span carries issue.id when present", async () => {
-    const pipeline = withSpan(
-      "task.run",
-      { engine: "codex", "issue.id": "TST-42" },
-      Effect.succeed("ok"),
+    await Effect.runPromise(
+      Effect.succeed("ok").pipe(
+        Effect.withSpan("task.run", { attributes: { engine: "codex", "issue.id": "TST-42" } }),
+        Effect.provide(TracingLive),
+      ),
     )
-    await Effect.runPromise(pipeline)
 
     const attrs = spanAttrs("task.run")
     expect(attrs).toHaveLength(1)
@@ -135,12 +134,12 @@ describe("task.run span", () => {
   })
 
   test("task.run span is created even when inner effect fails", async () => {
-    const pipeline = withSpan(
-      "task.run",
-      { engine: "claude" },
-      Effect.fail(new FatalError({ command: "agent", message: "crash" })),
+    const exit = await Effect.runPromiseExit(
+      Effect.fail(new FatalError({ command: "agent", message: "crash" })).pipe(
+        Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+        Effect.provide(TracingLive),
+      ),
     )
-    const exit = await Effect.runPromiseExit(pipeline)
 
     expect(exit._tag).toBe("Failure")
     expect(spanNames()).toContain("task.run")
@@ -154,19 +153,15 @@ describe("task.run span", () => {
 describe("span hierarchy", () => {
   test("single attempt produces task.run → loop.attempt → agent.execute → check.run", async () => {
     const attemptBody = Effect.gen(function* () {
-      yield* withSpan("agent.execute", undefined, agent("test"))
-      yield* withSpan("check.run", { "check.name": "echo lint" }, cmd("echo lint"))
-      yield* withSpan("check.run", { "check.name": "echo test" }, cmd("echo test"))
+      yield* agent("test").pipe(Effect.withSpan("agent.execute"))
+      yield* cmd("echo lint").pipe(Effect.withSpan("check.run", { attributes: { "check.name": "echo lint" } }))
+      yield* cmd("echo test").pipe(Effect.withSpan("check.run", { attributes: { "check.name": "echo test" } }))
     })
 
-    const pipeline = withSpan(
-      "task.run",
-      { engine: "claude" },
-      withSpan(
-        "loop.attempt",
-        { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" },
-        Effect.provide(attemptBody, successEngineLayer),
-      ),
+    const pipeline = Effect.provide(attemptBody, successEngineLayer).pipe(
+      Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" } }),
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(TracingLive),
     )
     await Effect.runPromise(pipeline)
 
@@ -201,24 +196,23 @@ describe("span hierarchy", () => {
 
   test("retry produces two loop.attempt spans under one trace with correct parents", async () => {
     let attemptCalls = 0
-    const workflow = withSpan(
-      "task.run",
-      { engine: "claude" },
-      loop(
-        () => {
-          attemptCalls++
-          if (attemptCalls === 1) {
-            return Effect.fail(
-              new CheckFailure({ command: "test", stderr: "fail", exitCode: 1 }),
-            )
-          }
-          return Effect.succeed("ok")
-        },
-        {
-          maxAttempts: 2,
-          spanAttributes: { engine: "claude" },
-        },
-      ),
+    const workflow = loop(
+      () => {
+        attemptCalls++
+        if (attemptCalls === 1) {
+          return Effect.fail(
+            new CheckFailure({ command: "test", stderr: "fail", exitCode: 1 }),
+          )
+        }
+        return Effect.succeed("ok")
+      },
+      {
+        maxAttempts: 2,
+        spanAttributes: { engine: "claude" },
+      },
+    ).pipe(
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(TracingLive),
     )
 
     await Effect.runPromise(workflow)
@@ -249,19 +243,15 @@ describe("span hierarchy", () => {
 
   test("all agreed span names are emitted for a full pipeline with git", async () => {
     const pipeline = Effect.gen(function* () {
-      yield* withSpan("agent.execute", undefined, Effect.succeed("ok"))
-      yield* withSpan("check.run", { "check.name": "echo test" }, Effect.succeed("ok"))
+      yield* Effect.succeed("ok").pipe(Effect.withSpan("agent.execute"))
+      yield* Effect.succeed("ok").pipe(Effect.withSpan("check.run", { attributes: { "check.name": "echo test" } }))
       yield* buildCiGitStep(successGitOps)
     })
 
-    const wrappedPipeline = withSpan(
-      "task.run",
-      { engine: "claude" },
-      withSpan(
-        "loop.attempt",
-        { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" },
-        Effect.provide(pipeline, successEngineLayer),
-      ),
+    const wrappedPipeline = Effect.provide(pipeline, successEngineLayer).pipe(
+      Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" } }),
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(TracingLive),
     )
 
     await Effect.runPromise(wrappedPipeline)
@@ -290,22 +280,17 @@ describe("span hierarchy", () => {
   })
 
   test("no span names outside the agreed set appear", async () => {
-    const pipeline = Effect.gen(function* () {
-      yield* withSpan("agent.execute", undefined, Effect.succeed("ok"))
-      yield* withSpan("check.run", { "check.name": "echo test" }, Effect.succeed("ok"))
-    })
-
-    const wrappedPipeline = withSpan(
-      "task.run",
-      { engine: "claude" },
-      withSpan(
-        "loop.attempt",
-        { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" },
-        pipeline,
+    const pipeline = pipe(
+      Effect.succeed("ok").pipe(Effect.withSpan("agent.execute")),
+      Effect.andThen(
+        Effect.succeed("ok").pipe(Effect.withSpan("check.run", { attributes: { "check.name": "echo test" } })),
       ),
+      Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1, "loop.max_attempts": 1, engine: "claude" } }),
+      Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+      Effect.provide(TracingLive),
     )
 
-    await Effect.runPromise(wrappedPipeline)
+    await Effect.runPromise(pipeline)
 
     const agreed = new Set([
       "task.run",

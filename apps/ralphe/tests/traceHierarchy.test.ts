@@ -1,11 +1,11 @@
 /**
- * ABOUTME: Tests that nested withSpan() calls produce a coherent trace tree
- * with shared trace IDs and correct parent-child relationships. Verifies the
- * core context propagation fix: child spans inherit the active trace context
- * instead of creating disconnected root spans.
+ * ABOUTME: Tests that nested Effect.withSpan calls produce a coherent trace tree
+ * with shared trace IDs and correct parent-child relationships via Effect's
+ * built-in span model and @effect/opentelemetry. Verifies the core context
+ * propagation: child spans inherit the active trace context automatically.
  */
 
-import { beforeEach, afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, pipe } from "effect"
 import { trace } from "@opentelemetry/api"
 import {
@@ -14,7 +14,7 @@ import {
   SimpleSpanProcessor,
   type ReadableSpan,
 } from "@opentelemetry/sdk-trace-base"
-import { withSpan } from "../src/telemetry.js"
+import { TracingLive } from "../src/telemetry.js"
 
 // ---------------------------------------------------------------------------
 // In-memory span capture
@@ -59,12 +59,11 @@ const parentSpanIdOf = (span: ReadableSpan): string | undefined =>
 describe("trace hierarchy", () => {
   test("nested spans share the same trace ID", async () => {
     await Effect.runPromise(
-      withSpan("task.run", { engine: "claude" },
-        withSpan("loop.attempt", { "loop.attempt": 1 },
-          withSpan("agent.execute", undefined,
-            Effect.succeed("ok"),
-          ),
-        ),
+      Effect.succeed("ok").pipe(
+        Effect.withSpan("agent.execute"),
+        Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1 } }),
+        Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+        Effect.provide(TracingLive),
       ),
     )
 
@@ -84,12 +83,11 @@ describe("trace hierarchy", () => {
 
   test("child spans have correct parent span IDs", async () => {
     await Effect.runPromise(
-      withSpan("task.run", undefined,
-        withSpan("loop.attempt", undefined,
-          withSpan("agent.execute", undefined,
-            Effect.succeed("ok"),
-          ),
-        ),
+      Effect.succeed("ok").pipe(
+        Effect.withSpan("agent.execute"),
+        Effect.withSpan("loop.attempt"),
+        Effect.withSpan("task.run"),
+        Effect.provide(TracingLive),
       ),
     )
 
@@ -109,16 +107,16 @@ describe("trace hierarchy", () => {
 
   test("sibling spans share the same parent", async () => {
     await Effect.runPromise(
-      withSpan("task.run", undefined,
-        pipe(
-          withSpan("agent.execute", undefined, Effect.succeed("done")),
-          Effect.andThen(
-            withSpan("check.run", { "check.name": "lint" }, Effect.succeed("pass")),
-          ),
-          Effect.andThen(
-            withSpan("report.verify", undefined, Effect.succeed("verified")),
-          ),
+      pipe(
+        Effect.succeed("done").pipe(Effect.withSpan("agent.execute")),
+        Effect.andThen(
+          Effect.succeed("pass").pipe(Effect.withSpan("check.run", { attributes: { "check.name": "lint" } })),
         ),
+        Effect.andThen(
+          Effect.succeed("verified").pipe(Effect.withSpan("report.verify")),
+        ),
+        Effect.withSpan("task.run"),
+        Effect.provide(TracingLive),
       ),
     )
 
@@ -143,17 +141,18 @@ describe("trace hierarchy", () => {
 
   test("retry attempts are siblings under the same task trace", async () => {
     const attempt = (n: number) =>
-      withSpan("loop.attempt", { "loop.attempt": n, "loop.max_attempts": 3 },
-        withSpan("agent.execute", undefined, Effect.succeed("ok")),
+      Effect.succeed("ok").pipe(
+        Effect.withSpan("agent.execute"),
+        Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": n, "loop.max_attempts": 3 } }),
       )
 
     await Effect.runPromise(
-      withSpan("task.run", { engine: "claude" },
-        pipe(
-          attempt(1),
-          Effect.andThen(attempt(2)),
-          Effect.andThen(attempt(3)),
-        ),
+      pipe(
+        attempt(1),
+        Effect.andThen(attempt(2)),
+        Effect.andThen(attempt(3)),
+        Effect.withSpan("task.run", { attributes: { engine: "claude" } }),
+        Effect.provide(TracingLive),
       ),
     )
 
@@ -187,18 +186,17 @@ describe("trace hierarchy", () => {
   test("full orchestration hierarchy mirrors expected tree", async () => {
     // task.run > loop.attempt > [agent.execute, check.run, report.verify]
     await Effect.runPromise(
-      withSpan("task.run", { engine: "claude", "issue.id": "TST-1" },
-        withSpan("loop.attempt", { "loop.attempt": 1, "loop.max_attempts": 1 },
-          pipe(
-            withSpan("agent.execute", undefined, Effect.succeed("code")),
-            Effect.andThen(
-              withSpan("check.run", { "check.name": "echo lint" }, Effect.succeed("pass")),
-            ),
-            Effect.andThen(
-              withSpan("report.verify", undefined, Effect.succeed("verified")),
-            ),
-          ),
+      pipe(
+        Effect.succeed("code").pipe(Effect.withSpan("agent.execute")),
+        Effect.andThen(
+          Effect.succeed("pass").pipe(Effect.withSpan("check.run", { attributes: { "check.name": "echo lint" } })),
         ),
+        Effect.andThen(
+          Effect.succeed("verified").pipe(Effect.withSpan("report.verify")),
+        ),
+        Effect.withSpan("loop.attempt", { attributes: { "loop.attempt": 1, "loop.max_attempts": 1 } }),
+        Effect.withSpan("task.run", { attributes: { engine: "claude", "issue.id": "TST-1" } }),
+        Effect.provide(TracingLive),
       ),
     )
 
@@ -230,12 +228,11 @@ describe("trace hierarchy", () => {
 
   test("error in child span preserves hierarchy", async () => {
     const exit = await Effect.runPromiseExit(
-      withSpan("task.run", undefined,
-        withSpan("loop.attempt", undefined,
-          withSpan("agent.execute", undefined,
-            Effect.fail("agent-error"),
-          ),
-        ),
+      Effect.fail("agent-error").pipe(
+        Effect.withSpan("agent.execute"),
+        Effect.withSpan("loop.attempt"),
+        Effect.withSpan("task.run"),
+        Effect.provide(TracingLive),
       ),
     )
 
@@ -254,12 +251,18 @@ describe("trace hierarchy", () => {
     expect(parentSpanIdOf(agentSpan)).toBe(loopSpan.spanContext().spanId)
   })
 
-  test("each top-level withSpan creates an independent trace", async () => {
+  test("each top-level run creates an independent trace", async () => {
     await Effect.runPromise(
-      withSpan("task.run", undefined, Effect.succeed("first")),
+      Effect.succeed("first").pipe(
+        Effect.withSpan("task.run"),
+        Effect.provide(TracingLive),
+      ),
     )
     await Effect.runPromise(
-      withSpan("task.run", undefined, Effect.succeed("second")),
+      Effect.succeed("second").pipe(
+        Effect.withSpan("task.run"),
+        Effect.provide(TracingLive),
+      ),
     )
 
     const tasks = spansByName("task.run")

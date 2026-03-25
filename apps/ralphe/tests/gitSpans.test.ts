@@ -5,7 +5,7 @@
  * changing retry behavior or task outcomes.
  */
 
-import { beforeEach, afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { trace } from "@opentelemetry/api"
 import {
@@ -16,6 +16,7 @@ import {
 import { Engine } from "../src/engine/Engine.js"
 import { CheckFailure, FatalError } from "../src/errors.js"
 import { buildCiGitStep, executePostLoopGitOps, type GitOps } from "../src/runTask.js"
+import { TracingLive } from "../src/telemetry.js"
 
 // ---------------------------------------------------------------------------
 // In-memory span capture
@@ -25,7 +26,6 @@ let exporter: InMemorySpanExporter
 let provider: BasicTracerProvider
 
 beforeEach(() => {
-  // Clear any global provider set by other test files before installing ours
   trace.disable()
   exporter = new InMemorySpanExporter()
   provider = new BasicTracerProvider({
@@ -110,7 +110,9 @@ beforeEach(() => {
 describe("buildCiGitStep spans", () => {
   test("produces git.commit, git.push, and git.wait_ci spans on success", async () => {
     const ops = makeGitOps()
-    await Effect.runPromise(Effect.provide(buildCiGitStep(ops), emptyEngineLayer))
+    await Effect.runPromise(
+      Effect.provide(buildCiGitStep(ops), Layer.merge(emptyEngineLayer, TracingLive)),
+    )
 
     expect(spanNames()).toContain("git.commit")
     expect(spanNames()).toContain("git.push")
@@ -120,7 +122,9 @@ describe("buildCiGitStep spans", () => {
   test("produces only git.commit span when no changes to commit", async () => {
     mockedCommitResult = undefined
     const ops = makeGitOps()
-    await Effect.runPromise(Effect.provide(buildCiGitStep(ops), emptyEngineLayer))
+    await Effect.runPromise(
+      Effect.provide(buildCiGitStep(ops), Layer.merge(emptyEngineLayer, TracingLive)),
+    )
 
     expect(spanNames()).toContain("git.commit")
     expect(spanNames()).not.toContain("git.push")
@@ -130,7 +134,9 @@ describe("buildCiGitStep spans", () => {
   test("produces git.commit and git.push spans when push fails", async () => {
     pushShouldFail = true
     const ops = makeGitOps()
-    await Effect.runPromiseExit(Effect.provide(buildCiGitStep(ops), emptyEngineLayer))
+    await Effect.runPromiseExit(
+      Effect.provide(buildCiGitStep(ops), Layer.merge(emptyEngineLayer, TracingLive)),
+    )
 
     expect(spanNames()).toContain("git.commit")
     expect(spanNames()).toContain("git.push")
@@ -140,7 +146,9 @@ describe("buildCiGitStep spans", () => {
   test("produces all three spans when wait_ci fails", async () => {
     waitCiShouldFail = true
     const ops = makeGitOps()
-    await Effect.runPromiseExit(Effect.provide(buildCiGitStep(ops), emptyEngineLayer))
+    await Effect.runPromiseExit(
+      Effect.provide(buildCiGitStep(ops), Layer.merge(emptyEngineLayer, TracingLive)),
+    )
 
     expect(spanNames()).toContain("git.commit")
     expect(spanNames()).toContain("git.push")
@@ -155,7 +163,9 @@ describe("buildCiGitStep spans", () => {
 describe("executePostLoopGitOps spans", () => {
   test("none mode produces no git spans", async () => {
     const ops = makeGitOps()
-    await Effect.runPromise(Effect.provide(executePostLoopGitOps("none", ops), emptyEngineLayer))
+    await Effect.runPromise(
+      Effect.provide(executePostLoopGitOps("none", ops), Layer.merge(emptyEngineLayer, TracingLive)),
+    )
 
     expect(spanNames()).not.toContain("git.commit")
     expect(spanNames()).not.toContain("git.push")
@@ -163,7 +173,9 @@ describe("executePostLoopGitOps spans", () => {
 
   test("commit mode produces git.commit span", async () => {
     const ops = makeGitOps()
-    await Effect.runPromise(Effect.provide(executePostLoopGitOps("commit", ops), emptyEngineLayer))
+    await Effect.runPromise(
+      Effect.provide(executePostLoopGitOps("commit", ops), Layer.merge(emptyEngineLayer, TracingLive)),
+    )
 
     expect(spanNames()).toContain("git.commit")
     expect(spanNames()).not.toContain("git.push")
@@ -172,7 +184,10 @@ describe("executePostLoopGitOps spans", () => {
   test("commit_and_push mode produces git.commit and git.push spans", async () => {
     const ops = makeGitOps()
     await Effect.runPromise(
-      Effect.provide(executePostLoopGitOps("commit_and_push", ops), emptyEngineLayer),
+      Effect.provide(
+        executePostLoopGitOps("commit_and_push", ops),
+        Layer.merge(emptyEngineLayer, TracingLive),
+      ),
     )
 
     expect(spanNames()).toContain("git.commit")
@@ -183,7 +198,10 @@ describe("executePostLoopGitOps spans", () => {
     mockedCommitResult = undefined
     const ops = makeGitOps()
     await Effect.runPromise(
-      Effect.provide(executePostLoopGitOps("commit_and_push", ops), emptyEngineLayer),
+      Effect.provide(
+        executePostLoopGitOps("commit_and_push", ops),
+        Layer.merge(emptyEngineLayer, TracingLive),
+      ),
     )
 
     expect(spanNames()).toContain("git.commit")
@@ -195,7 +213,7 @@ describe("executePostLoopGitOps spans", () => {
     await Effect.runPromise(
       Effect.provide(
         executePostLoopGitOps("commit_and_push_and_wait_ci", ops),
-        emptyEngineLayer,
+        Layer.merge(emptyEngineLayer, TracingLive),
       ),
     )
 
@@ -214,7 +232,7 @@ describe("span coverage preserves task outcomes", () => {
     commitShouldFail = true
     const ops = makeGitOps()
     const exit = await Effect.runPromiseExit(
-      Effect.provide(buildCiGitStep(ops), emptyEngineLayer),
+      Effect.provide(buildCiGitStep(ops), Layer.merge(emptyEngineLayer, TracingLive)),
     )
 
     expect(exit._tag).toBe("Failure")
@@ -225,7 +243,7 @@ describe("span coverage preserves task outcomes", () => {
     waitCiShouldFail = true
     const ops = makeGitOps()
     const exit = await Effect.runPromiseExit(
-      Effect.provide(buildCiGitStep(ops), emptyEngineLayer),
+      Effect.provide(buildCiGitStep(ops), Layer.merge(emptyEngineLayer, TracingLive)),
     )
 
     expect(exit._tag).toBe("Failure")

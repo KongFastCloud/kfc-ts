@@ -1,6 +1,5 @@
 import { Effect } from "effect"
 import { CheckFailure, FatalError } from "./errors.js"
-import { withSpan } from "./telemetry.js"
 
 export type LoopEventType = "attempt_start" | "check_failed" | "success"
 
@@ -83,11 +82,15 @@ export const loop = <R>(
           )
         }).pipe(Effect.annotateLogs({ attempt: state.attempt, maxAttempts }))
 
-        return withSpan("loop.attempt", {
-          "loop.attempt": state.attempt,
-          "loop.max_attempts": maxAttempts,
-          ...extraAttrs,
-        }, attemptBody)
+        return attemptBody.pipe(
+          Effect.withSpan("loop.attempt", {
+            attributes: {
+              "loop.attempt": state.attempt,
+              "loop.max_attempts": maxAttempts,
+              ...extraAttrs,
+            },
+          }),
+        )
       },
     },
   ) as Effect.Effect<void, FatalError, R>

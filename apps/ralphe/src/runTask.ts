@@ -8,7 +8,6 @@ import { cmd } from "./cmd.js"
 import { loop } from "./loop.js"
 import { report } from "./report.js"
 import { addComment } from "./beads.js"
-import { withSpan } from "./telemetry.js"
 import type { GitMode, RalpheConfig } from "./config.js"
 import type { TaskResult } from "./TaskResult.js"
 import { defaultGitOps, buildCiGitStep, executePostLoopGitOps } from "./gitWorkflow.js"
@@ -93,10 +92,8 @@ export const runTask = (
 
   const workflow = loop(
     (feedback, attempt, maxAttempts) => {
-      let pipeline: Effect.Effect<unknown, any, Engine> = withSpan(
-        "agent.execute",
-        undefined,
-        agent(task, { feedback }),
+      let pipeline: Effect.Effect<unknown, any, Engine> = agent(task, { feedback }).pipe(
+        Effect.withSpan("agent.execute"),
       ).pipe(
         Effect.tap((result: AgentResult) => {
           lastResumeToken = result.resumeToken
@@ -111,13 +108,14 @@ export const runTask = (
       )
       for (const check of config.checks) {
         pipeline = pipe(pipeline, Effect.andThen(
-          withSpan("check.run", { "check.name": check },
-            cmd(check).pipe(Effect.annotateLogs({ "check.name": check })),
+          cmd(check).pipe(
+            Effect.annotateLogs({ "check.name": check }),
+            Effect.withSpan("check.run", { attributes: { "check.name": check } }),
           ),
         ))
       }
       if (config.report !== "none") {
-        pipeline = pipe(pipeline, Effect.andThen(withSpan("report.verify", undefined, report(task, config.report))))
+        pipeline = pipe(pipeline, Effect.andThen(report(task, config.report).pipe(Effect.withSpan("report.verify"))))
       }
       if (gitMode === "commit_and_push_and_wait_ci") {
         pipeline = pipe(pipeline, Effect.andThen(buildCiGitStep(ops)))
@@ -159,11 +157,13 @@ export const runTask = (
     } satisfies TaskResult
   }).pipe(Effect.annotateLogs({ gitMode, engine: engineChoice }))
 
-  // Wrap in an OTel task.run span for Axiom export (proof-of-life)
+  // Wrap in an OTel task.run span for Axiom export
   const spanAttributes: Record<string, string | number> = { engine: engineChoice }
   if (issueId) spanAttributes["issue.id"] = issueId
 
-  return withSpan("task.run", spanAttributes, fullWorkflow).pipe(
+  return fullWorkflow.pipe(
+    Effect.withSpan("task.run", { attributes: spanAttributes }),
+  ).pipe(
     Effect.catchTag("FatalError", (err) =>
       Effect.gen(function* () {
         yield* Effect.logError(`Task failed: ${err.message}`)

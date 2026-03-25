@@ -15,7 +15,7 @@ import { RunObserver, LogRunObserver } from "./src/RunObserver.js"
 import { EngineResolver, DefaultEngineResolverLayer } from "./src/EngineResolver.js"
 import { watch } from "./src/watcher.js"
 import { launchWatchTui } from "./src/watchTui.js"
-import { initTelemetry, shutdownTelemetry } from "./src/telemetry.js"
+import { initTelemetry, shutdownTelemetry, TracingLive } from "./src/telemetry.js"
 import { initRemoteLogger, shutdownRemoteLogger } from "./src/remoteLogger.js"
 import fs from "node:fs"
 
@@ -271,7 +271,10 @@ export const runCli = (argv: string[]) => {
     void shutdownTelemetry()
   })
 
-  cli(argv).pipe(Effect.provide(Layer.merge(BunContext.layer, AppLoggerLayer)), BunRuntime.runMain)
+  cli(argv).pipe(
+    Effect.provide(Layer.mergeAll(BunContext.layer, AppLoggerLayer, TracingLive)),
+    BunRuntime.runMain,
+  )
 }
 
 if (import.meta.main) {

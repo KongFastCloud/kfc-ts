@@ -1,8 +1,14 @@
 /**
- * ABOUTME: OpenTelemetry bootstrap for Axiom trace export.
- * Initializes a TracerProvider with an OTLP/HTTP exporter targeting Axiom.
- * All operations are fail-open: missing config, init failures, or flush
- * failures are logged but never prevent ralphe from running normally.
+ * ABOUTME: OpenTelemetry tracing integration via Effect's built-in span model.
+ * Uses @effect/opentelemetry to bridge Effect.withSpan spans to OTel, with
+ * an OTLP/HTTP exporter targeting Axiom. All operations are fail-open: missing
+ * config, init failures, or flush failures never prevent ralphe from running.
+ *
+ * Architecture:
+ * - initTelemetry() sets up the global OTel TracerProvider (same fail-open contract)
+ * - TracingLive is an Effect Layer that bridges Effect.withSpan → global OTel provider
+ * - Effect.withSpan at call sites replaces the old custom withSpan wrapper
+ * - Parent context propagation is handled natively by Effect's context model
  *
  * Reads AXIOM_TOKEN, AXIOM_DATASET, and AXIOM_DOMAIN from process.env
  * (populated by Bun's automatic .env.local loading from the repo root).
@@ -10,20 +16,13 @@
  * Exposes:
  * - initTelemetry()     — call once at process startup
  * - shutdownTelemetry() — call once at process exit (best-effort flush)
- * - getTracer()         — returns the app tracer (no-op when unconfigured)
- * - withSpan()          — wraps an Effect in an OTel span
+ * - TracingLive         — Effect Layer bridging Effect.withSpan → OTel
  */
 
-import {
-  trace,
-  context as otelContext,
-  ROOT_CONTEXT,
-  type Tracer,
-  type Span,
-  type Context as OtelContext,
-  SpanStatusCode,
-} from "@opentelemetry/api"
-import { Effect, FiberRef } from "effect"
+import { Layer } from "effect"
+import { trace } from "@opentelemetry/api"
+import * as EffectTracer from "@effect/opentelemetry/Tracer"
+import * as EffectResource from "@effect/opentelemetry/Resource"
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -124,82 +123,21 @@ export const shutdownTelemetry = async (): Promise<void> => {
 }
 
 // ---------------------------------------------------------------------------
-// Tracer access
-// ---------------------------------------------------------------------------
-
-const TRACER_NAME = "ralphe"
-
-/** Return the ralphe tracer. Returns a no-op tracer when OTel is not configured. */
-export const getTracer = (): Tracer => trace.getTracer(TRACER_NAME)
-
-// ---------------------------------------------------------------------------
-// Effect integration
+// Effect tracing layer
 // ---------------------------------------------------------------------------
 
 /**
- * FiberRef carrying the current OpenTelemetry context through the Effect
- * fiber. This lets nested withSpan() calls discover their parent span
- * without relying on an AsyncLocalStorage-based OTel context manager.
- */
-const OtelContextRef: FiberRef.FiberRef<OtelContext> =
-  FiberRef.unsafeMake<OtelContext>(ROOT_CONTEXT)
-
-/**
- * Wrap an Effect in an OpenTelemetry span.
+ * Effect Layer that bridges Effect.withSpan → global OTel tracer provider.
+ * When initTelemetry() has set up an Axiom exporter, spans flow to Axiom.
+ * When unconfigured, the global OTel no-op tracer is used (zero-cost).
  *
- * Creates a span as a child of the current active context (carried via
- * FiberRef), makes the new span the active context for the wrapped Effect,
- * records errors on the span if the effect fails, and ends the span when
- * the effect completes.
- *
- * If the tracer is a no-op (unconfigured), this is effectively zero-cost.
+ * Uses @effect/opentelemetry's Tracer.layerGlobal to read from the global
+ * OTel provider, avoiding scope-managed provider lifecycle that would clear
+ * in-memory exporters during testing.
  */
-export const withSpan = <A, E, R>(
-  name: string,
-  attributes: Record<string, string | number | boolean> | undefined,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> =>
-  Effect.gen(function* () {
-    const tracer = getTracer()
-    const parentCtx = yield* FiberRef.get(OtelContextRef)
-    let span: Span | undefined
-
-    try {
-      span = tracer.startSpan(name, attributes ? { attributes } : undefined, parentCtx)
-    } catch {
-      // If span creation fails, run the effect without tracing
-      return yield* effect
-    }
-
-    const childCtx = trace.setSpan(parentCtx, span)
-
-    const result = yield* effect.pipe(
-      Effect.locally(OtelContextRef, childCtx),
-      Effect.tapError((err) =>
-        Effect.sync(() => {
-          try {
-            span!.setStatus({ code: SpanStatusCode.ERROR, message: String(err) })
-          } catch {
-            // ignore span update failures
-          }
-        }),
-      ),
-      Effect.onExit((exit) =>
-        Effect.sync(() => {
-          try {
-            if (exit._tag === "Failure") {
-              span!.setStatus({ code: SpanStatusCode.ERROR })
-            }
-            span!.end()
-          } catch {
-            // ignore span end failures
-          }
-        }),
-      ),
-    )
-
-    return result
-  })
+export const TracingLive: Layer.Layer<never> = EffectTracer.layerGlobal.pipe(
+  Layer.provide(EffectResource.layer({ serviceName: "ralphe" })),
+) as Layer.Layer<never>
 
 // ---------------------------------------------------------------------------
 // Testing helpers
