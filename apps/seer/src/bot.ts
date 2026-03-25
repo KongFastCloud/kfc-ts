@@ -5,10 +5,10 @@
  * and an in-memory state adapter. Event handlers bridge incoming
  * messages into the Effect-based chat layer for Mastra agent execution.
  *
- * This module replaces the hand-rolled Google Chat webhook parser
- * that previously lived in adapters/google-chat.ts. The SDK handles
- * payload parsing, event dispatch, thread subscription, and per-thread
- * locking — seer only needs to provide the message→reply logic.
+ * The SDK handles payload parsing, event dispatch, thread subscription,
+ * and per-thread serialization — seer only provides the message→reply logic.
+ * User identity is qualified via identity.ts helpers for consistent
+ * platform-scoped Mastra memory isolation.
  *
  * Webhook routing:
  *   handler.ts delegates POST /google-chat/webhook → bot.webhooks.gchat
@@ -26,6 +26,7 @@ import type { Thread, Message } from "chat"
 
 import { generateReply } from "./chat.ts"
 import { runtime } from "./runtime.ts"
+import { qualifyUserId } from "./identity.ts"
 import { log } from "./log.ts"
 
 const PLATFORM = "gchat" as const
@@ -60,7 +61,7 @@ async function handleIncomingMessage(
   }
 
   const threadId = thread.id
-  const userId = `${PLATFORM}:${message.author.userId}`
+  const userId = qualifyUserId(PLATFORM, message.author.userId).qualified
 
   log("google-chat: message", {
     threadId,

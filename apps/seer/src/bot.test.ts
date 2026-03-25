@@ -13,6 +13,7 @@
 import { describe, it, mock } from "node:test"
 import assert from "node:assert/strict"
 import { Effect, Exit } from "effect"
+import { qualifyUserId } from "./identity.ts"
 
 // ── Mock types ──────────────────────────────────────────────────
 
@@ -84,7 +85,7 @@ async function simulateHandleMessage(
   }
 
   const threadId = thread.id
-  const userId = `${PLATFORM}:${message.author.userId}`
+  const userId = qualifyUserId(PLATFORM, message.author.userId).qualified
 
   const program = generateReply({ threadId, userId, text })
   const exit = await Effect.runPromiseExit(program)
@@ -164,10 +165,12 @@ describe("Bot message handler", () => {
     assert.equal(thread.subscribe.mock.callCount(), 1)
   })
 
-  it("qualifies userId with gchat platform prefix", () => {
+  it("qualifies userId with gchat platform prefix via identity helper", () => {
     const message = makeMockMessage({ userId: "users/998877" })
-    const qualified = `${PLATFORM}:${message.author.userId}`
-    assert.equal(qualified, "gchat:users/998877")
+    const qualified = qualifyUserId(PLATFORM, message.author.userId)
+    assert.equal(qualified.qualified, "gchat:users/998877")
+    assert.equal(qualified.platform, "gchat")
+    assert.equal(qualified.raw, "users/998877")
   })
 
   it("uses thread.id directly as threadId (already SDK-qualified)", () => {
