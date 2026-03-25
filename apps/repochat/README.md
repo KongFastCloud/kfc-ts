@@ -20,6 +20,18 @@ Chat-first codebase exploration service that runs in the same Coder instance as 
 - `GET /health`
 - `POST /google-chat/webhook`
 
+## Setup
+
+Repochat is an HTTP service, not a browser UI. The local URL is for the running server inside your workspace. Chat platforms such as Google Chat should call the externally reachable HTTPS version of the webhook endpoint.
+
+Typical setup flow:
+
+1. Copy env and fill in secrets.
+2. Start `repochat` in the workspace.
+3. Expose the server through your Coder workspace URL, tunnel, or reverse proxy.
+4. Configure Google Chat to send interaction events to the HTTPS webhook URL.
+5. Add the Chat app to a space and test it.
+
 ## Architecture
 
 - `src/index.ts`
@@ -129,6 +141,25 @@ Optional for GlitchTip MCP:
 
 If the GlitchTip vars are missing, repochat still starts and serves normal codebase chat without error-inspection tools.
 
+You will also likely want to decide on:
+
+- the external HTTPS base URL that Google Chat can reach
+- the repo path that repochat should treat as its working checkout
+- the tracked branch repochat should sync and reindex
+- the codemogger index db path if you do not want the default location
+
+Repository grounding env:
+
+- `REPOCHAT_REPO_ROOT`
+  - absolute path to the repo checkout repochat should read and index
+  - defaults to the current working directory
+- `REPOCHAT_TRACKED_BRANCH`
+  - branch repochat should sync and watch for reindexing
+  - defaults to `main`
+- `CODEMOGGER_DB_PATH`
+  - optional custom path for the codemogger SQLite db
+  - if unset, codemogger uses its default project-local location
+
 ## Run
 
 ```bash
@@ -146,6 +177,105 @@ Default local URL:
 ```text
 http://localhost:4320
 ```
+
+Example health check:
+
+```bash
+curl http://localhost:4320/health
+```
+
+Expected response:
+
+```json
+{
+  "ok": true,
+  "service": "repochat"
+}
+```
+
+## Google Chat Setup
+
+Repochat is implemented as an interactive Google Chat app backed by an HTTP endpoint.
+
+High-level steps:
+
+1. Create a dedicated Google Cloud project for the Chat app.
+2. Configure the OAuth consent screen if your organization requires it.
+3. Enable the Google Chat API.
+4. Configure the Chat app in the Google Chat API settings.
+5. Point the app at your external HTTPS webhook URL.
+6. Restrict visibility while testing.
+7. Add the app to a Chat space or direct message and verify replies.
+
+### 1. Run repochat and expose it over HTTPS
+
+Start the service locally in the workspace:
+
+```bash
+pnpm --filter repochat start
+```
+
+Example with explicit repo grounding config:
+
+```bash
+REPOCHAT_REPO_ROOT=/absolute/path/to/repo \
+REPOCHAT_TRACKED_BRANCH=main \
+pnpm --filter repochat start
+```
+
+Then expose it through your workspace URL, tunnel, or reverse proxy.
+
+Google Chat requires an HTTPS endpoint for interactive HTTP apps, so the URL you configure in Google Cloud should look like:
+
+```text
+https://<your-public-base-url>/google-chat/webhook
+```
+
+### 2. Create and configure the Google Chat app
+
+In Google Cloud:
+
+1. Create a Google Cloud project for the Chat app.
+2. Enable the Google Chat API.
+3. Open the Chat API configuration page.
+4. Set the app display name, avatar, and description.
+5. Under interactive features:
+   - enable messaging functionality
+   - enable joining spaces and group conversations if you want the bot to be addable to spaces
+6. Under connection settings:
+   - choose `HTTP endpoint URL`
+   - enter your external HTTPS endpoint:
+     - `https://<your-public-base-url>/google-chat/webhook`
+7. While testing, set visibility to only yourself or a small test group.
+8. Save the configuration.
+
+### 3. Add the app in Google Chat
+
+Once configured:
+
+1. Open Google Chat.
+2. Add the app to a direct message or space.
+3. Send a message to the app or @mention it in a space.
+4. Verify that repochat logs the request and responds.
+
+Repochat currently handles:
+
+- `MESSAGE`
+- `ADDED_TO_SPACE`
+- `REMOVED_FROM_SPACE`
+
+### 4. Operational notes
+
+- Google Chat can retry delivery when your endpoint times out, fails, or returns a non-2xx status.
+- Synchronous responses should return quickly.
+- Repochat currently returns a direct JSON response rather than posting asynchronous follow-up messages through the Chat API.
+- If you later add asynchronous Chat API calls, you may need app authentication or additional Google auth setup. The current synchronous interaction-response path does not require separate Google auth inside repochat.
+
+Official references:
+
+- [Receive and respond to interaction events](https://developers.google.com/workspace/chat/receive-respond-interactions)
+- [Configure the Google Chat API](https://developers.google.com/workspace/chat/configure-chat-api)
+- [Authenticate and authorize Chat apps and Google Chat API requests](https://developers.google.com/workspace/chat/authenticate-authorize)
 
 ## Tests
 
