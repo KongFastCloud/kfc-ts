@@ -54,7 +54,9 @@ Run `ralphe config` from the repository root to configure repo-level settings fo
 ralphe config
 ```
 
-The wizard reads the root `package.json` and lets you select from the root-level scripts it finds there. In a monorepo, this means `ralphe` verifies changes using the same root commands you already trust for repo-wide health, such as Turbo-powered `lint`, `typecheck`, and `test`.
+The wizard reads the root `package.json` and shows **all** root-level scripts as selectable check options. In a monorepo, this means `ralphe` verifies changes using the same root commands you already trust for repo-wide health, such as Turbo-powered `lint`, `typecheck`, and `test`.
+
+Verification-oriented scripts (`typecheck`, `lint`, `test`) are enabled by default. All other root scripts are visible in the wizard but disabled by default, so you opt in explicitly. Nested workspace or package-level scripts are not discovered — only the root `package.json` is used.
 
 ```json
 {

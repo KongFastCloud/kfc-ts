@@ -35,26 +35,41 @@ function detectPackageManager(workDir: string): string {
   return "npm"
 }
 
+/**
+ * Scripts that are enabled by default in the config wizard.
+ * These are common verification-oriented scripts that are safe to run
+ * as post-agent checks. All other root scripts are shown but disabled
+ * by default so maintainers opt in explicitly.
+ */
+const DEFAULT_ENABLED_SCRIPTS = new Set(["typecheck", "lint", "test"])
+
+/**
+ * Render a package.json script name into a runnable shell command
+ * for the given package manager.
+ *
+ * Special case: bun uses `bun test` directly instead of `bun run test`.
+ */
+function renderCommand(scriptName: string, pm: string, runPrefix: string): string {
+  if (scriptName === "test" && pm === "bun") {
+    return "bun test"
+  }
+  return `${runPrefix} ${scriptName}`
+}
+
 function detectNodeProject(workDir: string, packageJsonPath: string): DetectedProject {
   const pm = detectPackageManager(workDir)
-  const run = pm === "npm" ? "npm run" : `${pm} run`
+  const runPrefix = pm === "npm" ? "npm run" : `${pm} run`
   const checks: DetectedCheck[] = []
 
   try {
     const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"))
     const scripts = pkg.scripts || {}
 
-    if (scripts.typecheck) {
-      checks.push({ command: `${run} typecheck`, enabledByDefault: true })
-    }
-    if (scripts.lint) {
-      checks.push({ command: `${run} lint`, enabledByDefault: true })
-    }
-    if (scripts.test) {
-      checks.push({ command: pm === "bun" ? "bun test" : `${run} test`, enabledByDefault: true })
-    }
-    if (scripts.build) {
-      checks.push({ command: `${run} build`, enabledByDefault: false })
+    for (const name of Object.keys(scripts)) {
+      checks.push({
+        command: renderCommand(name, pm, runPrefix),
+        enabledByDefault: DEFAULT_ENABLED_SCRIPTS.has(name),
+      })
     }
   } catch {
     // ignore parse errors
