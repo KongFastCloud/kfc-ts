@@ -2,7 +2,7 @@
 
 Chat-first codebase exploration service that runs in the same Coder instance as the repository.
 
-`seer` currently exposes a Google Chat webhook, routes incoming messages through an Effect-based boundary, and answers with a Mastra-backed agent using Vercel AI Gateway. GlitchTip MCP tools are loaded at startup when the required environment variables are present.
+`seer` currently exposes a Google Chat webhook backed by the Vercel Chat SDK (`chat`), routes incoming messages through an Effect-based boundary, and answers with a Mastra-backed agent using Vercel AI Gateway. The SDK owns payload parsing, event dispatch, and per-thread serialization. GlitchTip MCP tools are loaded at startup when the required environment variables are present.
 
 ## What It Does
 
@@ -37,21 +37,21 @@ Typical setup flow:
 - `src/index.ts`
   - boots the HTTP server and loads env from `.env.local` or `.env`
 - `src/handler.ts`
-  - routes HTTP requests to health or adapter handlers
-- `src/adapters/google-chat.ts`
-  - parses Google Chat events and turns them into chat requests
+  - routes HTTP requests to health, SDK webhook, or branch-update handlers
+- `src/bot.ts`
+  - Chat SDK instance and event handlers; bridges Google Chat into the Effect/Mastra pipeline
 - `src/chat.ts`
   - Effect boundary around the Mastra agent call
 - `src/agent.ts`
   - seer-specific Mastra agent composition and prompt
+- `src/identity.ts`
+  - platform-qualified thread and user id helpers
 - `src/memory.ts`
   - Mastra memory configuration
 - `src/mcp.ts`
   - optional GlitchTip MCP client creation
 - `src/runtime.ts`
   - shared Effect runtime and startup-time tool binding
-- `src/state.ts`
-  - in-memory per-thread lock for local single-instance use
 
 ## Memory Storage
 
@@ -71,7 +71,7 @@ Seer uses local LibSQL for durable memory persistence. Both thread message histo
 |------|-------|-------------------|
 | Thread message history | Per-thread (last 20 messages) | Yes |
 | Working memory (user context) | Per-resource (cross-thread) | Yes |
-| Thread locks | In-memory only | No |
+| Thread serialization | Managed by Chat SDK (in-memory) | No |
 
 ### Configuration
 
@@ -292,11 +292,11 @@ pnpm --filter seer typecheck
 - Google Chat is the only adapter currently wired
 - Replies are final-answer only
 - Card-based Google Chat responses are not implemented
-- Thread locking is in-memory and single-process
+- Per-thread serialization is handled by the Chat SDK (in-memory, single-process)
 - GlitchTip is read-only and user-invoked through the agent prompt/tools
 
 ## Notes
 
 - Repo facts should come from codebase access and tools, not working memory
 - Working memory is reserved for user context and conversational continuity
-- The current state layer is suitable for one local process; replace it before multi-instance deployment
+- The Chat SDK's in-memory state adapter is suitable for one local process; replace it before multi-instance deployment
