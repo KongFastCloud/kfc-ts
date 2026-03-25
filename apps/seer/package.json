@@ -7,7 +7,7 @@
     "dev": "node --watch --experimental-strip-types src/index.ts",
     "start": "node --experimental-strip-types src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/*.test.ts src/tools/*.test.ts",
+    "test": "node --experimental-strip-types --test src/*.test.ts src/tools/*.test.ts src/startup/*.test.ts",
     "test:integration": "node --experimental-strip-types --experimental-test-module-mocks --test src/adapters/*.test.ts",
     "test:memory": "node --experimental-strip-types --test src/memory.integration.test.ts"
   },
