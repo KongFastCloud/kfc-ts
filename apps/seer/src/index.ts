@@ -21,17 +21,22 @@ import dotenv from "dotenv"
 
 import { Effect, Fiber, Logger } from "effect"
 
-import { handler } from "./handler.ts"
-import { log } from "./log.ts"
-import { reindexWorkerLoop } from "./reindex-worker.ts"
-import { runStartupTasks } from "./startup/index.ts"
-
+// ── Load .env files BEFORE any app modules that read process.env ──
+// Static imports are hoisted above module-level code, so app modules
+// that construct env-sensitive objects (e.g. the Google Chat adapter)
+// must be dynamically imported after dotenv has populated process.env.
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const appRoot = path.resolve(__dirname, "..")
 
 dotenv.config({ path: path.join(appRoot, ".env.local"), quiet: true })
 dotenv.config({ path: path.join(appRoot, ".env"), quiet: true })
+
+// ── App modules (env is now available) ──
+const { handler } = await import("./handler.ts")
+const { log } = await import("./log.ts")
+const { reindexWorkerLoop } = await import("./reindex-worker.ts")
+const { runStartupTasks } = await import("./startup/index.ts")
 
 const port = Number(process.env.PORT ?? "4320")
 
