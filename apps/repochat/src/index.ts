@@ -21,6 +21,7 @@ import dotenv from "dotenv"
 
 import { handler } from "./handler.ts"
 import { log } from "./log.ts"
+import { runStartupTasks } from "./startup/index.ts"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -52,6 +53,11 @@ const server = http.createServer(async (req, res) => {
   const body = Buffer.from(await response.arrayBuffer())
   res.end(body)
 })
+
+// ── Best-effort startup tasks (sync + reindex) ──
+// Attempted before the server begins serving traffic.
+// Failures are logged; the server starts regardless.
+await runStartupTasks()
 
 server.listen(port, () => {
   log(`listening on http://localhost:${port}`)
