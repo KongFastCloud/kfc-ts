@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { AgentError, PayloadError } from "./errors.ts"
+import { AgentError, ConfigurationError, PayloadError } from "./errors.ts"
 
 describe("AgentError", () => {
   it("creates a tagged error with message", () => {
@@ -21,5 +21,14 @@ describe("PayloadError", () => {
     const err = new PayloadError({ message: "missing field" })
     assert.equal(err._tag, "PayloadError")
     assert.equal(err.message, "missing field")
+  })
+})
+
+describe("ConfigurationError", () => {
+  it("creates an error with the given message", () => {
+    const err = new ConfigurationError("missing auth")
+    assert.equal(err.message, "missing auth")
+    assert.equal(err.name, "ConfigurationError")
+    assert(err instanceof Error)
   })
 })

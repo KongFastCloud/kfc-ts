@@ -27,16 +27,43 @@ import type { Thread, Message } from "chat"
 import { generateReply } from "./chat.ts"
 import { runtime } from "./runtime.ts"
 import { qualifyUserId } from "./identity.ts"
+import { validateGoogleChatAuth } from "./config.ts"
+import { ConfigurationError } from "./errors.ts"
 import { log } from "./log.ts"
 
 const PLATFORM = "gchat" as const
 
+// ── Google Chat auth validation ─────────────────────────────────
+// Validate before the adapter tries to initialise so operators get
+// an actionable app-level message instead of a raw SDK exception.
+
+validateGoogleChatAuth()
+
 // ── Chat SDK instance ───────────────────────────────────────────
+
+let adapter: ReturnType<typeof createGoogleChatAdapter>
+try {
+  adapter = createGoogleChatAdapter()
+} catch (error: unknown) {
+  // If the SDK still throws (e.g. credentials JSON is malformed),
+  // wrap it with guidance so the failure stays actionable.
+  if (error instanceof ConfigurationError) throw error
+  throw new ConfigurationError(
+    [
+      "Google Chat adapter failed to initialise.",
+      "",
+      `Underlying error: ${error instanceof Error ? error.message : String(error)}`,
+      "",
+      "Check that your Google Chat auth environment variables are valid.",
+      "See apps/seer/README.md § \"Google Chat Setup\" and .env.example for details.",
+    ].join("\n"),
+  )
+}
 
 export const bot = new Chat({
   userName: "seer",
   adapters: {
-    gchat: createGoogleChatAdapter(),
+    gchat: adapter,
   },
   state: createMemoryState(),
   logger: "warn",

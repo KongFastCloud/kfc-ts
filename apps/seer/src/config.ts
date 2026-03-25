@@ -11,6 +11,8 @@
  * between calls.
  */
 
+import { ConfigurationError } from "./errors.ts"
+
 /**
  * Branch to sync the bot-owned checkout to on startup.
  *
@@ -37,4 +39,40 @@ export function repoRoot(): string {
  */
 export function codemoggerDbPath(): string | undefined {
   return process.env.CODEMOGGER_DB_PATH
+}
+
+/**
+ * Validate that Google Chat adapter auth is configured.
+ *
+ * The adapter requires one of:
+ *   - `GOOGLE_CHAT_CREDENTIALS` — service account JSON string
+ *   - `GOOGLE_CHAT_USE_ADC=true` — Application Default Credentials
+ *
+ * Throws a {@link ConfigurationError} with actionable guidance when
+ * neither is set. Call before constructing the adapter so operators
+ * see a clear app-level message instead of a raw SDK exception.
+ */
+export function validateGoogleChatAuth(): void {
+  const hasCredentials = !!process.env.GOOGLE_CHAT_CREDENTIALS
+  const hasAdc =
+    process.env.GOOGLE_CHAT_USE_ADC?.toLowerCase() === "true"
+
+  if (hasCredentials || hasAdc) return
+
+  throw new ConfigurationError(
+    [
+      "Google Chat authentication is not configured.",
+      "",
+      "Seer requires one of the following environment variables to be set:",
+      "",
+      "  Option A — Service account credentials (workspace / CI):",
+      '    GOOGLE_CHAT_CREDENTIALS=\'{"type":"service_account","project_id":"...","client_email":"...","private_key":"..."}\'',
+      "",
+      "  Option B — Application Default Credentials (local development):",
+      "    GOOGLE_CHAT_USE_ADC=true",
+      "    Then run: gcloud auth application-default login",
+      "",
+      "See apps/seer/README.md § \"Google Chat Setup\" and .env.example for details.",
+    ].join("\n"),
+  )
 }
