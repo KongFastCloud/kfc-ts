@@ -1,16 +1,16 @@
 /**
- * GlitchTip MCP client for repochat.
+ * MCP client factories for repochat.
  *
- * Builds the MCP client using the reusable GlitchTip registration from
- * @workspace/mastra/mcp. If the required environment variables are not
- * configured, client creation returns null so the agent can still
- * operate without GlitchTip — graceful degradation, not a hard failure.
+ * Builds MCP clients using the reusable server registrations from
+ * @workspace/mastra/mcp. Each factory returns null when required
+ * environment variables are missing — graceful degradation, not a
+ * hard failure.
  *
- * The client is built once at startup via the Effect Layer in runtime.ts.
+ * Clients are built once at startup via the Effect Layer in runtime.ts.
  * Tools are fetched asynchronously and bound to the agent at that point.
  */
 
-import { buildMCPClient, glitchtip, MCPConfigError } from "@workspace/mastra/mcp"
+import { buildMCPClient, glitchtip, codemogger, MCPConfigError } from "@workspace/mastra/mcp"
 
 /**
  * Attempt to build a GlitchTip MCP client from environment configuration.
@@ -31,4 +31,15 @@ export function createGlitchTipClient(): ReturnType<typeof buildMCPClient> | nul
     }
     throw err
   }
+}
+
+/**
+ * Attempt to build a codemogger MCP client from environment configuration.
+ *
+ * Codemogger has no required env vars (CODEMOGGER_DB_PATH is optional),
+ * so this always returns a client. The client may still fail at tool-fetch
+ * time if codemogger is not installed — that is handled in runtime.ts.
+ */
+export function createCodemoggerClient(): ReturnType<typeof buildMCPClient> {
+  return buildMCPClient([codemogger])
 }

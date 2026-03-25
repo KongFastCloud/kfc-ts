@@ -5,37 +5,41 @@
  * once at startup and shared across all HTTP requests. Each request
  * runs an Effect program through `runtime.runPromise(...)`.
  *
- * The agent layer is built asynchronously so MCP tools (e.g. GlitchTip)
- * can be fetched and bound before the first request is served.
- * ManagedRuntime handles this lazily — the layer is materialized on
- * the first `runPromise` call.
+ * The agent layer is built asynchronously so MCP tools (e.g. GlitchTip,
+ * codemogger) and native tools (e.g. file-read) can be fetched and
+ * bound before the first request is served. ManagedRuntime handles
+ * this lazily — the layer is materialized on the first `runPromise` call.
  */
 
 import { Effect, Layer, Logger, ManagedRuntime } from "effect"
 import type { ToolsInput } from "@mastra/core/agent"
 import { RepochatAgent, makeRepochatAgent } from "./agent.ts"
-import { createGlitchTipClient } from "./mcp.ts"
+import { createGlitchTipClient, createCodemoggerClient } from "./mcp.ts"
+import { readFileTool } from "./tools/index.ts"
 
 /**
- * Layer that provides the RepochatAgent service.
+ * Attempt to load tools from an MCP client, returning null on failure.
  *
- * Attempts to load GlitchTip MCP tools and bind them to the agent.
- * If GlitchTip is not configured (missing env vars) the agent is
- * created without tools — graceful degradation.
+ * Logs a warning with the source name so operators can see which
+ * integration degraded.
  */
-const RepochatAgentLayer: Layer.Layer<RepochatAgent> = Layer.effect(
-  RepochatAgent,
-  Effect.gen(function* () {
-    const client = createGlitchTipClient()
+function loadMCPTools(
+  name: string,
+  clientFactory: () => ReturnType<typeof createGlitchTipClient>,
+) {
+  return Effect.gen(function* () {
+    const client = clientFactory()
 
     if (!client) {
-      yield* Effect.logInfo("GlitchTip MCP not configured — agent will operate without error inspection tools")
-      return makeRepochatAgent()
+      yield* Effect.logInfo(`${name} MCP not configured — skipping`)
+      return null
     }
 
-    const tools = yield* Effect.tryPromise(() => client.getTools() as Promise<ToolsInput>).pipe(
+    const tools = yield* Effect.tryPromise(
+      () => client.getTools() as Promise<ToolsInput>,
+    ).pipe(
       Effect.tapError((cause) =>
-        Effect.logWarning("Failed to load GlitchTip MCP tools, continuing without them").pipe(
+        Effect.logWarning(`Failed to load ${name} MCP tools, continuing without them`).pipe(
           Effect.annotateLogs("cause", cause instanceof Error ? cause.message : String(cause)),
         ),
       ),
@@ -43,11 +47,44 @@ const RepochatAgentLayer: Layer.Layer<RepochatAgent> = Layer.effect(
     )
 
     if (tools) {
-      yield* Effect.logInfo("GlitchTip MCP tools loaded successfully")
-      return makeRepochatAgent(tools)
+      yield* Effect.logInfo(`${name} MCP tools loaded successfully`)
     }
 
-    return makeRepochatAgent()
+    return tools
+  })
+}
+
+/**
+ * Layer that provides the RepochatAgent service.
+ *
+ * Attempts to load all available tool sources:
+ *   - Codemogger MCP — semantic and keyword code search (grounding)
+ *   - GlitchTip MCP  — production error inspection (optional)
+ *   - Native tools    — direct file-read for source verification
+ *
+ * Missing or failed integrations degrade gracefully — the agent is
+ * always created, with whatever tools were successfully loaded.
+ */
+const RepochatAgentLayer: Layer.Layer<RepochatAgent> = Layer.effect(
+  RepochatAgent,
+  Effect.gen(function* () {
+    const glitchtipTools = yield* loadMCPTools("GlitchTip", createGlitchTipClient)
+    const codemoggerTools = yield* loadMCPTools("Codemogger", createCodemoggerClient)
+
+    // Merge all available tools into a single map
+    const allTools: ToolsInput = {
+      ...(codemoggerTools ?? {}),
+      ...(glitchtipTools ?? {}),
+      // Native tools — always available
+      read_file: readFileTool as unknown as ToolsInput[string],
+    }
+
+    const toolCount = Object.keys(allTools).length
+    yield* Effect.logInfo(`Agent created with ${toolCount} tool(s)`).pipe(
+      Effect.annotateLogs("tools", Object.keys(allTools).join(", ")),
+    )
+
+    return makeRepochatAgent(allTools)
   }),
 )
 

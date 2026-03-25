@@ -6,3 +6,4 @@ export {
   type MCPRegistryOptions,
 } from "./registry.ts";
 export { glitchtip } from "./glitchtip.ts";
+export { codemogger } from "./codemogger.ts";

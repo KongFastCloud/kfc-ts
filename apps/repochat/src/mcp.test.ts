@@ -4,11 +4,14 @@
  * Verifies that createGlitchTipClient handles missing env vars
  * gracefully (returns null), re-throws unexpected errors, and
  * validates the full failure-path contract.
+ *
+ * Also verifies that createCodemoggerClient always returns a client
+ * since codemogger has no required env vars.
  */
 
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { createGlitchTipClient } from "./mcp.ts"
+import { createGlitchTipClient, createCodemoggerClient } from "./mcp.ts"
 
 describe("createGlitchTipClient", () => {
   it("returns null when GlitchTip env vars are not configured", () => {
@@ -80,5 +83,18 @@ describe("createGlitchTipClient", () => {
     const second = createGlitchTipClient()
     assert.equal(first, null)
     assert.equal(second, null)
+  })
+})
+
+describe("createCodemoggerClient", () => {
+  it("always returns a client (no required env vars)", async () => {
+    const client = createCodemoggerClient()
+    try {
+      assert.ok(client, "should always return a client")
+      assert.equal(typeof client.getTools, "function", "client should have getTools method")
+    } finally {
+      // MCPClient tracks instances — disconnect to allow re-creation in other tests
+      await client.disconnect()
+    }
   })
 })
