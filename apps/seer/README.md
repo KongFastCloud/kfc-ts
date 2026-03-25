@@ -124,6 +124,11 @@ cp .env.example .env.local
 Required for basic chat:
 
 - `AI_GATEWAY_API_KEY`
+- **Google Chat adapter auth** — one of the following must be set:
+  - `GOOGLE_CHAT_CREDENTIALS` — JSON string containing a Google Cloud service account key (must include `client_email` and `private_key`). Recommended for workspace deployments.
+  - `GOOGLE_CHAT_USE_ADC=true` — use Application Default Credentials instead. Recommended for local development with `gcloud auth application-default login`. Also works with Workload Identity Federation and GCE/Cloud Run default service accounts.
+
+If neither is set, seer fails at startup with a `ValidationError` from the Chat SDK adapter. `AI_GATEWAY_API_KEY` alone is not sufficient — the Google Chat adapter requires its own authentication to handle webhook events.
 
 Optional with defaults:
 
@@ -270,6 +275,42 @@ Seer currently handles:
 - Synchronous responses should return quickly.
 - Seer currently returns a direct JSON response rather than posting asynchronous follow-up messages through the Chat API.
 - If you later add asynchronous Chat API calls, you may need app authentication or additional Google auth setup. The current synchronous interaction-response path does not require separate Google auth inside seer.
+
+### Authentication
+
+The Google Chat adapter requires authentication to be configured before seer can start. Without it, `createGoogleChatAdapter()` throws a `ValidationError` at module load time and the process exits.
+
+**Option A: Service account credentials (workspace / CI)**
+
+Set `GOOGLE_CHAT_CREDENTIALS` to the full JSON string of a Google Cloud service account key. The service account needs the Chat Bot role or equivalent scopes (`chat.bot`, `chat.messages.readonly`).
+
+```bash
+GOOGLE_CHAT_CREDENTIALS='{"type":"service_account","project_id":"...","client_email":"...","private_key":"..."}'
+```
+
+**Option B: Application Default Credentials (local development)**
+
+Set `GOOGLE_CHAT_USE_ADC=true` and ensure ADC is available. For local development, the simplest path is:
+
+```bash
+gcloud auth application-default login
+```
+
+Then in `.env.local`:
+
+```bash
+GOOGLE_CHAT_USE_ADC=true
+```
+
+ADC also works with `GOOGLE_APPLICATION_CREDENTIALS` pointing to a key file, Workload Identity Federation, and GCE/Cloud Run default service accounts.
+
+**Which should I use?**
+
+| Environment | Recommended path |
+|---|---|
+| Local development | `GOOGLE_CHAT_USE_ADC=true` + `gcloud auth application-default login` |
+| Workspace / Coder | `GOOGLE_CHAT_CREDENTIALS` with a service account key |
+| GCE / Cloud Run | `GOOGLE_CHAT_USE_ADC=true` (uses attached service account) |
 
 Official references:
 
