@@ -68,7 +68,7 @@ Create a shared agent with app-specific instructions:
 import { createAgent } from "@workspace/mastra/agent-factory"
 
 const agent = createAgent({
-  name: "repochat",
+  name: "seer",
   instructions: "You are a codebase exploration assistant.",
 })
 ```
@@ -128,7 +128,7 @@ Do not keep in this package:
 - product-specific tool invocation rules
 - adapter-specific chat behavior
 
-Those belong in the consuming app, such as `apps/repochat`.
+Those belong in the consuming app, such as `apps/seer`.
 
 ## Tests
 

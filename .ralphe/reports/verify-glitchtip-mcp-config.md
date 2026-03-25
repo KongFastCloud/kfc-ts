@@ -28,7 +28,7 @@ The GlitchTip MCP integration has been correctly implemented as a reusable infra
 
 ### 4. Required GlitchTip env vars are documented in .env.example — PASS
 
-- `apps/repochat/.env.example` contains a dedicated GlitchTip section documenting all three variables with descriptions and required/optional annotations.
+- `apps/seer/.env.example` contains a dedicated GlitchTip section documenting all three variables with descriptions and required/optional annotations.
 - Note: The file is named `.env.example` (not `.env.local.example`), which is the standard convention. It instructs users to `cp .env.example .env.local`.
 
 ### 5. Infrastructure remains reusable rather than app-only — PASS

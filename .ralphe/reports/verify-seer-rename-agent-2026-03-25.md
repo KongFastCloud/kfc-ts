@@ -6,20 +6,20 @@
 
 ## Summary
 
-The rename from `repochat` to `seer` has been correctly and completely implemented across all active code paths. Zero references to `repochat` remain in the `apps/seer/` directory. All 117 tests pass and type checking is clean.
+The rename from `seer` to `seer` has been correctly and completely implemented across all active code paths. Zero references to `seer` remain in the `apps/seer/` directory. All 117 tests pass and type checking is clean.
 
 ## Acceptance Criteria Verification
 
-### ✅ Product-specific code identifiers use seer instead of repochat
+### ✅ Product-specific code identifiers use seer instead of seer
 
 | Surface | Before | After | File |
 |---------|--------|-------|------|
-| Directory | `apps/repochat/` | `apps/seer/` | filesystem |
-| Package name | `"repochat"` | `"seer"` | `package.json` |
-| Agent factory | `makeRepochatAgent()` | `makeSeerAgent()` | `src/agent.ts` |
-| Agent service tag | `RepochatAgent` | `SeerAgent` | `src/agent.ts` |
-| Runtime layer | `RepochatAgentLayer` | `SeerAgentLayer` | `src/runtime.ts` |
-| System prompt | `"You are Repochat..."` | `"You are Seer..."` | `src/agent.ts` |
+| Directory | `apps/seer/` | `apps/seer/` | filesystem |
+| Package name | `"seer"` | `"seer"` | `package.json` |
+| Agent factory | `makeSeerAgent()` | `makeSeerAgent()` | `src/agent.ts` |
+| Agent service tag | `SeerAgent` | `SeerAgent` | `src/agent.ts` |
+| Runtime layer | `SeerAgentLayer` | `SeerAgentLayer` | `src/runtime.ts` |
+| System prompt | `"You are Seer..."` | `"You are Seer..."` | `src/agent.ts` |
 
 ### ✅ Runtime labels and log prefixes use seer
 
@@ -45,17 +45,17 @@ The rename from `repochat` to `seer` has been correctly and completely implement
 
 | Before | After | File |
 |--------|-------|------|
-| `REPOCHAT_TRACKED_BRANCH` | `SEER_TRACKED_BRANCH` | `src/config.ts` |
-| `REPOCHAT_REPO_ROOT` | `SEER_REPO_ROOT` | `src/config.ts` |
-| `REPOCHAT_MEMORY_DB_URL` | `SEER_MEMORY_DB_URL` | `src/memory.ts` |
+| `SEER_TRACKED_BRANCH` | `SEER_TRACKED_BRANCH` | `src/config.ts` |
+| `SEER_REPO_ROOT` | `SEER_REPO_ROOT` | `src/config.ts` |
+| `SEER_MEMORY_DB_URL` | `SEER_MEMORY_DB_URL` | `src/memory.ts` |
 
 ## Residual References
 
-**In `apps/seer/`:** 0 references to `repochat` or `REPOCHAT` remain.
+**In `apps/seer/`:** 0 references to `seer` or `SEER` remain.
 
 **In `packages/mastra/README.md`:** 2 documentation-only references remain:
-1. Line 71: Example code snippet with `name: "repochat"`
-2. Line 131: Reference to old `apps/repochat` path
+1. Line 71: Example code snippet with `name: "seer"`
+2. Line 131: Reference to old `apps/seer` path
 
 These are in shared package documentation and are out of scope for this task per the PRD (deferred to a docs-rename slice).
 
@@ -73,7 +73,7 @@ These are in shared package documentation and are out of scope for this task per
 
 ## Git History
 
-Rename was implemented in commit `7652017` ("feat(seer): rename app identity from repochat to seer") with 47 files changed.
+Rename was implemented in commit `7652017` ("feat(seer): rename app identity from seer to seer") with 47 files changed.
 
 ## Conclusion
 

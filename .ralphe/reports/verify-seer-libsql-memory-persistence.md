@@ -1,18 +1,18 @@
-# Verification: Persist repochat thread history and working memory with LibSQL
+# Verification: Persist seer thread history and working memory with LibSQL
 
 **Date:** 2026-03-25
 **Status:** PASS
 
 ## Summary
 
-Verified that repochat's thread history and working memory are persisted using a local LibSQL-backed storage backend via Mastra Memory. All acceptance criteria are met.
+Verified that seer's thread history and working memory are persisted using a local LibSQL-backed storage backend via Mastra Memory. All acceptance criteria are met.
 
 ## Acceptance Criteria Verification
 
-### 1. Repochat uses an explicit local LibSQL-backed Mastra memory store — PASS
+### 1. Seer uses an explicit local LibSQL-backed Mastra memory store — PASS
 
-- `apps/repochat/src/memory.ts` creates a `Memory` instance with `storage` from `createLocalLibSQLStorage({ url: MEMORY_DB_URL })`
-- `MEMORY_DB_URL` defaults to `file:./data/memory.db`, overridable via `REPOCHAT_MEMORY_DB_URL` env var
+- `apps/seer/src/memory.ts` creates a `Memory` instance with `storage` from `createLocalLibSQLStorage({ url: MEMORY_DB_URL })`
+- `MEMORY_DB_URL` defaults to `file:./data/memory.db`, overridable via `SEER_MEMORY_DB_URL` env var
 - The storage factory (`packages/mastra/src/storage/libsql.ts`) enforces `file:` URLs only, rejecting remote/in-memory URLs
 - Parent directory is auto-created via `mkdirSync` with `{ recursive: true }`
 
@@ -30,21 +30,21 @@ Verified that repochat's thread history and working memory are persisted using a
 
 ### 4. Platform-qualified thread and resource identity behavior remains unchanged — PASS
 
-- `apps/repochat/src/identity.ts` provides `qualifyThreadId()` and `qualifyUserId()` with format `<platform>:<raw-id>`
+- `apps/seer/src/identity.ts` provides `qualifyThreadId()` and `qualifyUserId()` with format `<platform>:<raw-id>`
 - Supports `gchat` and `discord` platforms
 - Cross-platform isolation is natural: `gchat:users/123` ≠ `discord:users/123`
 - 8 identity tests pass confirming isolation semantics
 
-### 5. Repochat-specific memory composition remains in the app layer — PASS
+### 5. Seer-specific memory composition remains in the app layer — PASS
 
-- Memory config, working memory template, and storage wiring are all in `apps/repochat/src/memory.ts`
+- Memory config, working memory template, and storage wiring are all in `apps/seer/src/memory.ts`
 - The shared package (`@workspace/mastra`) only provides the generic `createLocalLibSQLStorage` factory
-- Agent composition in `apps/repochat/src/agent.ts` imports memory from the app layer
+- Agent composition in `apps/seer/src/agent.ts` imports memory from the app layer
 - No memory policy exists in the shared package
 
 ## Test Results
 
-- **repochat tests:** 51 passed, 0 failed (across 13 suites)
+- **seer tests:** 51 passed, 0 failed (across 13 suites)
   - Memory config shape validation (6 tests)
   - Memory scoping semantics (4 tests)
   - Cross-platform isolation (2 tests)
@@ -56,7 +56,7 @@ Verified that repochat's thread history and working memory are persisted using a
   - Memory instance existence (1 test)
 - **@workspace/mastra tests:** 57 passed, 0 failed (across 8 suites)
   - LibSQL storage factory (6 tests)
-- **Typecheck:** Clean for both repochat and @workspace/mastra
+- **Typecheck:** Clean for both seer and @workspace/mastra
 
 ## Architecture Summary
 
@@ -73,8 +73,8 @@ Google Chat Adapter
 
 | File | Role |
 |------|------|
-| `apps/repochat/src/memory.ts` | Memory config + LibSQL storage wiring |
-| `apps/repochat/src/agent.ts` | Agent composition with memory |
-| `apps/repochat/src/chat.ts` | Chat bridge passing thread/resource IDs |
-| `apps/repochat/src/identity.ts` | Platform-qualified ID helpers |
+| `apps/seer/src/memory.ts` | Memory config + LibSQL storage wiring |
+| `apps/seer/src/agent.ts` | Agent composition with memory |
+| `apps/seer/src/chat.ts` | Chat bridge passing thread/resource IDs |
+| `apps/seer/src/identity.ts` | Platform-qualified ID helpers |
 | `packages/mastra/src/storage/libsql.ts` | Generic LibSQL storage factory |

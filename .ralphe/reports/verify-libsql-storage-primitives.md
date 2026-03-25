@@ -22,7 +22,7 @@ All acceptance criteria are met. The implementation provides a clean, reusable l
 
 - `LocalLibSQLStorageConfig` interface requires an explicit `url` field
 - Must start with `file:` prefix (enforced at runtime with clear error messages)
-- Repochat configures via `REPOCHAT_MEMORY_DB_URL` env var with sensible default (`file:./data/memory.db`)
+- Seer configures via `SEER_MEMORY_DB_URL` env var with sensible default (`file:./data/memory.db`)
 - `.env.example` documents the configuration option
 
 ### 3. The storage remains local to the same workspace environment
@@ -36,14 +36,14 @@ All acceptance criteria are met. The implementation provides a clean, reusable l
 **PASS**
 
 - Shared layer (`packages/mastra/src/storage/libsql.ts`) contains ONLY the generic storage factory
-- Memory policy (lastMessages: 20, workingMemory config, semantic recall: false) lives in `apps/repochat/src/memory.ts`
-- Working memory template is repochat-specific and stays in the app layer
-- Identity model (platform-qualified IDs) is repochat-specific and stays in the app layer
+- Memory policy (lastMessages: 20, workingMemory config, semantic recall: false) lives in `apps/seer/src/memory.ts`
+- Working memory template is seer-specific and stays in the app layer
+- Identity model (platform-qualified IDs) is seer-specific and stays in the app layer
 
-### 5. The shared storage boundary is reusable by consumers such as repochat
+### 5. The shared storage boundary is reusable by consumers such as seer
 **PASS**
 
-- Repochat imports and uses `createLocalLibSQLStorage` from `@workspace/mastra/storage/libsql`
+- Seer imports and uses `createLocalLibSQLStorage` from `@workspace/mastra/storage/libsql`
 - Any other app in the monorepo can import the same factory
 - The factory has no app-specific dependencies or assumptions
 
@@ -59,12 +59,12 @@ All acceptance criteria are met. The implementation provides a clean, reusable l
   - Rejection of `https://` URLs
   - Rejection of `:memory:` URLs
 
-### Repochat Memory Tests (node:test)
+### Seer Memory Tests (node:test)
 - `src/memory.test.ts` covers memory config shape, scoping semantics, cross-platform isolation, and template content
 
 ### Type Checking
 - `@workspace/mastra` typecheck: PASS (no errors)
-- `apps/repochat` typecheck: PASS (no errors)
+- `apps/seer` typecheck: PASS (no errors)
 
 ### Runtime Verification
 - Direct execution of `createLocalLibSQLStorage` with `file:` URL: creates valid store object
@@ -78,6 +78,6 @@ All acceptance criteria are met. The implementation provides a clean, reusable l
 | `packages/mastra/src/storage/libsql.ts` | Reusable storage factory + config interface |
 | `packages/mastra/src/storage/libsql.test.ts` | Unit tests for factory |
 | `packages/mastra/package.json` | Exports `./storage/libsql` entry point |
-| `apps/repochat/src/memory.ts` | App-specific memory wiring using the factory |
-| `apps/repochat/src/memory.test.ts` | Memory config + identity scoping tests |
-| `apps/repochat/.env.example` | Documents `REPOCHAT_MEMORY_DB_URL` env var |
+| `apps/seer/src/memory.ts` | App-specific memory wiring using the factory |
+| `apps/seer/src/memory.test.ts` | Memory config + identity scoping tests |
+| `apps/seer/.env.example` | Documents `SEER_MEMORY_DB_URL` env var |

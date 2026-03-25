@@ -1,7 +1,7 @@
-# Repochat Concurrency & Contract Tests Verification
+# Seer Concurrency & Contract Tests Verification
 
 **Date:** 2026-03-24
-**Task:** Harden repochat with concurrency and contract tests
+**Task:** Harden seer with concurrency and contract tests
 **Result:** PASS
 
 ## Summary

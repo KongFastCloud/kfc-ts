@@ -2,13 +2,13 @@
 
 **Date:** 2026-03-25
 **Status:** PASS
-**Test file:** `apps/repochat/src/codebase-grounding.test.ts` (844 lines, 29 tests across 6 suites)
+**Test file:** `apps/seer/src/codebase-grounding.test.ts` (844 lines, 29 tests across 6 suites)
 
 ## Test Results
 
 All 29 tests pass. Full suite runs in ~18 seconds. No failures, cancellations, or skips.
 
-Additionally, the full `repochat` test suite (109 tests across 27 suites) passes with 0 failures.
+Additionally, the full `seer` test suite (109 tests across 27 suites) passes with 0 failures.
 
 ## Acceptance Criteria Verification
 

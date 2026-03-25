@@ -1,16 +1,16 @@
-# Verification Report: Repochat Shell with Direct Google Chat Ingress
+# Verification Report: Seer Shell with Direct Google Chat Ingress
 
 **Date:** 2026-03-24
 **Status:** PASS
 
 ## Summary
 
-The repochat app/service has been correctly implemented as a new service shell at `apps/repochat/` with a direct Google Chat webhook ingress path routed through the Vercel AI Gateway. All acceptance criteria are met.
+The seer app/service has been correctly implemented as a new service shell at `apps/seer/` with a direct Google Chat webhook ingress path routed through the Vercel AI Gateway. All acceptance criteria are met.
 
 ## Acceptance Criteria Verification
 
-### 1. A new repochat app/service exists and can run in the same Coder instance as the repo
-**PASS** — The app lives at `apps/repochat/` in the monorepo, uses `pnpm` workspace references (`@workspace/mastra`), and runs via `node --experimental-strip-types src/index.ts` on port 4320 (configurable via `PORT` env var). No external infrastructure required beyond the AI Gateway API key.
+### 1. A new seer app/service exists and can run in the same Coder instance as the repo
+**PASS** — The app lives at `apps/seer/` in the monorepo, uses `pnpm` workspace references (`@workspace/mastra`), and runs via `node --experimental-strip-types src/index.ts` on port 4320 (configurable via `PORT` env var). No external infrastructure required beyond the AI Gateway API key.
 
 ### 2. Google Chat webhook requests are accepted by a direct vercel/chat endpoint
 **PASS** — `POST /google-chat/webhook` accepts Google Chat webhook payloads. The handler in `src/adapters/google-chat.ts` supports MESSAGE, ADDED_TO_SPACE, and REMOVED_FROM_SPACE event types. The chat bridge in `src/chat.ts` calls the Vercel AI SDK's `streamText()` via `@workspace/mastra/chat`, collecting the stream into a synchronous reply. No intermediate normalization layer exists — the webhook routes directly through to the AI gateway.
@@ -28,7 +28,7 @@ The identity module supports multiple platforms (`"gchat" | "discord"`) for futu
 - Integration tests mock the chat bridge and verify the full handler chain: routing, event parsing, identity mapping, error handling, thread name echoing, and argumentText extraction
 
 ### 5. No blueprints dependency exists in the main request path
-**PASS** — Grep for "blueprint" (case-insensitive) in `apps/repochat/` returns zero results. The dependency chain is: handler.ts -> google-chat.ts -> chat.ts -> @workspace/mastra/chat -> Vercel AI SDK. No blueprints involvement.
+**PASS** — Grep for "blueprint" (case-insensitive) in `apps/seer/` returns zero results. The dependency chain is: handler.ts -> google-chat.ts -> chat.ts -> @workspace/mastra/chat -> Vercel AI SDK. No blueprints involvement.
 
 ## Test Results
 
@@ -66,7 +66,7 @@ The identity module supports multiple platforms (`"gchat" | "discord"`) for futu
 
 ```
 HTTP Server (index.ts, port 4320)
-├── GET  /health              → { ok: true, service: "repochat" }
+├── GET  /health              → { ok: true, service: "seer" }
 └── POST /google-chat/webhook → Google Chat adapter
     ├── Event parsing & validation
     ├── Platform-qualified ID generation (identity.ts)

@@ -1,16 +1,16 @@
-# Verification Report: Reuse and extend @workspace/mastra for repochat agent orchestration
+# Verification Report: Reuse and extend @workspace/mastra for seer agent orchestration
 
 **Date:** 2026-03-24
 **Status:** PASS
 
 ## Summary
 
-All acceptance criteria are met. The implementation correctly separates generic Mastra primitives in `@workspace/mastra` from repochat-specific agent composition in the app layer, with Effect-based orchestration at the service boundary.
+All acceptance criteria are met. The implementation correctly separates generic Mastra primitives in `@workspace/mastra` from seer-specific agent composition in the app layer, with Effect-based orchestration at the service boundary.
 
 ## Acceptance Criteria Verification
 
-### 1. repochat can invoke a Mastra-backed agent for an incoming Google Chat message
-**PASS** — The Google Chat adapter (`apps/repochat/src/adapters/google-chat.ts`) handles MESSAGE events by:
+### 1. seer can invoke a Mastra-backed agent for an incoming Google Chat message
+**PASS** — The Google Chat adapter (`apps/seer/src/adapters/google-chat.ts`) handles MESSAGE events by:
 - Extracting `argumentText` (stripped @mention) or falling back to `message.text`
 - Qualifying thread/user IDs with platform prefix (`gchat:`)
 - Calling `generateReply()` via the Effect managed runtime
@@ -32,13 +32,13 @@ Default model: `anthropic/claude-sonnet-4-6`. The `createAgent` factory wires th
 - `generate.ts` — Non-streaming generation via AI SDK `generateText()`
 - `agent-factory.ts` — Generic `createAgent()` factory with gateway wiring
 
-No repochat-specific code exists in the package. All 20 mastra tests pass.
+No seer-specific code exists in the package. All 20 mastra tests pass.
 
-### 4. repochat-specific agent composition remains in the app layer
-**PASS** — `apps/repochat/src/agent.ts` defines:
-- The repochat system prompt
+### 4. seer-specific agent composition remains in the app layer
+**PASS** — `apps/seer/src/agent.ts` defines:
+- The seer system prompt
 - The `AgentService` interface (narrow contract)
-- The concrete `repochatAgent` instance via `createAgent()` from the shared package
+- The concrete `seerAgent` instance via `createAgent()` from the shared package
 - An Effect `Context.Tag` for dependency injection
 
 ### 5. App-facing orchestration uses Effect for logging, tracing, and typed failures
@@ -60,28 +60,28 @@ Mastra internals are NOT forced into Effect — only the app boundary uses it.
 - 5 test files, 20 tests — **all passing**
 - Duration: 352ms
 
-### repochat unit tests (Node.js test runner)
+### seer unit tests (Node.js test runner)
 - 7 suites, 16 tests — **all passing**
 - Duration: 380ms
 
-### repochat integration tests (Google Chat adapter)
+### seer integration tests (Google Chat adapter)
 - 2 suites, 13 tests — **all passing**
 - Duration: 291ms
 
 ### TypeScript
 - `@workspace/mastra typecheck` — **clean** (no errors)
-- `repochat typecheck` — **clean** (no errors)
+- `seer typecheck` — **clean** (no errors)
 
 ## Architecture Summary
 
 ```
 Google Chat Webhook
     ↓
-apps/repochat/src/adapters/google-chat.ts  (platform adapter)
+apps/seer/src/adapters/google-chat.ts  (platform adapter)
     ↓
-apps/repochat/src/chat.ts                  (Effect service boundary)
+apps/seer/src/chat.ts                  (Effect service boundary)
     ↓
-apps/repochat/src/agent.ts                 (app-layer agent composition)
+apps/seer/src/agent.ts                 (app-layer agent composition)
     ↓
 packages/mastra/src/agent-factory.ts       (generic createAgent factory)
     ↓

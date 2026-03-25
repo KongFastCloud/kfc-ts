@@ -1,23 +1,23 @@
-# Verification Report: Repochat Memory Wiring
+# Verification Report: Seer Memory Wiring
 
 **Date:** 2026-03-24
-**Feature:** Add repochat memory wiring with thread-local history and working memory
+**Feature:** Add seer memory wiring with thread-local history and working memory
 **Status:** PASS
 
 ## Acceptance Criteria Verification
 
-### 1. Mastra receives platform-qualified thread and resource ids from repochat
+### 1. Mastra receives platform-qualified thread and resource ids from seer
 **PASS**
 
-- `apps/repochat/src/identity.ts` defines `qualifyThreadId` and `qualifyUserId` helpers that produce `<platform>:<raw-id>` formatted IDs
-- `apps/repochat/src/adapters/google-chat.ts` qualifies IDs at the adapter boundary using `qualifyThreadId("gchat", message.thread.name)` and `qualifyUserId("gchat", message.sender.name)`
-- `apps/repochat/src/chat.ts` passes these qualified IDs to the Mastra agent via `memory: { thread: request.threadId, resource: request.userId }`
+- `apps/seer/src/identity.ts` defines `qualifyThreadId` and `qualifyUserId` helpers that produce `<platform>:<raw-id>` formatted IDs
+- `apps/seer/src/adapters/google-chat.ts` qualifies IDs at the adapter boundary using `qualifyThreadId("gchat", message.thread.name)` and `qualifyUserId("gchat", message.sender.name)`
+- `apps/seer/src/chat.ts` passes these qualified IDs to the Mastra agent via `memory: { thread: request.threadId, resource: request.userId }`
 - Tests verify correct ID format: `"gchat:spaces/SPACE1/threads/THREAD1"`, `"gchat:users/112233"`
 
 ### 2. Thread-local history preserves continuity within a Google Chat conversation
 **PASS**
 
-- `apps/repochat/src/memory.ts` configures `lastMessages: 20` for thread-scoped message history
+- `apps/seer/src/memory.ts` configures `lastMessages: 20` for thread-scoped message history
 - The `thread` field in the memory options maps to the platform-qualified thread ID
 - Each Google Chat conversation thread gets its own message history via the qualified thread ID
 
@@ -47,7 +47,7 @@
 
 ## Test Results
 
-### Repochat Tests (26/26 passing)
+### Seer Tests (26/26 passing)
 - `agent.test.ts`: AgentService interface, agent name, Context.Tag
 - `chat.test.ts`: Reply generation, error handling, memory thread/resource passing, no deprecated fields
 - `errors.test.ts`: Tagged error hierarchy
@@ -60,7 +60,7 @@
 - `chat.test.ts`, `generate.test.ts`, `provider.test.ts`, `index.test.ts`
 
 ### TypeScript Typecheck
-Both `repochat` and `@workspace/mastra` pass `tsc --noEmit` cleanly.
+Both `seer` and `@workspace/mastra` pass `tsc --noEmit` cleanly.
 
 ## Architecture Summary
 
@@ -74,11 +74,11 @@ Google Chat Webhook POST
 ```
 
 ## Key Files
-- `apps/repochat/src/memory.ts` — Memory config + working memory template
-- `apps/repochat/src/identity.ts` — Platform-qualified ID helpers
-- `apps/repochat/src/chat.ts` — Effect bridge with memory wiring
-- `apps/repochat/src/agent.ts` — Agent composition with memory injection
-- `apps/repochat/src/adapters/google-chat.ts` — Webhook handler with ID qualification
+- `apps/seer/src/memory.ts` — Memory config + working memory template
+- `apps/seer/src/identity.ts` — Platform-qualified ID helpers
+- `apps/seer/src/chat.ts` — Effect bridge with memory wiring
+- `apps/seer/src/agent.ts` — Agent composition with memory injection
+- `apps/seer/src/adapters/google-chat.ts` — Webhook handler with ID qualification
 - `packages/mastra/src/agent-factory.ts` — Generic agent factory accepting memory
 
 ## Conclusion

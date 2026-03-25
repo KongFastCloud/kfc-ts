@@ -50,13 +50,13 @@ Clean — no type errors.
 
 | File | Role |
 |------|------|
-| `apps/repochat/src/reindex-worker.ts` | Background worker with coalescing logic |
-| `apps/repochat/src/adapters/webhook.ts` | Webhook handler with multi-provider parsing |
-| `apps/repochat/src/handler.ts` | Route registration for `/webhook/branch-update` |
-| `apps/repochat/src/index.ts` | Worker fiber startup at boot |
-| `apps/repochat/src/startup/git-sync.ts` | Git sync primitive (shared with startup) |
-| `apps/repochat/src/startup/reindex.ts` | Codemogger reindex primitive (shared with startup) |
-| `apps/repochat/src/config.ts` | Environment-based configuration |
+| `apps/seer/src/reindex-worker.ts` | Background worker with coalescing logic |
+| `apps/seer/src/adapters/webhook.ts` | Webhook handler with multi-provider parsing |
+| `apps/seer/src/handler.ts` | Route registration for `/webhook/branch-update` |
+| `apps/seer/src/index.ts` | Worker fiber startup at boot |
+| `apps/seer/src/startup/git-sync.ts` | Git sync primitive (shared with startup) |
+| `apps/seer/src/startup/reindex.ts` | Codemogger reindex primitive (shared with startup) |
+| `apps/seer/src/config.ts` | Environment-based configuration |
 
 ## Design Notes
 

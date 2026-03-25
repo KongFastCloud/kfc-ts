@@ -1,26 +1,26 @@
-# Verification: Wire repochat agent grounding to codemogger search and file verification
+# Verification: Wire seer agent grounding to codemogger search and file verification
 
 **Date:** 2026-03-25
 **Status:** ✅ PASS
 
 ## Summary
 
-The repochat agent has been correctly wired to use codemogger MCP for codebase discovery and a native `read_file` tool for exact source verification. All acceptance criteria are met.
+The seer agent has been correctly wired to use codemogger MCP for codebase discovery and a native `read_file` tool for exact source verification. All acceptance criteria are met.
 
 ## Acceptance Criteria Verification
 
-### ✅ Repochat can use codemogger search when answering codebase questions
+### ✅ Seer can use codemogger search when answering codebase questions
 
-- `apps/repochat/src/mcp.ts` exports `createCodemoggerClient()` which builds an MCP client from the shared `codemogger` server registration (`packages/mastra/src/mcp/codemogger.ts`).
+- `apps/seer/src/mcp.ts` exports `createCodemoggerClient()` which builds an MCP client from the shared `codemogger` server registration (`packages/mastra/src/mcp/codemogger.ts`).
 - The codemogger registration launches `npx -y codemogger mcp` as a stdio MCP server with optional `CODEMOGGER_DB_PATH` env var.
-- `apps/repochat/src/runtime.ts` loads codemogger MCP tools via `loadMCPTools("Codemogger", createCodemoggerClient)` in the Effect Layer.
-- Loaded tools are merged into the agent's tool map and passed to `makeRepochatAgent(allTools)`.
+- `apps/seer/src/runtime.ts` loads codemogger MCP tools via `loadMCPTools("Codemogger", createCodemoggerClient)` in the Effect Layer.
+- Loaded tools are merged into the agent's tool map and passed to `makeSeerAgent(allTools)`.
 - The system prompt in `agent.ts` explicitly instructs the agent: "Use codemogger search to discover relevant files and code when answering codebase questions."
 
-### ✅ Repochat can read exact source files to verify retrieved context
+### ✅ Seer can read exact source files to verify retrieved context
 
-- `apps/repochat/src/tools/read-file.ts` implements a native `read_file` tool with:
-  - Path traversal security (scoped to `REPOCHAT_REPO_ROOT`)
+- `apps/seer/src/tools/read-file.ts` implements a native `read_file` tool with:
+  - Path traversal security (scoped to `SEER_REPO_ROOT`)
   - File size cap (256 KB)
   - Line range selection (startLine/endLine)
   - Line-numbered output for easy reference
@@ -31,9 +31,9 @@ The repochat agent has been correctly wired to use codemogger MCP for codebase d
 
 - The `chat.ts` bridge passes messages through `agent.generate()` with memory options — the same path used for all chat. No separate retrieval path exists.
 - Tools (codemogger + read_file) are bound to the agent at startup and invoked by the LLM during normal generation.
-- The adapter layer (e.g., Google Chat webhook) calls `generateReply()` which uses the RepochatAgent Effect service — grounding is transparent to the caller.
+- The adapter layer (e.g., Google Chat webhook) calls `generateReply()` which uses the SeerAgent Effect service — grounding is transparent to the caller.
 
-### ✅ The implementation preserves the single-process repochat architecture
+### ✅ The implementation preserves the single-process seer architecture
 
 - `index.ts` starts a single HTTP server with `http.createServer`.
 - The ManagedRuntime is created once and shared across all requests.
@@ -49,11 +49,11 @@ The repochat agent has been correctly wired to use codemogger MCP for codebase d
 
 ## Test Results
 
-### Unit Tests (repochat)
+### Unit Tests (seer)
 - **80/80 passed**, 0 failures
 - Includes: `read-file.test.ts` (8 tests), `mcp.test.ts` (5 tests), `agent.test.ts` (3 tests), `chat.test.ts`, `memory.test.ts`, `state.test.ts`, `reindex-worker.test.ts`, `errors.test.ts`, `identity.test.ts`
 
-### Integration Tests (repochat)
+### Integration Tests (seer)
 - **52/52 passed**, 0 failures
 - Covers: Google Chat adapter, webhook adapter, runtime integration
 
@@ -68,11 +68,11 @@ The repochat agent has been correctly wired to use codemogger MCP for codebase d
 
 | File | Role |
 |------|------|
-| `apps/repochat/src/agent.ts` | Agent factory with system prompt for grounding |
-| `apps/repochat/src/tools/read-file.ts` | Native file-read tool for source verification |
-| `apps/repochat/src/mcp.ts` | MCP client factories (codemogger + glitchtip) |
-| `apps/repochat/src/runtime.ts` | Effect Layer wiring all tools into the agent |
-| `apps/repochat/src/chat.ts` | Chat bridge (normal chat path) |
+| `apps/seer/src/agent.ts` | Agent factory with system prompt for grounding |
+| `apps/seer/src/tools/read-file.ts` | Native file-read tool for source verification |
+| `apps/seer/src/mcp.ts` | MCP client factories (codemogger + glitchtip) |
+| `apps/seer/src/runtime.ts` | Effect Layer wiring all tools into the agent |
+| `apps/seer/src/chat.ts` | Chat bridge (normal chat path) |
 | `packages/mastra/src/mcp/codemogger.ts` | Codemogger MCP server registration |
 
 ## Architecture Note

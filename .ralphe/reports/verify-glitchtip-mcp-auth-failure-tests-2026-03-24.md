@@ -23,14 +23,14 @@ All acceptance criteria for the GlitchTip MCP auth and failure-path test hardeni
 - validateEnv: passes with required vars, passes when optional absent, throws MCPConfigError when missing, error includes server name and missing vars, empty string treated as missing
 - buildMCPClient: creates MCPClient with resolved definitions, throws before construction on invalid env, forwards timeout, supports multiple registrations
 
-### apps/repochat/src/mcp.test.ts — 5 tests ✅
+### apps/seer/src/mcp.test.ts — 5 tests ✅
 - Returns null when env vars are missing (graceful degradation)
 - Returns MCPClient when env vars are present
 - Returns null when only token is set (missing org)
 - Returns null when only org is set (missing token)
 - Returns null idempotently on repeated calls
 
-### apps/repochat/src/adapters/runtime.test.ts — 12 tests ✅
+### apps/seer/src/adapters/runtime.test.ts — 12 tests ✅
 - **GlitchTip unavailable:** creates agent without tools; agent responds to normal questions
 - **getTools() failure:** falls back on unreachable instance, invalid token (auth error), timeout; agent still generates replies after failure
 - **Tools loaded successfully:** passes tools to agent; agent generates replies with tools available
@@ -50,5 +50,5 @@ All acceptance criteria for the GlitchTip MCP auth and failure-path test hardeni
 ## Architecture Notes
 
 - **Mastra layer** (`packages/mastra/src/mcp/`): Reusable MCP registration infrastructure with GlitchTip-specific registration. Stateless, testable with injected env records.
-- **Repochat layer** (`apps/repochat/src/`): App-specific `createGlitchTipClient()` wraps `buildMCPClient` with graceful degradation. Effect Layer in `runtime.ts` handles tool loading failures non-fatally.
+- **Seer layer** (`apps/seer/src/`): App-specific `createGlitchTipClient()` wraps `buildMCPClient` with graceful degradation. Effect Layer in `runtime.ts` handles tool loading failures non-fatally.
 - **No new product behavior** added — this slice is purely verification and hardening.

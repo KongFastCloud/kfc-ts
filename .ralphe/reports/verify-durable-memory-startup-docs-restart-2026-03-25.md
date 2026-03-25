@@ -45,14 +45,14 @@ All acceptance criteria for the durable memory hardening slice have been verifie
   - Configuration (URL validation requirements, example)
   - Fresh workspace setup (3-step process)
   - Operational notes (file growth, reset, corruption recovery)
-- .env.example: Memory storage section (lines 29-32) documents REPOCHAT_MEMORY_DB_URL
+- .env.example: Memory storage section (lines 29-32) documents SEER_MEMORY_DB_URL
 
 ## Test Results
 
-### Repochat unit tests: 67 passed, 0 failed
+### Seer unit tests: 67 passed, 0 failed
 - Includes memory config shape, scoping semantics, cross-platform isolation, thread locking
 
-### Repochat integration tests: 16 passed, 0 failed
+### Seer integration tests: 16 passed, 0 failed
 - 5 test suites covering all memory persistence scenarios
 
 ### Mastra package tests: 57 passed, 0 failed (8 test files)
@@ -64,8 +64,8 @@ All acceptance criteria for the durable memory hardening slice have been verifie
 |------|---------|
 | `packages/mastra/src/storage/libsql.ts` | Reusable LibSQL storage factory |
 | `packages/mastra/src/storage/libsql.test.ts` | Storage factory unit tests |
-| `apps/repochat/src/memory.ts` | Memory configuration and instance |
-| `apps/repochat/src/memory.test.ts` | Memory config unit tests |
-| `apps/repochat/src/memory.integration.test.ts` | Full persistence integration tests |
-| `apps/repochat/README.md` | Operator documentation |
-| `apps/repochat/.env.example` | Environment variable documentation |
+| `apps/seer/src/memory.ts` | Memory configuration and instance |
+| `apps/seer/src/memory.test.ts` | Memory config unit tests |
+| `apps/seer/src/memory.integration.test.ts` | Full persistence integration tests |
+| `apps/seer/README.md` | Operator documentation |
+| `apps/seer/.env.example` | Environment variable documentation |
