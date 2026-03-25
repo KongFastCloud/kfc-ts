@@ -13,6 +13,7 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "^0.2.14",
     "@mastra/core": "^0.10.5",
+    "@mastra/libsql": "0.10.4-alpha.2",
     "@mastra/mcp": "0.10.13-alpha.1",
     "ai": "^4.3.16",
     "zod": "^3.25.76"
@@ -30,6 +31,7 @@
     "./provider": "./src/provider.ts",
     "./generate": "./src/generate.ts",
     "./agent-factory": "./src/agent-factory.ts",
-    "./mcp": "./src/mcp/index.ts"
+    "./mcp": "./src/mcp/index.ts",
+    "./storage/libsql": "./src/storage/libsql.ts"
   }
 }

@@ -22,6 +22,7 @@
 
 import { Memory } from "@mastra/memory"
 import type { MemoryConfig } from "@mastra/core/memory"
+import { createLocalLibSQLStorage } from "@workspace/mastra/storage/libsql"
 
 /**
  * Working memory template — resource-scoped.
@@ -51,7 +52,22 @@ export const MEMORY_CONFIG: MemoryConfig = {
   },
 }
 
+/**
+ * Local LibSQL storage URL for durable memory persistence.
+ *
+ * Defaults to `file:./data/memory.db` relative to the working directory.
+ * Override via REPOCHAT_MEMORY_DB_URL to control placement explicitly.
+ */
+const MEMORY_DB_URL =
+  process.env.REPOCHAT_MEMORY_DB_URL ?? "file:./data/memory.db"
+
+/** LibSQL-backed durable storage for thread history and working memory. */
+const storage = createLocalLibSQLStorage({
+  url: MEMORY_DB_URL,
+})
+
 /** Concrete Memory instance for the repochat agent. */
 export const memory = new Memory({
+  storage,
   options: MEMORY_CONFIG,
 })

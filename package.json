@@ -20,5 +20,8 @@
   "packageManager": "pnpm@9.0.6",
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@mastra/libsql": "^1.7.2"
   }
 }
