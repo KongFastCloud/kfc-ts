@@ -41,6 +41,52 @@ Chat-first codebase exploration service that runs in the same Coder instance as 
 - `src/state.ts`
   - in-memory per-thread lock for local single-instance use
 
+## Memory Storage
+
+Repochat uses local LibSQL for durable memory persistence. Both thread message history and resource-scoped working memory survive process restarts.
+
+### How it works
+
+- **Storage backend:** Local LibSQL (SQLite-compatible) via `@mastra/libsql`
+- **Database location:** `./data/memory.db` relative to the working directory (default)
+- **Override:** Set `REPOCHAT_MEMORY_DB_URL` to a `file:` URL to change placement
+- **Auto-init:** The parent directory is created automatically on first startup
+- **Scope:** Single-process, single-file — no remote database or replication
+
+### What is persisted
+
+| Data | Scope | Survives restart? |
+|------|-------|-------------------|
+| Thread message history | Per-thread (last 20 messages) | Yes |
+| Working memory (user context) | Per-resource (cross-thread) | Yes |
+| Thread locks | In-memory only | No |
+
+### Configuration
+
+The storage URL must be a local `file:` path. Remote URLs (`libsql://`, `https://`) and in-memory (`:memory:`) are rejected at startup.
+
+```bash
+# Default (no env var needed):
+#   file:./data/memory.db
+
+# Custom path:
+REPOCHAT_MEMORY_DB_URL=file:/var/data/repochat/memory.db
+```
+
+### Fresh workspace
+
+On first startup in a new workspace:
+1. The parent directory for the database file is created recursively
+2. LibSQL initializes the schema (tables for threads, messages, resources)
+3. No seed data is required — the agent starts with empty memory
+
+### Operational notes
+
+- The database file grows as conversations accumulate. For local development this is negligible.
+- To reset all memory, delete the database file and restart.
+- Corrupted database files will cause runtime errors on read/write operations. Delete and restart to recover.
+- The `data/` directory is gitignored — memory state is local to each workspace.
+
 ## Identity Model
 
 Repochat qualifies ids by platform before passing them into memory:
