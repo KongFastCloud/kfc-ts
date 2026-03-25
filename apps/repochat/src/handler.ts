@@ -5,9 +5,13 @@
  * health endpoint. The routing boundary is explicit so that
  * additional platform routes (e.g. /discord/webhook) can be
  * added later without restructuring the app.
+ *
+ * Google Chat ingress is handled by the Chat SDK via bot.webhooks.gchat.
+ * The SDK handles payload parsing, event dispatch, thread management,
+ * and per-thread locking internally.
  */
 
-import { handleGoogleChatWebhook } from "./adapters/google-chat.ts"
+import { bot } from "./bot.ts"
 import { handleBranchUpdateWebhook } from "./adapters/webhook.ts"
 import { log } from "./log.ts"
 
@@ -28,16 +32,9 @@ export const handler = async (request: Request): Promise<Response> => {
     return json({ ok: true, service: "repochat" })
   }
 
-  // ── Google Chat webhook ──
+  // ── Google Chat webhook (SDK-backed) ──
   if (request.method === "POST" && url.pathname === "/google-chat/webhook") {
-    const body = await request.text()
-    const result = await handleGoogleChatWebhook(body)
-
-    if (result.body === null) {
-      return new Response(null, { status: result.status })
-    }
-
-    return json(result.body, { status: result.status })
+    return bot.webhooks.gchat(request)
   }
 
   // ── Git provider webhook (tracked-branch updates) ──
