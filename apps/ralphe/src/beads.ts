@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import { FatalError } from "./errors.js"
+import { removeEpicWorktree, type EpicWorktreeCleanupResult } from "./epicWorktree.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -374,6 +375,47 @@ export const addComment = (
     Effect.catchTag("FatalError", (err) =>
       Effect.logWarning(`Failed to write comment on ${id}: ${err.message}`),
     ),
+  )
+
+// ---------------------------------------------------------------------------
+// Epic lifecycle
+// ---------------------------------------------------------------------------
+
+/**
+ * Close an epic and trigger automatic worktree cleanup.
+ *
+ * This is the canonical epic closure operation. It:
+ * 1. Closes the epic issue in Beads with a reason.
+ * 2. Removes the epic's worktree (force-removes even if dirty).
+ * 3. Emits a warning if the worktree was dirty at cleanup time.
+ *
+ * Cleanup is immediate and does not introduce a second cleanup-state machine.
+ * If worktree cleanup fails, the epic is still closed but the error is
+ * propagated so the caller can surface it operationally.
+ */
+export const closeEpic = (
+  id: string,
+  reason = "epic closed",
+  cleanupWorktree: (epicId: string) => Effect.Effect<EpicWorktreeCleanupResult, FatalError> = removeEpicWorktree,
+): Effect.Effect<EpicWorktreeCleanupResult, FatalError> =>
+  Effect.gen(function* () {
+    // Close the epic issue in Beads
+    yield* runBd(["close", id, "--reason", reason])
+    yield* Effect.logInfo(`Epic ${id} closed: ${reason}`)
+
+    // Trigger worktree cleanup
+    const cleanupResult = yield* cleanupWorktree(id)
+
+    if (cleanupResult.removed && cleanupResult.wasDirty) {
+      yield* Effect.logWarning(
+        `Epic ${id} worktree was dirty at cleanup. ` +
+        `Uncommitted changes at ${cleanupResult.worktreePath ?? "unknown path"} were discarded.`,
+      )
+    }
+
+    return cleanupResult
+  }).pipe(
+    Effect.annotateLogs({ epicId: id }),
   )
 
 /**

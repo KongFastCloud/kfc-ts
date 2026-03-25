@@ -56,6 +56,21 @@ export const EPIC_ERROR_EMPTY_BODY = (parentId: string) =>
 export const EPIC_ERROR_MISSING_BRANCH = (parentId: string) =>
   `Epic "${parentId}" has no canonical branch in its metadata. A branch must be set before tasks can execute.`
 
+/**
+ * Predicate: does the given error reason string represent an invalid-context
+ * failure? This is used by the operational layer to distinguish epic-context
+ * validation failures from execution-time failures.
+ *
+ * An invalid-context failure means the task never started executing because
+ * its parent epic was missing, incomplete, or invalid.
+ */
+export const isInvalidEpicContextError = (reason: string): boolean =>
+  reason === EPIC_ERROR_NO_PARENT ||
+  reason.includes("could not be loaded") ||
+  reason.includes("does not have the \"epic\" label") ||
+  reason.includes("has no PRD body") ||
+  reason.includes("has no canonical branch")
+
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------

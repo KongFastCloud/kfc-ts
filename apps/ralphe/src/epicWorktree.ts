@@ -221,3 +221,90 @@ export const ensureEpicWorktree = (
   }).pipe(
     Effect.annotateLogs({ epicId: epic.id, epicBranch: epic.branch }),
   )
+
+// ---------------------------------------------------------------------------
+// Worktree dirty detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether an epic worktree has uncommitted changes (staged or unstaged).
+ * Returns `true` when the worktree exists and is dirty. Returns `false` when
+ * the worktree does not exist or is clean.
+ */
+export const isEpicWorktreeDirty = (
+  epicId: string,
+): Effect.Effect<boolean, FatalError> =>
+  Effect.gen(function* () {
+    const worktreePath = yield* deriveEpicWorktreePath(epicId)
+
+    if (!worktreeExistsAt(worktreePath)) {
+      return false
+    }
+
+    const status = yield* runGit(["status", "--porcelain"], worktreePath)
+    return status.trim().length > 0
+  })
+
+// ---------------------------------------------------------------------------
+// Worktree cleanup
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of an epic worktree cleanup operation.
+ */
+export interface EpicWorktreeCleanupResult {
+  /** Whether a worktree was actually removed (false when no worktree existed). */
+  readonly removed: boolean
+  /** Whether the worktree had uncommitted changes at the time of removal. */
+  readonly wasDirty: boolean
+  /** The path of the removed worktree (undefined when nothing was removed). */
+  readonly worktreePath?: string | undefined
+}
+
+/**
+ * Remove the epic worktree. Used during epic closure to clean up the
+ * isolated workspace.
+ *
+ * Cleanup proceeds even when the worktree is dirty — the `--force` flag
+ * is used to ensure removal succeeds. When the worktree is dirty, a warning
+ * is emitted so operators can later understand that uncommitted changes
+ * were discarded.
+ *
+ * This is a simple immediate operation — no second cleanup-state machine.
+ * If the worktree does not exist, this is a no-op that returns successfully.
+ */
+export const removeEpicWorktree = (
+  epicId: string,
+): Effect.Effect<EpicWorktreeCleanupResult, FatalError> =>
+  Effect.gen(function* () {
+    const worktreePath = yield* deriveEpicWorktreePath(epicId)
+
+    if (!worktreeExistsAt(worktreePath)) {
+      yield* Effect.logInfo(`No worktree to clean up for epic ${epicId}`)
+      return { removed: false, wasDirty: false }
+    }
+
+    // Check for dirty state before removal so we can warn
+    const dirty = yield* isEpicWorktreeDirty(epicId)
+
+    if (dirty) {
+      yield* Effect.logWarning(
+        `Epic worktree at ${worktreePath} has uncommitted changes. ` +
+        `Proceeding with cleanup — uncommitted work will be discarded.`,
+      )
+    }
+
+    // Force-remove the worktree via git (handles dirty state)
+    yield* runGit(["worktree", "remove", "--force", worktreePath])
+    // Prune dangling references
+    yield* runGit(["worktree", "prune"])
+
+    yield* Effect.logInfo(
+      `Removed epic worktree at ${worktreePath}` +
+      (dirty ? " (was dirty — uncommitted changes discarded)" : ""),
+    )
+
+    return { removed: true, wasDirty: dirty, worktreePath }
+  }).pipe(
+    Effect.annotateLogs({ epicId }),
+  )
