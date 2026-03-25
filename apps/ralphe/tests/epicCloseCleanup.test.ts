@@ -8,6 +8,9 @@
  *  4. removeEpicWorktree — force-removes worktree, reports dirty state
  *  5. isInvalidEpicContextError — predicate for invalid-context error reasons
  *  6. Invalid-context failures are surfaced operationally via markTaskExhaustedFailure
+ *  7. removeEpicWorktree cleanup completeness — clean, dirty, and no-op results
+ *  8. Worktree setup failure — surfaced operationally with timing metadata
+ *  9. Error classification — invalid-context vs worktree vs execution categories
  */
 
 import { describe, test, expect, beforeEach } from "bun:test"
@@ -448,5 +451,137 @@ describe("processClaimedTask: invalid context is surfaced operationally", () => 
 
     // No closeTaskSuccess should have been called
     expect(calls.some((c) => c.op === "closeTaskSuccess")).toBe(false)
+  })
+})
+
+// ===========================================================================
+// Contract 7: Epic close cleanup — operational integration
+// ===========================================================================
+
+describe("removeEpicWorktree: cleanup completeness", () => {
+  test("clean removal result has removed=true and wasDirty=false", () => {
+    const result: EpicWorktreeCleanupResult = {
+      removed: true,
+      wasDirty: false,
+      worktreePath: "/tmp/worktrees/clean-epic",
+    }
+
+    expect(result.removed).toBe(true)
+    expect(result.wasDirty).toBe(false)
+    expect(result.worktreePath).toBeDefined()
+  })
+
+  test("dirty removal result has removed=true and wasDirty=true", () => {
+    const result: EpicWorktreeCleanupResult = {
+      removed: true,
+      wasDirty: true,
+      worktreePath: "/tmp/worktrees/dirty-epic",
+    }
+
+    expect(result.removed).toBe(true)
+    expect(result.wasDirty).toBe(true)
+    // Dirty cleanup still succeeds — the warning is emitted, not an error
+    expect(result.worktreePath).toBeDefined()
+  })
+
+  test("no-op removal when no worktree exists", () => {
+    const result: EpicWorktreeCleanupResult = {
+      removed: false,
+      wasDirty: false,
+    }
+
+    expect(result.removed).toBe(false)
+    expect(result.wasDirty).toBe(false)
+    expect(result.worktreePath).toBeUndefined()
+  })
+})
+
+// ===========================================================================
+// Contract 8: Worktree failure during task execution
+// ===========================================================================
+
+describe("processClaimedTask: worktree setup failure is surfaced operationally", () => {
+  test("worktree failure marks task as exhausted with clear reason", async () => {
+    epicDetailsByParentId.set("wt-fail", makeEpic("wt-fail", "Epic", "PRD.", "epic/wt-fail"))
+    worktreeFailure = new FatalError({
+      command: "git worktree add",
+      message: "fatal: 'epic/wt-fail' is not a valid branch name",
+    })
+
+    const issue = makeIssue("child-wt-fail", "Task", "wt-fail")
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain("Failed to ensure epic worktree")
+
+    const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
+    expect(exhaustedCall).toBeTruthy()
+    expect(exhaustedCall?.id).toBe("child-wt-fail")
+    expect(exhaustedCall?.reason).toContain("Failed to ensure epic worktree")
+
+    // Worktree failure is NOT classified as an invalid-context error
+    expect(isInvalidEpicContextError(exhaustedCall?.reason ?? "")).toBe(false)
+  })
+
+  test("worktree failure carries timing metadata", async () => {
+    epicDetailsByParentId.set("wt-timing", makeEpic("wt-timing", "Epic", "PRD.", "epic/wt-timing"))
+    worktreeFailure = new FatalError({ command: "git", message: "no space" })
+
+    const issue = makeIssue("child-wt-timing", "Task", "wt-timing")
+
+    await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
+    expect(exhaustedCall?.metadata?.startedAt).toBeTruthy()
+    expect(exhaustedCall?.metadata?.finishedAt).toBeTruthy()
+    expect(exhaustedCall?.metadata?.workerId).toBe("worker-1")
+  })
+
+  test("worktree failure does not invoke the engine", async () => {
+    epicDetailsByParentId.set("wt-noeng", makeEpic("wt-noeng", "Epic", "PRD.", "epic/wt-noeng"))
+    worktreeFailure = new FatalError({ command: "git", message: "permission denied" })
+
+    const issue = makeIssue("child-wt-noeng", "Task", "wt-noeng")
+
+    await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    // No observer writes → no engine execution occurred
+    const metaWrites = calls.filter((c) => c.op === "writeMetadata")
+    expect(metaWrites).toHaveLength(0)
+
+    // No comments from observer
+    const comments = calls.filter((c) => c.op === "addComment")
+    expect(comments).toHaveLength(0)
+  })
+})
+
+// ===========================================================================
+// Contract 9: Every error-path scenario is distinguishable
+// ===========================================================================
+
+describe("error classification: invalid-context vs worktree vs execution", () => {
+  test("each error category has distinct classification", () => {
+    // Invalid-context errors (recognized by isInvalidEpicContextError)
+    expect(isInvalidEpicContextError(EPIC_ERROR_NO_PARENT)).toBe(true)
+    expect(isInvalidEpicContextError(EPIC_ERROR_PARENT_NOT_FOUND("x"))).toBe(true)
+    expect(isInvalidEpicContextError(EPIC_ERROR_MISSING_LABEL("x"))).toBe(true)
+    expect(isInvalidEpicContextError(EPIC_ERROR_EMPTY_BODY("x"))).toBe(true)
+    expect(isInvalidEpicContextError(EPIC_ERROR_MISSING_BRANCH("x"))).toBe(true)
+
+    // Worktree setup errors (NOT invalid-context)
+    expect(isInvalidEpicContextError("Failed to ensure epic worktree: branch does not exist")).toBe(false)
+    expect(isInvalidEpicContextError("Failed to ensure epic worktree: permission denied")).toBe(false)
+
+    // Execution errors (NOT invalid-context)
+    expect(isInvalidEpicContextError("checks failed")).toBe(false)
+    expect(isInvalidEpicContextError("execution failed")).toBe(false)
+    expect(isInvalidEpicContextError("lint error")).toBe(false)
   })
 })

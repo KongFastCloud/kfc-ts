@@ -86,9 +86,67 @@ Without a config, or when no root scripts are selected, ralphe runs the agent wi
 
 `ralphe` only auto-detects TypeScript/Node-style roots with a `package.json`. Other stacks are only supported indirectly when the repo root exposes verification through Node package scripts such as `turbo test` or `turbo lint`.
 
+## Epic / Task Model
+
+`ralphe` uses a strict two-level hierarchy for organizing work:
+
+```
+Epic (Beads issue labeled "epic")
+├── Properties: id, title, branch (canonical), body (PRD)
+├── Worktree: .ralphe-worktrees/{sanitized_epic_id}
+└── Tasks (child Beads issues with parentId → epic)
+    ├── Task 1: Runs in epic's worktree on epic's branch
+    ├── Task 2: Reuses the same worktree
+    └── Task N: All execute in isolated epic context
+```
+
+### Key rules
+
+- **Epic** = the planning, isolation, and workspace primitive. Non-runnable.
+- **Task** = the runnable child unit under one epic.
+- Every runnable task must belong to exactly one epic via the Beads parent relationship.
+- Standalone tasks (no `parentId`) are invalid execution inputs and will be marked as errors.
+- Each epic owns exactly one canonical branch and one canonical worktree.
+- Tasks do not create their own branches or worktrees — they execute inside the parent epic's context.
+
+### Epic as the PRD container
+
+The epic issue body holds the full PRD text. When a task executes, the executor loads:
+1. The child task content (title, description, design, acceptance criteria, notes)
+2. The full parent epic body (prepended as a preamble to the task prompt)
+3. Required epic metadata (branch, labels)
+
+### Worktree lifecycle
+
+- **Lazy creation** — the epic worktree is created when the first child task executes, not when the epic is created.
+- **Reuse** — subsequent tasks under the same epic reuse the same worktree.
+- **Recreation** — if a worktree is missing (e.g. manually deleted), it is recreated from the epic's canonical branch.
+- **Branch mismatch** — if the worktree is on the wrong branch, it is force-recreated.
+- **Deterministic paths** — worktree paths are derived from epic identity under `.ralphe-worktrees/` (not configurable).
+
+### Epic closure and cleanup
+
+- Closing an epic triggers automatic worktree cleanup (no confirmation required).
+- If the worktree is dirty, cleanup still proceeds but a warning is emitted.
+- After cleanup completes, the epic disappears from the watch TUI.
+
+### Invalid epic context
+
+If a task's parent epic is missing or incomplete, the task is marked as an error with a clear reason:
+
+| Condition | Error |
+|-----------|-------|
+| No `parentId` | "Task has no parent epic. Standalone tasks are not valid execution inputs." |
+| Parent not found | "Parent issue could not be loaded." |
+| Parent lacks `epic` label | "Parent issue does not have the `epic` label." |
+| Empty PRD body | "Epic has no PRD body." |
+| No canonical branch | "Epic has no canonical branch in its metadata." |
+
+The executor never falls back to repo-default behavior. Invalid context produces explicit task failures.
+
 ## Beads Watch Mode
 
-`ralphe watch` now defaults to TUI mode with an in-process single worker. Use `--headless` for log-only execution.
+`ralphe watch` defaults to TUI mode with an in-process single worker. Use `--headless` for log-only execution.
 
 ```bash
 # TUI mode (default)
@@ -104,13 +162,55 @@ Critical usage notes:
 
 - Run from repository root so `.ralphe/config.json` and `.beads/` resolve correctly.
 - Watch mode executes only `bd ready` tasks (not every `open` task).
-- Only one task runs at a time.
+- Only one task runs at a time globally (epic isolation is about workspace state, not parallel execution).
 - Metadata is written under `metadata.ralphe` (engine, resume token, worker ID, timestamp).
-- **Dirty worktree guard** — watch mode pauses task pickup when uncommitted changes are detected in the working tree. Commit or stash your changes to resume automatic execution.
 - **Stale task recovery** — on startup, any tasks left in `in_progress` from a previous session are reclaimed and retried automatically.
 - **Session comment logging** — after each agent execution, the session ID is logged as a comment on the task for traceability.
 - **Retry error feedback** — when a task is retried, the previous error output is included in the agent prompt so the engine can avoid repeating the same mistake.
 - **Structured CI failure annotations** — when `git.mode` is `commit_and_push_and_wait_ci`, CI failure annotations are returned as structured feedback for the retry loop.
+
+### Split Watch TUI
+
+The TUI uses a split model with two operational surfaces:
+
+```
+┌────────────────────────────────────────┐
+│ Active Tasks (primary) │ Done Tasks    │
+│                        │ (secondary)   │
+├────────────────────────────────────────┤
+│ Epic Pane (secondary, focusable)       │
+│ Shows: ID, Title, Status               │
+└────────────────────────────────────────┘
+```
+
+- **Task pane** — the primary operational surface. Shows all tasks globally.
+- **Epic pane** — secondary but focusable. Shows operational epic information including derived status.
+
+### Epic display statuses
+
+Epic status is a single derived display status, not a collection of badges:
+
+| Status | Meaning |
+|--------|---------|
+| `not_started` | No epic worktree exists yet (lazy creation pending). |
+| `active` | Worktree exists and is clean. |
+| `dirty` | Worktree exists and has uncommitted changes. |
+| `queued_for_deletion` | Operator marked the epic for deletion/cleanup. |
+
+The TUI shows all open epics and closed epics that are queued for deletion. Epics disappear after cleanup completes.
+
+### TUI keys
+
+- `q` / `Escape` / `Ctrl+Q`: quit (current in-flight task is allowed to finish)
+- `r`: refresh task list
+- `j` / `k` / `↑` / `↓`: move selection
+- `Tab`: switch between panes (active tasks, done tasks, epic pane)
+- `m`: mark task as ready (task pane only — backlog, blocked, and error tasks)
+- `d`: delete epic (epic pane only — queues epic for closure and worktree cleanup)
+- `Enter`: open task details
+- `Backspace`: back from detail view
+
+Task-ready (`m`) and epic-delete (`d`) are distinct keys. The TUI does not overload one key across both operations.
 
 ### Mark Ready
 
@@ -133,9 +233,9 @@ Press `Enter` on any task to open the detail view. Sections displayed (when pres
 
 Press `Backspace` to return to the task list from the detail view.
 
-### Watch TUI Status Mapping
+### Task Status Mapping
 
-The watch TUI derives a `Ralphe status` from the raw Beads task state. The detail view should show the Ralphe status. In the dashboard model, labels are only used where they add meaning beyond the status itself.
+The watch TUI derives a `Ralphe status` from the raw Beads task state. The detail view shows the Ralphe status. In the dashboard model, labels are only used where they add meaning beyond the status itself.
 
 | Ralphe status | Beads status | Label | Notes |
 |-------|---------|-------------|-------------|
@@ -151,21 +251,11 @@ Notes:
 - `Ralphe status` is the TUI-friendly status that `ralphe` computes for display.
 - `Beads status` is the raw task status from `bd`.
 - `backlog`, `queued`, `blocked`, and `error` all come from Beads `open`; the difference is whether the task is ready, blocked by dependencies, or marked with an error.
-- The detail view should show the Ralphe status (`backlog`, `queued`, `blocked`, `active`, `done`, `error`).
+- The detail view shows the Ralphe status (`backlog`, `queued`, `blocked`, `active`, `done`, `error`).
 - `ready` is the label that distinguishes queued work from backlog work.
 - `blocked` is a status, not a label.
 - `error` is the failure label for work that remains open.
 - Exhausted failures use `markTaskExhaustedFailure` in [`beads.ts`](src/beads.ts): task stays open, `ready` label is removed, `error` label is applied, and the failure reason is preserved in metadata and notes.
-
-TUI keys:
-
-- `q` / `Escape` / `Ctrl+Q`: quit (current in-flight task is allowed to finish)
-- `r`: refresh task list
-- `j` / `k` / `↑` / `↓`: move selection
-- `Tab`: switch between tables
-- `m`: mark task as ready (backlog, blocked, and error tasks only)
-- `Enter`: open task details
-- `Backspace`: back from detail view
 
 Resume tokens (Claude `session_id` / Codex `thread_id`) are persisted in Beads metadata to support manual interactive resume:
 

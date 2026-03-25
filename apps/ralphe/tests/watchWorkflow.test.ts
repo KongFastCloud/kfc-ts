@@ -14,6 +14,12 @@
  *  5. Poll outcomes     — NoneReady, ClaimContention, Processed discrimination
  *  6. Operation ordering — full sequence for poll→claim→lifecycle→finalize
  *  7. Shared workflow    — watch executes through buildRunWorkflow (not runTask)
+ *  8. Epic context       — validation, rejection, preamble prepending
+ *  9. Epic-child context inheritance — branch, body, and context loading
+ * 10. Orphan-task invalidity — no worktree, no engine, explicit error
+ * 11. Lazy worktree creation — first task triggers ensureEpicWorktree
+ * 12. Worktree reuse — sibling tasks under the same epic
+ * 13. Cross-epic isolation — different epics, different worktree paths
  */
 
 import { describe, test, expect, beforeEach } from "bun:test"
@@ -940,6 +946,213 @@ describe("pollClaimAndProcess: epic context in poll cycle", () => {
       expect(result.result.success).toBe(false)
       expect(result.result.error).toBe(EPIC_ERROR_NO_PARENT)
     }
+  })
+})
+
+// ===========================================================================
+// Contract 9: execution invariants — epic-child inheritance, worktree
+// lifecycle, and cross-epic isolation
+// ===========================================================================
+
+describe("processClaimedTask: epic-child context inheritance", () => {
+  test("child task inherits epic branch via ensureEpicWorktree", async () => {
+    epicDetailsByParentId.set("inherit-epic", makeEpic("inherit-epic", "Auth Epic", "PRD body.", "epic/auth-branch"))
+    const issue = makeIssue("child-inherit", "Login page", "inherit-epic")
+    engineResult = Effect.succeed({ response: "done" })
+
+    await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    // ensureEpicWorktree was called with the epic's canonical branch
+    expect(worktreeCalls).toHaveLength(1)
+    expect(worktreeCalls[0]!.epicId).toBe("inherit-epic")
+    expect(worktreeCalls[0]!.branch).toBe("epic/auth-branch")
+  })
+
+  test("child task inherits epic ID and body for prompt preamble", async () => {
+    epicDetailsByParentId.set("preamble-epic", makeEpic("preamble-epic", "Payment Epic", "Full payment PRD content.", "epic/payment"))
+    const issue = makeIssue("child-preamble", "Stripe integration", "preamble-epic")
+    engineResult = Effect.succeed({ response: "done" })
+
+    await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    // Epic context was loaded via queryTaskDetail
+    const epicQuery = calls.find((c) => c.op === "queryTaskDetail" && c.id === "preamble-epic")
+    expect(epicQuery).toBeTruthy()
+
+    // Execution succeeded — proving the full context inheritance path worked
+    expect(calls.some((c) => c.op === "closeTaskSuccess")).toBe(true)
+  })
+
+  test("epic context is loaded exactly once per task execution", async () => {
+    epicDetailsByParentId.set("once-epic", makeEpic("once-epic", "Test Epic", "PRD.", "epic/once"))
+    const issue = makeIssue("child-once", "Task", "once-epic")
+    engineResult = Effect.succeed({ response: "done" })
+
+    await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    const epicQueries = calls.filter((c) => c.op === "queryTaskDetail" && c.id === "once-epic")
+    expect(epicQueries).toHaveLength(1)
+  })
+})
+
+describe("processClaimedTask: orphan-task invalidity", () => {
+  test("orphan task (no parentId) never invokes ensureEpicWorktree", async () => {
+    const issue: BeadsIssue = { id: "orphan-wt", title: "No parent" }
+
+    await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(worktreeCalls).toHaveLength(0)
+  })
+
+  test("orphan task never invokes the engine", async () => {
+    let engineInvoked = false
+    engineResult = Effect.sync(() => {
+      engineInvoked = true
+      return { response: "done" }
+    })
+
+    const issue: BeadsIssue = { id: "orphan-engine", title: "No parent" }
+
+    await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(engineInvoked).toBe(false)
+  })
+
+  test("orphan task result carries the engine field from config (not from execution)", async () => {
+    const issue: BeadsIssue = { id: "orphan-meta", title: "No parent" }
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, { ...baseConfig, engine: "codex" }, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.engine).toBe("codex")
+  })
+})
+
+describe("processClaimedTask: lazy worktree creation", () => {
+  test("first task for an epic triggers ensureEpicWorktree", async () => {
+    epicDetailsByParentId.set("lazy-epic", makeEpic("lazy-epic", "Lazy Epic", "PRD.", "epic/lazy"))
+    const issue = makeIssue("first-child", "First task", "lazy-epic")
+    engineResult = Effect.succeed({ response: "done" })
+
+    await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(worktreeCalls).toHaveLength(1)
+    expect(worktreeCalls[0]!.epicId).toBe("lazy-epic")
+  })
+
+  test("worktree failure marks the task as exhausted", async () => {
+    epicDetailsByParentId.set("wt-fail-epic", makeEpic("wt-fail-epic", "WT Fail Epic", "PRD.", "epic/wt-fail"))
+    worktreeFailure = new FatalError({ command: "git worktree add", message: "branch does not exist" })
+
+    const issue = makeIssue("child-wt-fail", "Task", "wt-fail-epic")
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain("Failed to ensure epic worktree")
+    expect(result.error).toContain("branch does not exist")
+
+    const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
+    expect(exhaustedCall).toBeTruthy()
+    expect(exhaustedCall?.id).toBe("child-wt-fail")
+  })
+})
+
+describe("processClaimedTask: worktree reuse", () => {
+  test("two tasks under the same epic use the same worktree path", async () => {
+    epicDetailsByParentId.set("reuse-epic", makeEpic("reuse-epic", "Reuse Epic", "PRD.", "epic/reuse"))
+    worktreePathsByEpicId.set("reuse-epic", "/tmp/ralphe-worktrees/reuse-epic")
+    engineResult = Effect.succeed({ response: "done" })
+
+    const issue1 = makeIssue("reuse-child-1", "Task 1", "reuse-epic")
+    const issue2 = makeIssue("reuse-child-2", "Task 2", "reuse-epic")
+
+    await Effect.runPromise(
+      processClaimedTask(issue1, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    // Reset calls to isolate second task's behavior
+    calls = []
+
+    await Effect.runPromise(
+      processClaimedTask(issue2, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    // Both tasks called ensureEpicWorktree with the same epic
+    expect(worktreeCalls).toHaveLength(2)
+    expect(worktreeCalls[0]!.epicId).toBe("reuse-epic")
+    expect(worktreeCalls[1]!.epicId).toBe("reuse-epic")
+    expect(worktreeCalls[0]!.branch).toBe("epic/reuse")
+    expect(worktreeCalls[1]!.branch).toBe("epic/reuse")
+  })
+})
+
+describe("processClaimedTask: cross-epic isolation", () => {
+  test("tasks under different epics use different worktree paths", async () => {
+    epicDetailsByParentId.set("epic-a", makeEpic("epic-a", "Epic A", "PRD A.", "epic/a"))
+    epicDetailsByParentId.set("epic-b", makeEpic("epic-b", "Epic B", "PRD B.", "epic/b"))
+    worktreePathsByEpicId.set("epic-a", "/tmp/ralphe-worktrees/epic-a")
+    worktreePathsByEpicId.set("epic-b", "/tmp/ralphe-worktrees/epic-b")
+    engineResult = Effect.succeed({ response: "done" })
+
+    const issueA = makeIssue("child-a", "Task A", "epic-a")
+    const issueB = makeIssue("child-b", "Task B", "epic-b")
+
+    await Effect.runPromise(
+      processClaimedTask(issueA, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+    await Effect.runPromise(
+      processClaimedTask(issueB, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    // Two ensureEpicWorktree calls, one per epic
+    expect(worktreeCalls).toHaveLength(2)
+    expect(worktreeCalls[0]!.epicId).toBe("epic-a")
+    expect(worktreeCalls[0]!.branch).toBe("epic/a")
+    expect(worktreeCalls[1]!.epicId).toBe("epic-b")
+    expect(worktreeCalls[1]!.branch).toBe("epic/b")
+  })
+
+  test("epic A's context does not affect epic B's task execution", async () => {
+    epicDetailsByParentId.set("iso-a", makeEpic("iso-a", "Epic A", "PRD A content.", "epic/iso-a"))
+    epicDetailsByParentId.set("iso-b", makeEpic("iso-b", "Epic B", "PRD B content.", "epic/iso-b"))
+    engineResult = Effect.succeed({ response: "done" })
+
+    const issueA = makeIssue("iso-child-a", "Task A", "iso-a")
+    const issueB = makeIssue("iso-child-b", "Task B", "iso-b")
+
+    const resultA = await Effect.runPromise(
+      processClaimedTask(issueA, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+    const resultB = await Effect.runPromise(
+      processClaimedTask(issueB, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    // Both succeed independently
+    expect(resultA.success).toBe(true)
+    expect(resultB.success).toBe(true)
+
+    // Each loaded its own epic context
+    const epicAQueries = calls.filter((c) => c.op === "queryTaskDetail" && c.id === "iso-a")
+    const epicBQueries = calls.filter((c) => c.op === "queryTaskDetail" && c.id === "iso-b")
+    expect(epicAQueries).toHaveLength(1)
+    expect(epicBQueries).toHaveLength(1)
   })
 })
 

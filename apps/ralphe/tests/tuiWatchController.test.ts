@@ -559,6 +559,234 @@ describe("TuiWatchController — detail view", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Epic pane — split model state and derived statuses
+// ---------------------------------------------------------------------------
+
+describe("TuiWatchController — epic pane state", () => {
+  test("initial state has empty epics and no epic delete pending IDs", () => {
+    const ctrl = makeController()
+    const state = ctrl.getState()
+
+    expect(state.epics).toEqual([])
+    expect(state.epicDeletePendingIds.size).toBe(0)
+
+    void ctrl.stop()
+  })
+
+  test("refresh derives epic display items from task list", async () => {
+    const epicTasks = [
+      { id: "E-1", title: "Epic One", status: "backlog" as const, labels: ["epic"] },
+      { id: "T-1", title: "Task One", status: "queued" as const },
+      { id: "E-2", title: "Epic Two", status: "backlog" as const, labels: ["epic"] },
+    ]
+    const ctrl = makeController({
+      deps: {
+        queryAllTasks: () => Effect.succeed(epicTasks),
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+
+    await ctrl.refresh()
+
+    const state = ctrl.getState()
+    expect(state.epics).toHaveLength(2)
+    expect(state.epics.map((e) => e.id)).toEqual(["E-1", "E-2"])
+    // Worktree state defaults to not_started (mock returns not_started)
+    expect(state.epics[0]!.status).toBe("not_started")
+    expect(state.epics[1]!.status).toBe("not_started")
+
+    await ctrl.stop()
+  })
+
+  test("epic display items reflect worktree state from getEpicWorktreeState", async () => {
+    const epicTasks = [
+      { id: "E-clean", title: "Clean Epic", status: "backlog" as const, labels: ["epic"] },
+      { id: "E-dirty", title: "Dirty Epic", status: "backlog" as const, labels: ["epic"] },
+    ]
+    const ctrl = makeController({
+      deps: {
+        queryAllTasks: () => Effect.succeed(epicTasks),
+        getEpicWorktreeState: (id: string) => {
+          if (id === "E-clean") return Effect.succeed("clean" as const)
+          if (id === "E-dirty") return Effect.succeed("dirty" as const)
+          return Effect.succeed("not_started" as const)
+        },
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+
+    await ctrl.refresh()
+
+    const state = ctrl.getState()
+    const clean = state.epics.find((e) => e.id === "E-clean")
+    const dirty = state.epics.find((e) => e.id === "E-dirty")
+    expect(clean!.status).toBe("active") // clean worktree → active
+    expect(dirty!.status).toBe("dirty")
+
+    await ctrl.stop()
+  })
+
+  test("closed epics without deletion queue are excluded", async () => {
+    const epicTasks = [
+      { id: "E-open", title: "Open Epic", status: "backlog" as const, labels: ["epic"] },
+      { id: "E-closed", title: "Closed Epic", status: "done" as const, labels: ["epic"] },
+    ]
+    const ctrl = makeController({
+      deps: {
+        queryAllTasks: () => Effect.succeed(epicTasks),
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+
+    await ctrl.refresh()
+
+    const state = ctrl.getState()
+    expect(state.epics).toHaveLength(1)
+    expect(state.epics[0]!.id).toBe("E-open")
+
+    await ctrl.stop()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Epic delete queue — distinct from mark-ready queue
+// ---------------------------------------------------------------------------
+
+describe("TuiWatchController — epic delete queue", () => {
+  test("enqueueEpicDelete adds epic to pending set and updates status", async () => {
+    const epicTasks = [
+      { id: "E-1", title: "Epic One", status: "backlog" as const, labels: ["epic"] },
+    ]
+    const ctrl = makeController({
+      deps: {
+        queryAllTasks: () => Effect.succeed(epicTasks),
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+    await ctrl.refresh()
+    await ctrl.startEpicDeleteConsumer()
+
+    ctrl.enqueueEpicDelete("E-1")
+
+    const state = ctrl.getState()
+    expect(state.epicDeletePendingIds.has("E-1")).toBe(true)
+
+    // Epic should now show queued_for_deletion status
+    const epic = state.epics.find((e) => e.id === "E-1")
+    expect(epic!.status).toBe("queued_for_deletion")
+
+    await ctrl.stop()
+  })
+
+  test("duplicate epic delete is silently rejected", async () => {
+    let closeCallCount = 0
+    const ctrl = makeController({
+      deps: {
+        queryAllTasks: () => Effect.succeed([
+          { id: "E-1", title: "Epic One", status: "backlog" as const, labels: ["epic"] },
+        ]),
+        closeEpic: () => {
+          closeCallCount++
+          return Effect.succeed({ removed: true, wasDirty: false })
+        },
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+    await ctrl.refresh()
+    await ctrl.startEpicDeleteConsumer()
+
+    ctrl.enqueueEpicDelete("E-1")
+    ctrl.enqueueEpicDelete("E-1") // duplicate
+
+    await waitFor(() => closeCallCount >= 1)
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Only one closeEpic call — duplicate was rejected
+    expect(closeCallCount).toBe(1)
+
+    await ctrl.stop()
+  })
+
+  test("enqueueEpicDelete is a no-op before startEpicDeleteConsumer", async () => {
+    const ctrl = makeController()
+
+    // Enqueue before consumer is started
+    ctrl.enqueueEpicDelete("E-X")
+    expect(ctrl.getState().epicDeletePendingIds.size).toBe(0)
+
+    await ctrl.stop()
+  })
+
+  test("epic delete and mark-ready queues are independent", async () => {
+    markReadyCalls = []
+    let epicDeleteCalls: string[] = []
+    const ctrl = makeController({
+      deps: {
+        queryAllTasks: () => Effect.succeed([
+          { id: "E-1", title: "Epic", status: "backlog" as const, labels: ["epic"] },
+          { id: "T-1", title: "Task", status: "backlog" as const },
+        ]),
+        closeEpic: (id: string) => {
+          epicDeleteCalls.push(id)
+          return Effect.succeed({ removed: true, wasDirty: false })
+        },
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+    await ctrl.refresh()
+    await ctrl.startMarkReadyConsumer()
+    await ctrl.startEpicDeleteConsumer()
+
+    // Enqueue both operations
+    ctrl.enqueueMarkReady("T-1", [])
+    ctrl.enqueueEpicDelete("E-1")
+
+    await waitFor(() => markReadyCalls.length >= 1 && epicDeleteCalls.length >= 1)
+
+    // Both queues processed independently
+    expect(markReadyCalls).toHaveLength(1)
+    expect(markReadyCalls[0]!.id).toBe("T-1")
+    expect(epicDeleteCalls).toHaveLength(1)
+    expect(epicDeleteCalls[0]).toBe("E-1")
+
+    await ctrl.stop()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Distinct task-ready vs epic-delete actions
+// ---------------------------------------------------------------------------
+
+describe("TuiWatchController — distinct task-ready vs epic-delete actions", () => {
+  test("enqueueMarkReady only affects markReadyPendingIds, not epicDeletePendingIds", async () => {
+    const ctrl = makeController()
+    await ctrl.startMarkReadyConsumer()
+
+    ctrl.enqueueMarkReady("T-1", [])
+
+    const state = ctrl.getState()
+    expect(state.markReadyPendingIds.has("T-1")).toBe(true)
+    expect(state.epicDeletePendingIds.size).toBe(0)
+
+    await ctrl.stop()
+  })
+
+  test("enqueueEpicDelete only affects epicDeletePendingIds, not markReadyPendingIds", async () => {
+    const ctrl = makeController({
+      deps: {
+        queryAllTasks: () => Effect.succeed([
+          { id: "E-1", title: "Epic", status: "backlog" as const, labels: ["epic"] },
+        ]),
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+    await ctrl.refresh()
+    await ctrl.startEpicDeleteConsumer()
+
+    ctrl.enqueueEpicDelete("E-1")
+
+    const state = ctrl.getState()
+    expect(state.epicDeletePendingIds.has("E-1")).toBe(true)
+    expect(state.markReadyPendingIds.size).toBe(0)
+
+    await ctrl.stop()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Cleanup / disposal
 // ---------------------------------------------------------------------------
 
@@ -579,5 +807,35 @@ describe("TuiWatchController — cleanup", () => {
     await new Promise((r) => setTimeout(r, 50))
 
     expect(markReadyCalls.map((c) => c.id)).not.toContain("POST")
+  })
+
+  test("stop() shuts down epic delete queue — enqueue after stop is a no-op", async () => {
+    let deleteCallCount = 0
+    const ctrl = makeController({
+      deps: {
+        queryAllTasks: () => Effect.succeed([
+          { id: "E-1", title: "Epic", status: "backlog" as const, labels: ["epic"] },
+        ]),
+        closeEpic: () => {
+          deleteCallCount++
+          return Effect.succeed({ removed: true, wasDirty: false })
+        },
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+    await ctrl.refresh()
+    await ctrl.startEpicDeleteConsumer()
+
+    ctrl.enqueueEpicDelete("E-1")
+    await waitFor(() => deleteCallCount >= 1)
+
+    await ctrl.stop()
+
+    // After stop, enqueue should be silently dropped
+    ctrl.enqueueEpicDelete("E-POST")
+    await flush()
+    await new Promise((r) => setTimeout(r, 50))
+
+    // No additional calls after stop
+    expect(deleteCallCount).toBe(1)
   })
 })
