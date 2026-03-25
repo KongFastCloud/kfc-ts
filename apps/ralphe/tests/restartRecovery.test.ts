@@ -106,6 +106,11 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
         if (readyOneShot) readyQueue = []
         return result
       })()),
+    queryTaskDetail: (id: string) => Effect.succeed(
+      id === DEFAULT_EPIC_ID
+        ? { id: DEFAULT_EPIC_ID, title: "Default Epic", status: "backlog" as const, description: "Default epic PRD.", labels: ["epic"] }
+        : undefined,
+    ),
     claimTask: (id: string) =>
       Effect.succeed((() => {
         calls.push({ op: "claimTask", id })
@@ -216,8 +221,10 @@ function makeCallbacks() {
   }
 }
 
+const DEFAULT_EPIC_ID = "default-epic"
+
 function makeIssue(id: string, title = `Task ${id}`): BeadsIssue {
-  return { id, title, description: `Description for ${id}` }
+  return { id, title, description: `Description for ${id}`, parentId: DEFAULT_EPIC_ID }
 }
 
 /** Wait until a predicate becomes true or timeout. Default 5s for CI reliability. */

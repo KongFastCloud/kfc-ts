@@ -164,6 +164,7 @@ export const makeBeadsRunObserver = (
  * This is the watch-specific counterpart to the CLI request assembly in
  * cli.ts. Differences from direct-run assembly:
  * - Task text comes from issue fields (title, description, design, etc.)
+ * - Epic PRD preamble is prepended when the task belongs to an epic
  * - Previous error context is appended when retrying a failed task
  * - No CLI flag overrides — all settings come from config
  */
@@ -172,8 +173,14 @@ export const buildWatchRequest = (
   config: RalpheConfig,
   previousError?: string,
   buildPromptFromIssue: (issue: BeadsIssue) => string = defaultBuildPromptFromIssue,
+  /** Optional epic PRD preamble to prepend to the task prompt. */
+  epicPreamble?: string,
 ): RunRequest => {
-  let task = buildPromptFromIssue(issue)
+  let task = ""
+  if (epicPreamble) {
+    task += epicPreamble + "\n"
+  }
+  task += buildPromptFromIssue(issue)
   if (previousError) {
     task += `\n\n## Previous Error\n${previousError}`
   }

@@ -434,6 +434,7 @@ export const queryQueued = (
           design: t.design,
           acceptance_criteria: t.acceptance_criteria,
           notes: t.notes,
+          parentId: t.parentId,
         })),
     ),
   )

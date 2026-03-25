@@ -55,8 +55,10 @@ const baseConfig: RalpheConfig = {
   git: { mode: "none" },
 }
 
+const DEFAULT_EPIC_ID = "default-epic"
+
 function makeIssue(id: string, title = `Task ${id}`): BeadsIssue {
-  return { id, title, description: `Description for ${id}` }
+  return { id, title, description: `Description for ${id}`, parentId: DEFAULT_EPIC_ID }
 }
 
 let workflowCalls: Array<{ op: string; id?: string }> = []
@@ -74,6 +76,11 @@ function makeWorkflowDeps(overrides?: Partial<WatchWorkflowDeps>): WatchWorkflow
   return {
     loadConfig: () => baseConfig,
     queryQueued: () => Effect.succeed([]),
+    queryTaskDetail: (id) => Effect.succeed(
+      id === DEFAULT_EPIC_ID
+        ? { id: DEFAULT_EPIC_ID, title: "Default Epic", status: "backlog" as const, description: "Default epic PRD.", labels: ["epic"] }
+        : undefined,
+    ),
     claimTask: () => Effect.succeed(true),
     closeTaskSuccess: (id) => {
       workflowCalls.push({ op: "closeTaskSuccess", id })

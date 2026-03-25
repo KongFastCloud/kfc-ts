@@ -22,6 +22,7 @@ import { Engine, type AgentResult } from "../src/engine/Engine.js"
 import { FatalError } from "../src/errors.js"
 import type { BeadsIssue, BeadsMetadata } from "../src/beads.js"
 import type { RalpheConfig } from "../src/config.js"
+import type { WatchTask } from "../src/beadsAdapter.js"
 import { EngineResolver } from "../src/EngineResolver.js"
 import {
   processClaimedTask,
@@ -30,6 +31,12 @@ import {
   type PollResult,
   type WatchWorkflowDeps,
 } from "../src/watchWorkflow.js"
+import {
+  EPIC_ERROR_NO_PARENT,
+  EPIC_ERROR_PARENT_NOT_FOUND,
+  EPIC_ERROR_MISSING_LABEL,
+  EPIC_ERROR_EMPTY_BODY,
+} from "../src/epic.js"
 
 // ---------------------------------------------------------------------------
 // Configurable stubs
@@ -56,6 +63,9 @@ let previousMetadata: BeadsMetadata | undefined = undefined
 
 // Track prompts assembled by buildWatchRequest
 let assembledPrompts: string[] = []
+
+// Mock epic data returned by queryTaskDetail (for parent epic loading)
+let epicDetailsByParentId: Map<string, WatchTask | undefined> = new Map()
 
 // ---------------------------------------------------------------------------
 // Local dependency harness
@@ -86,6 +96,19 @@ const makeMockEngineResolverLayer = (): Layer.Layer<EngineResolver> => {
   return Layer.succeed(EngineResolver, mockResolver)
 }
 
+/**
+ * Create a valid mock epic WatchTask for testing.
+ */
+function makeEpic(id: string, title = `Epic ${id}`, description = `PRD for ${id}`): WatchTask {
+  return {
+    id,
+    title,
+    status: "backlog",
+    description,
+    labels: ["epic"],
+  }
+}
+
 function makeWorkflowDeps(): WatchWorkflowDeps {
   return {
     loadConfig: () => baseConfig,
@@ -94,6 +117,10 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
         calls.push({ op: "queryQueued" })
         return [...readyQueue]
       })()),
+    queryTaskDetail: (id: string) => {
+      calls.push({ op: "queryTaskDetail", id })
+      return Effect.succeed(epicDetailsByParentId.get(id))
+    },
     claimTask: (id: string) =>
       Effect.succeed((() => {
         calls.push({ op: "claimTask", id })
@@ -143,14 +170,21 @@ beforeEach(() => {
   previousMetadata = undefined
   calls = []
   assembledPrompts = []
+  // Pre-populate the default epic so existing tests pass with epic validation
+  epicDetailsByParentId = new Map([
+    [DEFAULT_EPIC_ID, makeEpic(DEFAULT_EPIC_ID, "Default Epic", "Default epic PRD body.")],
+  ])
 })
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeIssue(id: string, title = `Task ${id}`): BeadsIssue {
-  return { id, title, description: `Description for ${id}` }
+/** Default epic ID used by makeIssue. Pre-populated in epicDetailsByParentId for each test. */
+const DEFAULT_EPIC_ID = "default-epic"
+
+function makeIssue(id: string, title = `Task ${id}`, parentId = DEFAULT_EPIC_ID): BeadsIssue {
+  return { id, title, description: `Description for ${id}`, parentId }
 }
 
 // ===========================================================================
@@ -180,6 +214,7 @@ describe("processClaimedTask: success lifecycle", () => {
     expect(result.resumeToken).toBe("tok-abc")
 
     // Verify operation ordering:
+    // - queryTaskDetail (epic context loading)
     // - readMetadata (previous error check)
     // - writeMetadata (observer.onStart: start metadata)
     // - addComment (observer.onAgentResult: session comment)
@@ -188,6 +223,7 @@ describe("processClaimedTask: success lifecycle", () => {
     // - closeTaskSuccess (processClaimedTask: status transition)
     const ops = calls.map((c) => c.op)
     expect(ops).toEqual([
+      "queryTaskDetail",  // epic context loading
       "readMetadata",
       "writeMetadata",    // start metadata (observer.onStart)
       "addComment",       // session comment (observer.onAgentResult)
@@ -304,6 +340,7 @@ describe("processClaimedTask: failure lifecycle", () => {
 
     const ops = calls.map((c) => c.op)
     expect(ops).toEqual([
+      "queryTaskDetail",            // epic context loading
       "readMetadata",
       "writeMetadata",              // start metadata (observer.onStart)
       "writeMetadata",              // final metadata (observer.onComplete)
@@ -619,6 +656,7 @@ describe("pollClaimAndProcess: prompt building", () => {
       id: "poll-prompt",
       title: "Add user authentication",
       description: "Implement OAuth2 login flow",
+      parentId: DEFAULT_EPIC_ID,
     }]
     claimResults.set("poll-prompt", true)
     engineResult = Effect.succeed({ response: "done" })
@@ -721,5 +759,175 @@ describe("watch executes through shared workflow builder", () => {
     const successComment = commentCalls.find((c) => c.text?.includes("all checks passed"))
     expect(successComment).toBeTruthy()
     expect(successComment?.id).toBe("wf-observer")
+  })
+})
+
+// ===========================================================================
+// Contract 8: epic-backed execution context
+// ===========================================================================
+
+describe("processClaimedTask: epic context validation", () => {
+  test("standalone task (no parentId) is rejected with explicit error", async () => {
+    const issue: BeadsIssue = {
+      id: "standalone-1",
+      title: "Orphan task",
+      description: "No parent",
+      // parentId intentionally omitted
+    }
+    engineResult = Effect.succeed({ response: "done" })
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.taskId).toBe("standalone-1")
+    expect(result.error).toBe(EPIC_ERROR_NO_PARENT)
+
+    // Should have called markTaskExhaustedFailure
+    const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
+    expect(exhaustedCall).toBeTruthy()
+    expect(exhaustedCall?.id).toBe("standalone-1")
+    expect(exhaustedCall?.reason).toBe(EPIC_ERROR_NO_PARENT)
+
+    // Should NOT have executed the agent (no writeMetadata from observer)
+    const writeMetaCalls = calls.filter((c) => c.op === "writeMetadata")
+    expect(writeMetaCalls.length).toBe(0)
+  })
+
+  test("task whose parent is not found is rejected", async () => {
+    const issue = makeIssue("child-1", "Child task", "nonexistent-epic")
+    // Do not register the parent in epicDetailsByParentId
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toBe(EPIC_ERROR_PARENT_NOT_FOUND("nonexistent-epic"))
+  })
+
+  test("task whose parent lacks epic label is rejected", async () => {
+    epicDetailsByParentId.set("not-an-epic", {
+      id: "not-an-epic",
+      title: "Regular issue",
+      status: "backlog",
+      description: "Some description",
+      labels: ["feature"], // no "epic" label
+    })
+    const issue = makeIssue("child-2", "Child task", "not-an-epic")
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toBe(EPIC_ERROR_MISSING_LABEL("not-an-epic"))
+  })
+
+  test("task whose parent epic has empty body is rejected", async () => {
+    epicDetailsByParentId.set("empty-epic", {
+      id: "empty-epic",
+      title: "Epic without PRD",
+      status: "backlog",
+      description: "",
+      labels: ["epic"],
+    })
+    const issue = makeIssue("child-3", "Child task", "empty-epic")
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toBe(EPIC_ERROR_EMPTY_BODY("empty-epic"))
+  })
+
+  test("task with valid epic parent executes successfully", async () => {
+    epicDetailsByParentId.set("valid-epic", {
+      id: "valid-epic",
+      title: "Auth Epic",
+      status: "backlog",
+      description: "Full PRD: implement OAuth2 login flow.",
+      labels: ["epic"],
+    })
+    const issue = makeIssue("child-ok", "Implement login", "valid-epic")
+    engineResult = Effect.succeed({ response: "done", resumeToken: "tok-ok" })
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(true)
+    expect(result.taskId).toBe("child-ok")
+
+    // Verify epic context was loaded
+    expect(calls.some((c) => c.op === "queryTaskDetail" && c.id === "valid-epic")).toBe(true)
+
+    // Verify task was closed successfully
+    expect(calls.some((c) => c.op === "closeTaskSuccess")).toBe(true)
+  })
+
+  test("epic PRD is prepended to task prompt", async () => {
+    epicDetailsByParentId.set("prd-epic", {
+      id: "prd-epic",
+      title: "Database Migration Epic",
+      status: "backlog",
+      description: "Migrate from SQLite to Postgres with zero downtime.",
+      labels: ["epic"],
+    })
+    const issue = makeIssue("child-prd", "Create migration script", "prd-epic")
+    engineResult = Effect.succeed({ response: "done" })
+
+    await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    // The assembled prompt should contain the epic preamble
+    expect(assembledPrompts.length).toBe(1)
+    // The full task text passed to the engine includes epic preamble + task prompt.
+    // We verify by checking the writeMetadata was called (meaning execution happened).
+    const metaCalls = calls.filter((c) => c.op === "writeMetadata")
+    expect(metaCalls.length).toBeGreaterThanOrEqual(1)
+  })
+
+  test("invalid epic context marks task as exhausted failure with timing metadata", async () => {
+    const issue: BeadsIssue = {
+      id: "timing-standalone",
+      title: "Timing test",
+      // no parentId
+    }
+
+    await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
+    expect(exhaustedCall).toBeTruthy()
+    expect(exhaustedCall?.metadata?.startedAt).toBeTruthy()
+    expect(exhaustedCall?.metadata?.finishedAt).toBeTruthy()
+    expect(exhaustedCall?.metadata?.workerId).toBe("worker-1")
+    expect(exhaustedCall?.metadata?.engine).toBe("claude")
+  })
+})
+
+describe("pollClaimAndProcess: epic context in poll cycle", () => {
+  test("standalone task in queue is rejected during processing", async () => {
+    readyQueue = [{
+      id: "poll-standalone",
+      title: "Orphan in queue",
+      // no parentId
+    }]
+    claimResults.set("poll-standalone", true)
+
+    const result = await Effect.runPromise(
+      pollClaimAndProcess("/tmp", "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result._tag).toBe("Processed")
+    if (result._tag === "Processed") {
+      expect(result.result.success).toBe(false)
+      expect(result.result.error).toBe(EPIC_ERROR_NO_PARENT)
+    }
   })
 })

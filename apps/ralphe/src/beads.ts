@@ -12,6 +12,8 @@ export interface BeadsIssue {
   readonly design?: string | undefined
   readonly acceptance_criteria?: string | undefined
   readonly notes?: string | undefined
+  /** Parent issue ID (epic membership). */
+  readonly parentId?: string | undefined
 }
 
 export interface BeadsMetadata {
@@ -104,14 +106,24 @@ const parseIssueJson = (json: string): BeadsIssue[] => {
     const items = Array.isArray(parsed) ? parsed : [parsed]
     return items
       .filter((item: JsonRecord) => item && typeof item === "object" && typeof item.id === "string")
-      .map((item: JsonRecord) => ({
-        id: item.id as string,
-        title: (item.title as string) ?? "",
-        description: item.description as string | undefined,
-        design: item.design as string | undefined,
-        acceptance_criteria: item.acceptance_criteria as string | undefined,
-        notes: item.notes as string | undefined,
-      }))
+      .map((item: JsonRecord) => {
+        // Infer parentId from explicit field or dotted ID notation
+        let parentId = item.parent as string | undefined
+        const id = item.id as string
+        if (!parentId && id.includes(".")) {
+          const lastDot = id.lastIndexOf(".")
+          parentId = id.substring(0, lastDot)
+        }
+        return {
+          id,
+          title: (item.title as string) ?? "",
+          description: item.description as string | undefined,
+          design: item.design as string | undefined,
+          acceptance_criteria: item.acceptance_criteria as string | undefined,
+          notes: item.notes as string | undefined,
+          parentId,
+        }
+      })
   } catch {
     return []
   }

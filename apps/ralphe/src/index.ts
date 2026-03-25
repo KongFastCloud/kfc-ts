@@ -32,6 +32,16 @@ export { EngineResolver, DefaultEngineResolver, DefaultEngineResolverLayer } fro
 export { makeBeadsRunObserver, buildWatchRequest } from "./BeadsRunObserver.js"
 export type { BeadsObserverDeps } from "./BeadsRunObserver.js"
 export {
+  loadEpicContext,
+  validateEpicContext,
+  buildEpicPreamble,
+  EPIC_ERROR_NO_PARENT,
+  EPIC_ERROR_PARENT_NOT_FOUND,
+  EPIC_ERROR_MISSING_LABEL,
+  EPIC_ERROR_EMPTY_BODY,
+} from "./epic.js"
+export type { EpicContext, QueryTaskDetail } from "./epic.js"
+export {
   buildPromptFromIssue,
   queryReady,
   claimTask,

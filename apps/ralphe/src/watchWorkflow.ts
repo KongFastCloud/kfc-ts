@@ -18,7 +18,7 @@ import { buildRunWorkflow } from "./buildRunWorkflow.js"
 import { makeBeadsRunObserver, buildWatchRequest, type BeadsObserverState } from "./BeadsRunObserver.js"
 import { RunObserver } from "./RunObserver.js"
 import { EngineResolver, DefaultEngineResolverLayer } from "./EngineResolver.js"
-import { queryQueued } from "./beadsAdapter.js"
+import { queryQueued, queryTaskDetail } from "./beadsAdapter.js"
 import {
   claimTask,
   closeTaskSuccess,
@@ -30,6 +30,7 @@ import {
   type BeadsIssue,
   type BeadsMetadata,
 } from "./beads.js"
+import { loadEpicContext, buildEpicPreamble, type EpicContext } from "./epic.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,6 +58,7 @@ export type PollResult =
 export interface WatchWorkflowDeps {
   readonly loadConfig: typeof loadConfig
   readonly queryQueued: typeof queryQueued
+  readonly queryTaskDetail: typeof queryTaskDetail
   readonly claimTask: typeof claimTask
   readonly readMetadata: typeof readMetadata
   readonly buildPromptFromIssue: typeof buildPromptFromIssue
@@ -97,6 +99,7 @@ export const processClaimedTask = (
     const deps: WatchWorkflowDeps = {
       loadConfig,
       queryQueued,
+      queryTaskDetail,
       claimTask,
       readMetadata,
       buildPromptFromIssue,
@@ -108,12 +111,48 @@ export const processClaimedTask = (
       ...depsOverride,
     }
 
+    // -----------------------------------------------------------------------
+    // Epic context validation: tasks must belong to a valid epic
+    // -----------------------------------------------------------------------
+
+    const epicResult = yield* loadEpicContext(
+      issue.parentId,
+      deps.queryTaskDetail,
+    ).pipe(Effect.either)
+
+    if (epicResult._tag === "Left") {
+      // Invalid epic context — mark the task as errored with a clear reason
+      const reason = epicResult.left
+      yield* Effect.logWarning(`Epic context invalid for task ${issue.id}: ${reason}`)
+      const now = new Date().toISOString()
+      yield* deps.markTaskExhaustedFailure(
+        issue.id,
+        reason,
+        {
+          engine: config.engine,
+          workerId,
+          timestamp: now,
+          startedAt: now,
+          finishedAt: now,
+        },
+      )
+      return {
+        success: false,
+        taskId: issue.id,
+        engine: config.engine,
+        error: reason,
+      }
+    }
+
+    const epicContext: EpicContext = epicResult.right
+    const epicPreamble = buildEpicPreamble(epicContext)
+
     // Read existing metadata before overwriting to capture previous error
     const existingMeta = yield* Effect.either(deps.readMetadata(issue.id))
     const previousError = existingMeta._tag === "Right" ? existingMeta.right?.error : undefined
 
-    // Build pure-data request via watch-specific factory
-    const request = buildWatchRequest(issue, config, previousError, deps.buildPromptFromIssue)
+    // Build pure-data request via watch-specific factory (now with epic preamble)
+    const request = buildWatchRequest(issue, config, previousError, deps.buildPromptFromIssue, epicPreamble)
 
     // Observer state is shared so processClaimedTask can read startedAt
     // for the final metadata written during status transitions.
@@ -195,6 +234,7 @@ export const pollClaimAndProcess = (
     const deps: WatchWorkflowDeps = {
       loadConfig,
       queryQueued,
+      queryTaskDetail,
       claimTask,
       readMetadata,
       buildPromptFromIssue,
