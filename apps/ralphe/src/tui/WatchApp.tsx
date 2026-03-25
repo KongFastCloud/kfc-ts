@@ -1,10 +1,17 @@
 /** @jsxImportSource @opentui/react */
 /**
  * ABOUTME: Watch-mode TUI application component.
- * Renders a two-view flow: a dashboard landing screen with two stacked
- * tables (active / done) and a detail drill-down view for inspecting a
- * single task. Enter navigates from dashboard to detail; Esc/Backspace
- * returns to dashboard. No worker log panel is rendered.
+ * Renders a split view with three panes: Active tasks (primary),
+ * Done tasks, and Epic pane (secondary, focusable). The dashboard
+ * landing screen supports tab-cycling through all three panes.
+ * Enter navigates from task panes to detail; Esc/Backspace returns.
+ * Epic pane does not support detail drill-down.
+ *
+ * Key bindings:
+ * - Tab: cycle focus through active → done → epic → active
+ * - m: mark-ready (task panes only)
+ * - d: delete epic (epic pane only, immediate, no confirmation)
+ * - Enter: detail view (task panes only)
  */
 
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
@@ -14,6 +21,7 @@ import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
 import { getAvailableActions } from "../beadsAdapter.js"
 import type { RalpheConfig, GitMode } from "../config.js"
 import type { WorkerStatus } from "../tuiWorker.js"
+import type { EpicDisplayItem } from "./epicStatus.js"
 import { DashboardView, partitionTasks, formatCompletedAt, formatDuration } from "./DashboardView.js"
 import {
   initialDashboardFocusState,
@@ -66,6 +74,8 @@ const taskStatusIndicator: Record<WatchTaskStatus, string> = {
 export interface WatchAppProps {
   /** Current task list — projected from controller state. */
   tasks: WatchTask[]
+  /** Epic display items for the epic pane. */
+  epics: EpicDisplayItem[]
   /** Current refresh error — projected from controller state. */
   error: string | undefined
   /** Timestamp of last successful refresh — projected from controller state. */
@@ -101,6 +111,15 @@ export interface WatchAppProps {
   onFetchTaskDetail?: ((taskId: string) => void) | undefined
   /** Callback to clear detail state when exiting detail view. */
   onExitDetailView?: (() => void) | undefined
+  /**
+   * Enqueue an epic deletion action. Immediate, no confirmation.
+   * The epic will be closed in Beads and its worktree removed.
+   */
+  onEnqueueEpicDelete?: ((epicId: string) => void) | undefined
+  /**
+   * Set of epic IDs currently queued or in-flight for deletion.
+   */
+  epicDeletePendingIds?: ReadonlySet<string> | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -205,11 +224,11 @@ function WatchHeader({
   )
 }
 
-function WatchFooter({ viewMode, hasMarkReady }: { viewMode: "dashboard" | "detail"; hasMarkReady?: boolean }): ReactNode {
+function WatchFooter({ viewMode, hasMarkReady, hasEpicDelete }: { viewMode: "dashboard" | "detail"; hasMarkReady?: boolean; hasEpicDelete?: boolean }): ReactNode {
   const navShortcuts =
     viewMode === "detail"
       ? "Esc/Backspace:Back  ^Q:Quit"
-      : `↑↓:Navigate  Tab:Switch Table  Enter:Detail  r:Refresh${hasMarkReady ? "  m:Mark Ready" : ""}  ^Q:Quit`
+      : `↑↓:Navigate  Tab:Switch Pane  Enter:Detail  r:Refresh${hasMarkReady ? "  m:Mark Ready" : ""}${hasEpicDelete ? "  d:Delete Epic" : ""}  ^Q:Quit`
   return (
     <box
       style={{
@@ -578,6 +597,7 @@ function DetailPane({ task, loading, error: detailFetchError }: { task: WatchTas
 
 export function WatchApp({
   tasks,
+  epics,
   error,
   lastRefreshed,
   onRefresh,
@@ -591,16 +611,19 @@ export function WatchApp({
   detailError: detailErrorProp,
   onFetchTaskDetail,
   onExitDetailView,
+  onEnqueueEpicDelete,
+  epicDeletePendingIds: epicDeletePendingIdsProp,
 }: WatchAppProps): ReactNode {
   const { width } = useTerminalDimensions()
 
   // Dashboard focus and per-table selection state (single source of truth)
   const [focusState, setFocusState] = useState(initialDashboardFocusState)
-  const { focusedTable, activeSelectedIndex, doneSelectedIndex, activeScrollOffset, doneScrollOffset, viewMode } = focusState
+  const { focusedTable, activeSelectedIndex, doneSelectedIndex, epicSelectedIndex, activeScrollOffset, doneScrollOffset, epicScrollOffset, viewMode } = focusState
 
   // Measured visible row counts from DashboardTable (updated via callbacks)
   const [activeVisibleRows, setActiveVisibleRows] = useState(0)
   const [doneVisibleRows, setDoneVisibleRows] = useState(0)
+  const [epicVisibleRows, setEpicVisibleRows] = useState(0)
 
   // Partition once for use in handlers and render
   const { active: activeTasks, done: doneTasks } = partitionTasks(tasks)
@@ -609,20 +632,30 @@ export function WatchApp({
   const selectedTask =
     focusedTable === "active"
       ? activeTasks[activeSelectedIndex] ?? null
-      : doneTasks[doneSelectedIndex] ?? null
+      : focusedTable === "done"
+        ? doneTasks[doneSelectedIndex] ?? null
+        : null // Epic pane — no task selected
+
+  // Derive the currently selected epic for epic actions
+  const selectedEpic =
+    focusedTable === "epic"
+      ? epics[epicSelectedIndex] ?? null
+      : null
 
   // Clamp focus when tasks change (covers all refresh paths: initial,
   // periodic, manual, and post-task).
   const prevTasksRef = useRef(tasks)
+  const prevEpicsRef = useRef(epics)
   useEffect(() => {
-    if (prevTasksRef.current !== tasks) {
+    if (prevTasksRef.current !== tasks || prevEpicsRef.current !== epics) {
       prevTasksRef.current = tasks
+      prevEpicsRef.current = epics
       const { active, done } = partitionTasks(tasks)
       setFocusState((prev) =>
-        clampAfterRefresh(prev, active.length, done.length, activeVisibleRows, doneVisibleRows),
+        clampAfterRefresh(prev, active.length, done.length, activeVisibleRows, doneVisibleRows, epics.length, epicVisibleRows),
       )
     }
-  }, [tasks, activeVisibleRows, doneVisibleRows])
+  }, [tasks, epics, activeVisibleRows, doneVisibleRows, epicVisibleRows])
 
   // Trigger refresh — fire-and-forget; the controller owns task data.
   const doRefresh = useCallback(() => {
@@ -634,6 +667,7 @@ export function WatchApp({
   // Mark-ready pending IDs from the controller's Effect-native queue.
   // Falls back to an empty set when the controller does not provide one.
   const markingReadyIds = markReadyPendingIdsProp ?? emptySet
+  const epicDeletingIds = epicDeletePendingIdsProp ?? emptySet
 
   // Keyboard handler — delegates to pure state transitions from dashboardFocus.ts
   const handleKeyboard = useCallback(
@@ -672,7 +706,9 @@ export function WatchApp({
         case "up":
         case "k":
           setFocusState((prev) => {
-            const vis = prev.focusedTable === "active" ? activeVisibleRows : doneVisibleRows
+            const vis = prev.focusedTable === "active" ? activeVisibleRows
+              : prev.focusedTable === "done" ? doneVisibleRows
+              : epicVisibleRows
             return moveSelectionUp(prev, vis)
           })
           break
@@ -680,13 +716,17 @@ export function WatchApp({
         case "down":
         case "j":
           setFocusState((prev) => {
-            const vis = prev.focusedTable === "active" ? activeVisibleRows : doneVisibleRows
-            return moveSelectionDown(prev, activeTasks.length, doneTasks.length, vis)
+            const vis = prev.focusedTable === "active" ? activeVisibleRows
+              : prev.focusedTable === "done" ? doneVisibleRows
+              : epicVisibleRows
+            return moveSelectionDown(prev, activeTasks.length, doneTasks.length, vis, epics.length)
           })
           break
 
         case "return":
         case "enter": {
+          // Only task panes support detail drill-down
+          if (focusedTable === "epic") break
           const taskToDetail =
             focusedTable === "active"
               ? activeTasks[activeSelectedIndex]
@@ -703,7 +743,7 @@ export function WatchApp({
           break
 
         case "m":
-          // Mark Ready action — enqueue into the controller's Effect-native queue
+          // Mark Ready action — task panes only
           if (
             onEnqueueMarkReady &&
             selectedTask &&
@@ -714,14 +754,40 @@ export function WatchApp({
           }
           break
 
+        case "d":
+          // Delete Epic action — epic pane only, immediate, no confirmation
+          if (
+            onEnqueueEpicDelete &&
+            focusedTable === "epic" &&
+            selectedEpic &&
+            selectedEpic.status !== "queued_for_deletion" &&
+            !epicDeletingIds.has(selectedEpic.id)
+          ) {
+            onEnqueueEpicDelete(selectedEpic.id)
+          }
+          break
+
         default:
           break
       }
     },
-    [viewMode, activeTasks.length, doneTasks.length, onQuit, doRefresh, selectedTask, activeVisibleRows, doneVisibleRows, markingReadyIds, onEnqueueMarkReady, onFetchTaskDetail, onExitDetailView, focusedTable, activeSelectedIndex, doneSelectedIndex],
+    [viewMode, activeTasks.length, doneTasks.length, epics.length, onQuit, doRefresh, selectedTask, selectedEpic, activeVisibleRows, doneVisibleRows, epicVisibleRows, markingReadyIds, epicDeletingIds, onEnqueueMarkReady, onEnqueueEpicDelete, onFetchTaskDetail, onExitDetailView, focusedTable, activeSelectedIndex, doneSelectedIndex, epicSelectedIndex],
   )
 
   useKeyboard(handleKeyboard)
+
+  // Determine context-sensitive footer hints
+  const hasMarkReady =
+    viewMode === "dashboard" &&
+    (focusedTable === "active" || focusedTable === "done") &&
+    selectedTask != null &&
+    getAvailableActions(selectedTask).includes("mark-ready")
+
+  const hasEpicDelete =
+    viewMode === "dashboard" &&
+    focusedTable === "epic" &&
+    selectedEpic != null &&
+    selectedEpic.status !== "queued_for_deletion"
 
   return (
     <box
@@ -755,26 +821,27 @@ export function WatchApp({
         ) : (
           <DashboardView
             tasks={tasks}
+            epics={epics}
             focusedTable={focusedTable}
             activeSelectedIndex={activeSelectedIndex}
             doneSelectedIndex={doneSelectedIndex}
+            epicSelectedIndex={epicSelectedIndex}
             activeScrollOffset={activeScrollOffset}
             doneScrollOffset={doneScrollOffset}
+            epicScrollOffset={epicScrollOffset}
             terminalWidth={width}
             markingReadyIds={markingReadyIds as Set<string>}
             onActiveVisibleRowCountChange={setActiveVisibleRows}
             onDoneVisibleRowCountChange={setDoneVisibleRows}
+            onEpicVisibleRowCountChange={setEpicVisibleRows}
           />
         )}
       </box>
 
       <WatchFooter
         viewMode={viewMode}
-        hasMarkReady={
-          viewMode === "dashboard" &&
-          selectedTask != null &&
-          getAvailableActions(selectedTask).includes("mark-ready")
-        }
+        hasMarkReady={hasMarkReady}
+        hasEpicDelete={hasEpicDelete}
       />
     </box>
   )

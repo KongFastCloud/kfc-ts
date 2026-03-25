@@ -4,6 +4,9 @@
  * initial state factory, and all state transition functions for
  * dashboard table focus, per-table selection, per-table scroll offset,
  * and view mode.
+ *
+ * Supports three focusable panes: active tasks (primary), done tasks,
+ * and epic pane (secondary). Tab cycles through all three panes.
  */
 
 import type { FocusedTable } from "./DashboardView.js"
@@ -23,6 +26,10 @@ export interface DashboardFocusState {
   activeScrollOffset: number
   /** Scroll offset (first visible row) for the done (bottom) table. */
   doneScrollOffset: number
+  /** Selected row index within the epic pane. */
+  epicSelectedIndex: number
+  /** Scroll offset (first visible row) for the epic pane. */
+  epicScrollOffset: number
   /** Current view mode. */
   viewMode: "dashboard" | "detail"
 }
@@ -39,6 +46,8 @@ export function initialDashboardFocusState(): DashboardFocusState {
     doneSelectedIndex: 0,
     activeScrollOffset: 0,
     doneScrollOffset: 0,
+    epicSelectedIndex: 0,
+    epicScrollOffset: 0,
     viewMode: "dashboard",
   }
 }
@@ -85,15 +94,24 @@ export function clampScrollOffset(
 }
 
 // ---------------------------------------------------------------------------
+// Focus cycle order
+// ---------------------------------------------------------------------------
+
+/** Tab-cycle order for pane focus. */
+const FOCUS_CYCLE: readonly FocusedTable[] = ["active", "done", "epic"]
+
+// ---------------------------------------------------------------------------
 // State transitions
 // ---------------------------------------------------------------------------
 
-/** Toggle focused table (Tab key). Works even when a table is empty. */
+/**
+ * Cycle focused pane (Tab key).
+ * Cycles: active → done → epic → active.
+ */
 export function toggleFocusedTable(state: DashboardFocusState): DashboardFocusState {
-  return {
-    ...state,
-    focusedTable: state.focusedTable === "active" ? "done" : "active",
-  }
+  const idx = FOCUS_CYCLE.indexOf(state.focusedTable)
+  const next = FOCUS_CYCLE[(idx + 1) % FOCUS_CYCLE.length]!
+  return { ...state, focusedTable: next }
 }
 
 /** Move selection up within the focused table. Adjusts scroll offset if needed. */
@@ -109,11 +127,20 @@ export function moveSelectionUp(
       activeScrollOffset: ensureVisible(state.activeScrollOffset, newIndex, visibleRowCount),
     }
   }
-  const newIndex = Math.max(0, state.doneSelectedIndex - 1)
+  if (state.focusedTable === "done") {
+    const newIndex = Math.max(0, state.doneSelectedIndex - 1)
+    return {
+      ...state,
+      doneSelectedIndex: newIndex,
+      doneScrollOffset: ensureVisible(state.doneScrollOffset, newIndex, visibleRowCount),
+    }
+  }
+  // epic
+  const newIndex = Math.max(0, state.epicSelectedIndex - 1)
   return {
     ...state,
-    doneSelectedIndex: newIndex,
-    doneScrollOffset: ensureVisible(state.doneScrollOffset, newIndex, visibleRowCount),
+    epicSelectedIndex: newIndex,
+    epicScrollOffset: ensureVisible(state.epicScrollOffset, newIndex, visibleRowCount),
   }
 }
 
@@ -123,6 +150,7 @@ export function moveSelectionDown(
   activeCount: number,
   doneCount: number,
   visibleRowCount: number,
+  epicCount?: number,
 ): DashboardFocusState {
   if (state.focusedTable === "active") {
     const newIndex =
@@ -133,24 +161,38 @@ export function moveSelectionDown(
       activeScrollOffset: ensureVisible(state.activeScrollOffset, newIndex, visibleRowCount),
     }
   }
+  if (state.focusedTable === "done") {
+    const newIndex =
+      doneCount === 0 ? 0 : Math.min(doneCount - 1, state.doneSelectedIndex + 1)
+    return {
+      ...state,
+      doneSelectedIndex: newIndex,
+      doneScrollOffset: ensureVisible(state.doneScrollOffset, newIndex, visibleRowCount),
+    }
+  }
+  // epic
+  const count = epicCount ?? 0
   const newIndex =
-    doneCount === 0 ? 0 : Math.min(doneCount - 1, state.doneSelectedIndex + 1)
+    count === 0 ? 0 : Math.min(count - 1, state.epicSelectedIndex + 1)
   return {
     ...state,
-    doneSelectedIndex: newIndex,
-    doneScrollOffset: ensureVisible(state.doneScrollOffset, newIndex, visibleRowCount),
+    epicSelectedIndex: newIndex,
+    epicScrollOffset: ensureVisible(state.epicScrollOffset, newIndex, visibleRowCount),
   }
 }
 
 /**
  * Attempt to enter detail view (Enter key).
  * Returns unchanged state if the focused table is empty.
+ * Epic pane does not support detail view — returns unchanged state.
  */
 export function enterDetail(
   state: DashboardFocusState,
   activeCount: number,
   doneCount: number,
 ): DashboardFocusState {
+  // Epic pane does not support detail drill-down
+  if (state.focusedTable === "epic") return state
   const tableLen = state.focusedTable === "active" ? activeCount : doneCount
   if (tableLen === 0) return state
   return { ...state, viewMode: "detail" }
@@ -175,11 +217,18 @@ export function clampAfterRefresh(
   doneCount: number,
   activeVisibleRowCount: number,
   doneVisibleRowCount: number,
+  epicCount?: number,
+  epicVisibleRowCount?: number,
 ): DashboardFocusState {
   const activeSelectedIndex =
     activeCount === 0 ? 0 : Math.min(state.activeSelectedIndex, activeCount - 1)
   const doneSelectedIndex =
     doneCount === 0 ? 0 : Math.min(state.doneSelectedIndex, doneCount - 1)
+
+  const eCount = epicCount ?? 0
+  const eVis = epicVisibleRowCount ?? 0
+  const epicSelectedIndex =
+    eCount === 0 ? 0 : Math.min(state.epicSelectedIndex, eCount - 1)
 
   // Clamp scroll offsets to valid range, then ensure selected row is visible
   const activeScrollClamped = clampScrollOffset(
@@ -192,11 +241,18 @@ export function clampAfterRefresh(
     doneCount,
     doneVisibleRowCount,
   )
+  const epicScrollClamped = clampScrollOffset(
+    state.epicScrollOffset,
+    eCount,
+    eVis,
+  )
 
   // If in detail view and the focused table is now empty, the selected task
   // is no longer resolvable — fall back to dashboard view.
   const focusedTableEmpty =
-    state.focusedTable === "active" ? activeCount === 0 : doneCount === 0
+    state.focusedTable === "active" ? activeCount === 0
+    : state.focusedTable === "done" ? doneCount === 0
+    : eCount === 0
   const viewMode =
     state.viewMode === "detail" && focusedTableEmpty ? "dashboard" : state.viewMode
 
@@ -205,7 +261,9 @@ export function clampAfterRefresh(
     viewMode,
     activeSelectedIndex,
     doneSelectedIndex,
+    epicSelectedIndex,
     activeScrollOffset: ensureVisible(activeScrollClamped, activeSelectedIndex, activeVisibleRowCount),
     doneScrollOffset: ensureVisible(doneScrollClamped, doneSelectedIndex, doneVisibleRowCount),
+    epicScrollOffset: ensureVisible(epicScrollClamped, epicSelectedIndex, eVis),
   }
 }

@@ -83,12 +83,18 @@ export function WatchSession({ controller, workDir }: WatchSessionProps): ReactN
     [controller],
   )
 
+  const onEnqueueEpicDelete = useCallback(
+    (epicId: string) => controller.enqueueEpicDelete(epicId),
+    [controller],
+  )
+
   // Load config each render — matches previous behavior in the rerender() helper.
   const config = loadConfig(workDir)
 
   return (
     <WatchApp
       tasks={controllerState.latestTasks}
+      epics={controllerState.epics}
       error={controllerState.refreshError}
       lastRefreshed={controllerState.lastRefreshed}
       onRefresh={onRefresh}
@@ -101,6 +107,8 @@ export function WatchSession({ controller, workDir }: WatchSessionProps): ReactN
       detailError={controllerState.detailError}
       onFetchTaskDetail={onFetchTaskDetail}
       onExitDetailView={onExitDetailView}
+      onEnqueueEpicDelete={onEnqueueEpicDelete}
+      epicDeletePendingIds={controllerState.epicDeletePendingIds}
     />
   )
 }

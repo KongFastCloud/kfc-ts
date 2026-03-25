@@ -74,9 +74,10 @@ export const launchWatchTui = (
     // 3. Initial load — runs through the controller's scoped runtime
     yield* Effect.promise(() => controller.initialLoad())
 
-    // 4. Start the mark-ready consumer fiber (must happen before first render
-    //    so that enqueueMarkReady is safe to call from React callbacks).
+    // 4. Start consumer fibers (must happen before first render
+    //    so that enqueue operations are safe to call from React callbacks).
     yield* Effect.promise(() => controller.startMarkReadyConsumer())
+    yield* Effect.promise(() => controller.startEpicDeleteConsumer())
 
     // 5. Create renderer and mount the session boundary once.
     // WatchSession subscribes to controller state changes from inside React,

@@ -538,6 +538,8 @@ describe("TUI orchestration with active remote shipping", () => {
       tuiWorkerEffect,
       workerDeps,
       loadConfig: () => baseConfig,
+      closeEpic: () => Effect.succeed({ removed: false, wasDirty: false }),
+      getEpicWorktreeState: () => Effect.succeed("not_started" as const),
     }
 
     const ctrl = createTuiWatchController(TuiLoggerLayer, {

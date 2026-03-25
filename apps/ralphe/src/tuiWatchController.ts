@@ -16,6 +16,14 @@
  * enqueue semantics. A consumer fiber drains the queue inside the managed
  * runtime, ensuring consistent logging and error handling.
  *
+ * Epic deletion is serialized through a separate Effect-native Queue.
+ * Each deletion triggers closeEpic (which closes the Beads issue and
+ * removes the worktree). The epic disappears from the TUI after cleanup.
+ *
+ * Epic display state is derived from the task list, worktree status checks,
+ * and the local deletion queue. Worktree status is checked after each
+ * refresh for all open epics.
+ *
  * React and OpenTUI remain adapter consumers of controller state and commands.
  * Promise-returning UI callbacks delegate through the controller's runtime.
  */
@@ -24,10 +32,14 @@ import os from "node:os"
 import { Effect, Fiber, ManagedRuntime, Queue, type Layer } from "effect"
 import type { WatchTask } from "./beadsAdapter.js"
 import { queryAllTasks, queryTaskDetail } from "./beadsAdapter.js"
-import { markTaskReady } from "./beads.js"
+import { markTaskReady, closeEpic } from "./beads.js"
 import type { WorkerStatus, TuiWorkerDeps } from "./tuiWorker.js"
 import { tuiWorkerEffect } from "./tuiWorker.js"
 import { loadConfig } from "./config.js"
+import type { EpicDisplayItem } from "./tui/epicStatus.js"
+import { deriveEpicDisplayItems, isEpicTask } from "./tui/epicStatus.js"
+import type { EpicWorktreeState } from "./epicWorktree.js"
+import { getEpicWorktreeState } from "./epicWorktree.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,6 +49,11 @@ import { loadConfig } from "./config.js"
 export interface MarkReadyQueueItem {
   readonly id: string
   readonly labels: string[]
+}
+
+/** An epic-delete queue item — the epic ID to close and clean up. */
+export interface EpicDeleteQueueItem {
+  readonly id: string
 }
 
 /**
@@ -58,6 +75,10 @@ export interface TuiWatchControllerState {
   readonly detailError: string | undefined
   /** The task ID currently being viewed in detail. */
   readonly detailTaskId: string | undefined
+  /** Epic display items derived from tasks + worktree state + deletion queue. */
+  readonly epics: EpicDisplayItem[]
+  /** IDs of epics currently queued or in-flight for deletion. */
+  readonly epicDeletePendingIds: ReadonlySet<string>
 }
 
 export interface TuiWatchControllerOptions {
@@ -77,6 +98,8 @@ export interface TuiWatchControllerDeps {
   readonly markTaskReady: typeof markTaskReady
   readonly tuiWorkerEffect: typeof tuiWorkerEffect
   readonly loadConfig: typeof loadConfig
+  readonly closeEpic: typeof closeEpic
+  readonly getEpicWorktreeState: typeof getEpicWorktreeState
   /** Test-only dependency overrides passed through to the worker. */
   readonly workerDeps?: Partial<TuiWorkerDeps>
 }
@@ -108,6 +131,12 @@ export interface TuiWatchController {
   /** Mark a task as ready (direct, non-queued). */
   markReady(id: string, labels: string[]): Promise<void>
   /**
+   * Enqueue an epic deletion action. Immediate, no confirmation.
+   * The epic will be closed in Beads and its worktree removed.
+   * Duplicate epic IDs are silently rejected.
+   */
+  enqueueEpicDelete(id: string): void
+  /**
    * Enter detail view for the given task ID. Triggers a full detail fetch
    * (bd show) and stores the result. Immediately sets detailTaskId so the
    * UI can reconcile from list data while the fetch is in-flight.
@@ -135,6 +164,11 @@ export interface TuiWatchController {
    * enqueueMarkReady is used — typically as part of the TUI startup sequence.
    */
   startMarkReadyConsumer(): Promise<void>
+  /**
+   * Start the epic-delete consumer fiber. Must be called (and awaited) before
+   * enqueueEpicDelete is used — typically as part of the TUI startup sequence.
+   */
+  startEpicDeleteConsumer(): Promise<void>
   /** Start the periodic UI data refresh as a daemon fiber. */
   startPeriodicRefresh(): void
   /**
@@ -175,6 +209,8 @@ export function createTuiWatchController(
     markTaskReady,
     tuiWorkerEffect,
     loadConfig,
+    closeEpic,
+    getEpicWorktreeState,
     ...opts?.deps,
   }
 
@@ -206,6 +242,11 @@ export function createTuiWatchController(
   let markReadyQueue: Queue.Queue<MarkReadyQueueItem> | null = null
   let markReadyPendingIds = new Set<string>()
 
+  // -- Epic state -----------------------------------------------------------
+  let epics: EpicDisplayItem[] = []
+  let epicDeleteQueue: Queue.Queue<EpicDeleteQueueItem> | null = null
+  let epicDeletePendingIds = new Set<string>()
+
   const listeners: Array<() => void> = []
 
   const notifyListeners = () => {
@@ -228,6 +269,39 @@ export function createTuiWatchController(
       Effect.catchAll(effect, (e) => Effect.die(e)),
     )
 
+  /**
+   * Compute epic display items by checking worktree states for all open epics.
+   * This runs through the managed runtime since worktree checks are Effects.
+   */
+  const computeEpicDisplayItems = async (tasks: WatchTask[]): Promise<EpicDisplayItem[]> => {
+    const epicTasks = tasks.filter(isEpicTask)
+    if (epicTasks.length === 0 && epicDeletePendingIds.size === 0) return []
+
+    // Check worktree state for each epic in parallel
+    const worktreeStates = new Map<string, EpicWorktreeState>()
+    try {
+      const results = await run(
+        Effect.all(
+          epicTasks.map((t) =>
+            deps.getEpicWorktreeState(t.id).pipe(
+              Effect.map((state) => [t.id, state] as const),
+              // If worktree check fails, treat as not_started
+              Effect.catchAll(() => Effect.succeed([t.id, "not_started" as const] as const)),
+            ),
+          ),
+          { concurrency: "unbounded" },
+        ),
+      )
+      for (const [id, state] of results) {
+        worktreeStates.set(id, state)
+      }
+    } catch {
+      // If all checks fail, proceed with empty worktree states
+    }
+
+    return deriveEpicDisplayItems(tasks, worktreeStates, epicDeletePendingIds)
+  }
+
   // -----------------------------------------------------------------------
   // Public API
   // -----------------------------------------------------------------------
@@ -237,6 +311,7 @@ export function createTuiWatchController(
       return {
         workerStatus, latestTasks, refreshError, lastRefreshed, markReadyPendingIds,
         detailTask, detailLoading, detailError, detailTaskId,
+        epics, epicDeletePendingIds,
       }
     },
 
@@ -260,6 +335,10 @@ export function createTuiWatchController(
         latestTasks = tasks
         refreshError = undefined
         lastRefreshed = new Date()
+
+        // Derive epic display items from the refreshed task list
+        epics = await computeEpicDisplayItems(tasks)
+
         notifyListeners()
 
         // Re-resolve detail for the currently viewed task so the detail
@@ -295,6 +374,20 @@ export function createTuiWatchController(
 
     async markReady(id: string, labels: string[]): Promise<void> {
       await run(deps.markTaskReady(id, labels))
+    },
+
+    enqueueEpicDelete(id: string): void {
+      if (!epicDeleteQueue) return // Consumer not started yet
+      if (epicDeletePendingIds.has(id)) return // Duplicate rejection
+      epicDeletePendingIds = new Set([...epicDeletePendingIds, id])
+
+      // Immediately update epic display to show queued_for_deletion status
+      epics = epics.map((e) =>
+        e.id === id ? { ...e, status: "queued_for_deletion" as const } : e,
+      )
+      notifyListeners()
+
+      void managedRuntime.runPromise(Queue.offer(epicDeleteQueue, { id }))
     },
 
     async fetchTaskDetail(taskId: string): Promise<void> {
@@ -413,6 +506,49 @@ export function createTuiWatchController(
       )
     },
 
+    async startEpicDeleteConsumer(): Promise<void> {
+      if (epicDeleteQueue !== null) return // Already started
+
+      epicDeleteQueue = await managedRuntime.runPromise(
+        Queue.unbounded<EpicDeleteQueueItem>(),
+      )
+
+      const queue = epicDeleteQueue
+
+      // Fork the consumer as a daemon fiber. Each iteration:
+      // 1. Take an epic ID from the queue
+      // 2. Close the epic (Beads close + worktree cleanup)
+      // 3. Remove from pending set
+      // 4. Trigger refresh so the epic disappears from the TUI
+      void managedRuntime.runPromise(
+        Effect.forkDaemon(
+          Effect.forever(
+            Effect.gen(function* () {
+              const item = yield* Queue.take(queue)
+
+              // Execute closeEpic through the scoped runtime's layer.
+              // Errors are silently swallowed — drain continues.
+              yield* Effect.catchAll(
+                deps.closeEpic(item.id, "epic deleted via TUI"),
+                () => Effect.void,
+              )
+
+              // Remove from pending set and notify UI.
+              epicDeletePendingIds = new Set(
+                [...epicDeletePendingIds].filter((pid) => pid !== item.id),
+              )
+              notifyListeners()
+
+              // Trigger a refresh so the epic disappears from the TUI.
+              void controller.refresh().catch(() => {
+                // Refresh failure is non-fatal; the periodic timer will retry.
+              })
+            }),
+          ),
+        ),
+      )
+    },
+
     startPeriodicRefresh(): void {
       if (refreshFiber !== null) return
       if (refreshIntervalMs <= 0) return
@@ -457,6 +593,12 @@ export function createTuiWatchController(
       if (markReadyQueue !== null) {
         await managedRuntime.runPromise(Queue.shutdown(markReadyQueue))
         markReadyQueue = null
+      }
+
+      // Shut down the epic-delete queue similarly.
+      if (epicDeleteQueue !== null) {
+        await managedRuntime.runPromise(Queue.shutdown(epicDeleteQueue))
+        epicDeleteQueue = null
       }
 
       await managedRuntime.dispose()

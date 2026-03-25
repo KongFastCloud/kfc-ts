@@ -89,6 +89,8 @@ function makeControllerDeps(
     tuiWorkerEffect,
     workerDeps: makeWorkerDeps(),
     loadConfig: () => baseConfig,
+    closeEpic: () => Effect.succeed({ removed: false, wasDirty: false }),
+    getEpicWorktreeState: () => Effect.succeed("not_started" as const),
     ...overrides,
   }
 }

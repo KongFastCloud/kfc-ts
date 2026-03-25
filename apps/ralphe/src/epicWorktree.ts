@@ -223,6 +223,40 @@ export const ensureEpicWorktree = (
   )
 
 // ---------------------------------------------------------------------------
+// Worktree state (for TUI display)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tri-state worktree status for TUI display.
+ * - `not_started`: no worktree exists for this epic yet
+ * - `clean`: worktree exists and has no uncommitted changes
+ * - `dirty`: worktree exists and has uncommitted changes
+ */
+export type EpicWorktreeState = "not_started" | "clean" | "dirty"
+
+/**
+ * Get the operational worktree state for an epic.
+ * Used by the TUI to derive the epic display status.
+ *
+ * Returns `not_started` when no worktree directory exists,
+ * `clean` when the worktree exists with no uncommitted changes,
+ * and `dirty` when the worktree has staged or unstaged changes.
+ */
+export const getEpicWorktreeState = (
+  epicId: string,
+): Effect.Effect<EpicWorktreeState, FatalError> =>
+  Effect.gen(function* () {
+    const worktreePath = yield* deriveEpicWorktreePath(epicId)
+
+    if (!worktreeExistsAt(worktreePath)) {
+      return "not_started" as const
+    }
+
+    const status = yield* runGit(["status", "--porcelain"], worktreePath)
+    return status.trim().length > 0 ? ("dirty" as const) : ("clean" as const)
+  })
+
+// ---------------------------------------------------------------------------
 // Worktree dirty detection
 // ---------------------------------------------------------------------------
 

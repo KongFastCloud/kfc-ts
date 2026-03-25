@@ -1,20 +1,27 @@
 /** @jsxImportSource @opentui/react */
 /**
  * ABOUTME: Dashboard landing view for the watch TUI.
- * Renders two stacked tables: a top table for non-done tasks
- * (backlog, queued, blocked, active, error) and a bottom
- * table for done tasks. The active table shows a Ready checkmark
- * when a task has the 'ready' label, while the done table shows
- * a compact Completed datetime instead.
+ * Renders a split layout with three panes:
+ * - Top: Active tasks table (non-done, non-epic tasks) — primary operational pane
+ * - Middle: Done tasks table — completed tasks sorted by closedAt
+ * - Bottom: Epic pane — secondary focusable pane showing epic ID, title, and derived status
+ *
+ * The active table shows a Ready checkmark when a task has the 'ready' label,
+ * while the done table shows a compact Completed datetime instead.
  * Shared columns: ID, Title (clipped), Status, Duration.
  * The active table also shows Ready and Priority; the done table
  * replaces both with a wider Completed column.
+ *
+ * The epic pane shows: ID, Title, Status (not_started | active | dirty | queued_for_deletion).
+ * It is conditionally rendered only when epics exist.
  */
 
 import type { ReactNode } from "react"
 import { useState, useEffect, useRef } from "react"
 import type { BoxRenderable } from "@opentui/core"
 import type { WatchTask, WatchTaskStatus } from "../beadsAdapter.js"
+import type { EpicDisplayItem, EpicDisplayStatus } from "./epicStatus.js"
+import { excludeEpicTasks } from "./epicStatus.js"
 import { computeDayTotal, computeWeekTotal } from "./statsCompute.js"
 
 // ---------------------------------------------------------------------------
@@ -47,6 +54,20 @@ const taskStatusIndicator: Record<WatchTaskStatus, string> = {
   error: "✗",
 }
 
+const epicStatusColor: Record<EpicDisplayStatus, string> = {
+  not_started: colors.fg.muted,
+  active: colors.status.info,
+  dirty: colors.status.warning,
+  queued_for_deletion: colors.status.error,
+}
+
+const epicStatusIndicator: Record<EpicDisplayStatus, string> = {
+  not_started: "·",
+  active: "●",
+  dirty: "△",
+  queued_for_deletion: "✗",
+}
+
 // ---------------------------------------------------------------------------
 // Column layout
 // ---------------------------------------------------------------------------
@@ -62,6 +83,8 @@ const COL = {
   duration: 10,
   /** Width of the Completed column in the done table (ready 14 + priority 5 + separator 3). */
   completedDone: 22,
+  /** Width of the epic status column. */
+  epicStatus: 22,
   /** Title takes remaining space — computed dynamically. */
 } as const
 
@@ -183,12 +206,14 @@ export interface DashboardPartition {
 /**
  * Partition tasks into non-done (top table) and done (bottom table) buckets.
  * Preserves the original adapter/query ordering within each bucket.
+ * Excludes epic-labeled tasks (they appear in the epic pane instead).
  */
 export function partitionTasks(tasks: WatchTask[]): DashboardPartition {
+  const nonEpicTasks = excludeEpicTasks(tasks)
   const active: WatchTask[] = []
   const done: WatchTask[] = []
 
-  for (const task of tasks) {
+  for (const task of nonEpicTasks) {
     if (task.status === "done") {
       done.push(task)
     } else if (NON_DONE_STATUSES.has(task.status)) {
@@ -444,6 +469,153 @@ function DashboardTable({
 }
 
 // ---------------------------------------------------------------------------
+// Epic pane components
+// ---------------------------------------------------------------------------
+
+function EpicTableHeader({ titleWidth }: { titleWidth: number }): ReactNode {
+  return (
+    <box
+      style={{
+        width: "100%",
+        height: 1,
+        flexShrink: 0,
+        flexDirection: "row",
+        paddingLeft: 1,
+        paddingRight: 1,
+        backgroundColor: colors.bg.secondary,
+      }}
+    >
+      <text>
+        <span fg={colors.fg.dim}>{pad("ID", COL.id)}</span>
+        <span fg={colors.border.normal}>{ID_TITLE_SEP}</span>
+        <span fg={colors.fg.muted}>
+          {pad("Title", titleWidth)}
+          {pad("Status", COL.epicStatus)}
+        </span>
+      </text>
+    </box>
+  )
+}
+
+function EpicRow({
+  epic,
+  isSelected,
+  titleWidth,
+}: {
+  epic: EpicDisplayItem
+  isSelected: boolean
+  titleWidth: number
+}): ReactNode {
+  const indicator = epicStatusIndicator[epic.status]
+  const sColor = epicStatusColor[epic.status]
+  const isDimmed = epic.status === "queued_for_deletion"
+  const effectiveDimmed = isDimmed && !isSelected
+
+  const idStr = formatIdCell(epic.id)
+  const titleStr = pad(truncate(epic.title, titleWidth - 1), titleWidth)
+  const statusStr = pad(`${indicator} ${epic.status}`, COL.epicStatus)
+
+  const idColor = effectiveDimmed ? colors.fg.dim : colors.fg.muted
+  const titleColor = effectiveDimmed
+    ? colors.fg.dim
+    : isSelected
+      ? colors.fg.primary
+      : colors.fg.secondary
+
+  return (
+    <box
+      style={{
+        width: "100%",
+        height: 1,
+        flexShrink: 0,
+        flexDirection: "row",
+        paddingLeft: 1,
+        paddingRight: 1,
+        backgroundColor: isSelected ? colors.bg.highlight : "transparent",
+      }}
+    >
+      <text>
+        <span fg={idColor}>{idStr}</span>
+        <span fg={colors.border.normal}>{ID_TITLE_SEP}</span>
+        <span fg={titleColor}>{titleStr}</span>
+        <span fg={sColor}>{statusStr}</span>
+      </text>
+    </box>
+  )
+}
+
+function EpicTable({
+  epics,
+  selectedIndex,
+  scrollOffset,
+  titleWidth,
+  borderColor,
+  onVisibleRowCountChange,
+}: {
+  epics: EpicDisplayItem[]
+  selectedIndex: number
+  scrollOffset: number
+  titleWidth: number
+  borderColor: string
+  onVisibleRowCountChange?: (count: number) => void
+}): ReactNode {
+  const boxRef = useRef<BoxRenderable>(null)
+  const [visibleRowCount, setVisibleRowCount] = useState(0)
+
+  useEffect(() => {
+    const node = boxRef.current?.getLayoutNode()
+    if (!node) return
+    const measuredHeight = Math.floor(node.getComputedHeight())
+    const count = deriveVisibleRowCount(measuredHeight)
+    if (count !== visibleRowCount) {
+      setVisibleRowCount(count)
+      onVisibleRowCountChange?.(count)
+    }
+  })
+
+  const visibleSlice = epics.slice(scrollOffset, scrollOffset + visibleRowCount)
+
+  return (
+    <box
+      ref={boxRef}
+      style={{
+        width: "100%",
+        flexGrow: 0,
+        flexShrink: 0,
+        minHeight: 4,
+        height: Math.min(4 + epics.length, 10),
+        flexDirection: "column",
+        backgroundColor: colors.bg.primary,
+        border: true,
+        borderColor,
+      }}
+    >
+      <DashboardSectionTitle title="Epics" />
+      <EpicTableHeader titleWidth={titleWidth} />
+      <box style={{ flexGrow: 1, width: "100%" }}>
+        {epics.length === 0 ? (
+          <box style={{ paddingLeft: 1, paddingTop: 0 }}>
+            <text fg={colors.fg.muted}>No epics</text>
+          </box>
+        ) : (
+          visibleSlice.map((epic, sliceIdx) => {
+            const absoluteIdx = scrollOffset + sliceIdx
+            return (
+              <EpicRow
+                key={epic.id}
+                epic={epic}
+                isSelected={absoluteIdx === selectedIndex}
+                titleWidth={titleWidth}
+              />
+            )
+          })
+        )}
+      </box>
+    </box>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Live duration tick
 // ---------------------------------------------------------------------------
 
@@ -515,21 +687,27 @@ export function deriveVisibleRowCount(measuredHeight: number): number {
 // DashboardView (exported)
 // ---------------------------------------------------------------------------
 
-/** Which dashboard table currently holds focus. */
-export type FocusedTable = "active" | "done"
+/** Which dashboard pane currently holds focus. */
+export type FocusedTable = "active" | "done" | "epic"
 
 export interface DashboardViewProps {
   tasks: WatchTask[]
+  /** Epic display items for the epic pane. */
+  epics: EpicDisplayItem[]
   /** Which table is focused. */
   focusedTable: FocusedTable
   /** Selected row index within the active (top) table, or -1 for no selection. */
   activeSelectedIndex: number
   /** Selected row index within the done (bottom) table, or -1 for no selection. */
   doneSelectedIndex: number
+  /** Selected row index within the epic pane, or -1 for no selection. */
+  epicSelectedIndex: number
   /** Scroll offset (first visible row) for the active table. */
   activeScrollOffset: number
   /** Scroll offset (first visible row) for the done table. */
   doneScrollOffset: number
+  /** Scroll offset (first visible row) for the epic pane. */
+  epicScrollOffset: number
   terminalWidth: number
   /** Set of task IDs currently being marked ready (shows ◌ loading indicator). */
   markingReadyIds?: Set<string>
@@ -537,6 +715,8 @@ export interface DashboardViewProps {
   onActiveVisibleRowCountChange?: (count: number) => void
   /** Callback when the done table's measured visible row count changes. */
   onDoneVisibleRowCountChange?: (count: number) => void
+  /** Callback when the epic pane's measured visible row count changes. */
+  onEpicVisibleRowCountChange?: (count: number) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -592,21 +772,26 @@ function StatsFooter({ tasks }: { tasks: WatchTask[] }): ReactNode {
 }
 
 /**
- * Dashboard landing view: two vertically stacked tables.
- * Top table = non-done tasks. Bottom table = done tasks.
- * Only the focused table shows its selection highlight and active border.
+ * Dashboard landing view: three panes in a vertical split.
+ * Top = non-done tasks (primary). Middle = done tasks. Bottom = epic pane (secondary).
+ * Only the focused pane shows its selection highlight and active border.
+ * Epic pane is conditionally rendered only when epics exist.
  */
 export function DashboardView({
   tasks,
+  epics,
   focusedTable,
   activeSelectedIndex,
   doneSelectedIndex,
+  epicSelectedIndex,
   activeScrollOffset,
   doneScrollOffset,
+  epicScrollOffset,
   terminalWidth,
   markingReadyIds,
   onActiveVisibleRowCountChange,
   onDoneVisibleRowCountChange,
+  onEpicVisibleRowCountChange,
 }: DashboardViewProps): ReactNode {
   // Drive a one-second re-render while any active task needs a live duration.
   useDurationTick(tasks)
@@ -615,16 +800,17 @@ export function DashboardView({
   const done = sortDoneTasks(unsortedDone)
 
   // Compute dynamic title column width from available terminal space.
-  // The done table omits the priority column, replacing label + priority with
-  // a single wider completed column — but the total fixed width is the same
-  // (completedDone === label + priority + separator gap absorbed), so a single
-  // fixedColumnsWidth works for both tables.
   const activeFixedWidth =
     COL.id + COL.idTitleSep + COL.status + COL.ready + COL.priority + COL.duration + 4 // +4 for padding/border
   const doneFixedWidth =
     COL.id + COL.idTitleSep + COL.status + COL.completedDone + COL.duration + 4
+  const epicFixedWidth =
+    COL.id + COL.idTitleSep + COL.epicStatus + 4
   const activeTitleWidth = Math.max(10, terminalWidth - activeFixedWidth)
   const doneTitleWidth = Math.max(10, terminalWidth - doneFixedWidth)
+  const epicTitleWidth = Math.max(10, terminalWidth - epicFixedWidth)
+
+  const hasEpics = epics.length > 0
 
   return (
     <box
@@ -666,6 +852,20 @@ export function DashboardView({
         variant="done"
         onVisibleRowCountChange={onDoneVisibleRowCountChange}
       />
+      {hasEpics && (
+        <EpicTable
+          epics={epics}
+          selectedIndex={focusedTable === "epic" ? epicSelectedIndex : -1}
+          scrollOffset={epicScrollOffset}
+          titleWidth={epicTitleWidth}
+          borderColor={
+            focusedTable === "epic"
+              ? colors.accent.primary
+              : colors.border.normal
+          }
+          onVisibleRowCountChange={onEpicVisibleRowCountChange}
+        />
+      )}
     </box>
   )
 }

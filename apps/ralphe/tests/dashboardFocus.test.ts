@@ -1,11 +1,13 @@
 /**
  * ABOUTME: Tests for dashboard focus, selection, and viewport state logic.
  * Covers the invariants for the dashboard interaction model:
- * - Only one table active at a time; Tab toggles it
- * - Initial state: top table focused, first row, scroll at top, dashboard mode
+ * - Three focusable panes: active (primary), done, epic (secondary)
+ * - Tab cycles: active → done → epic → active
+ * - Initial state: active table focused, all indices at 0, dashboard mode
  * - Navigation clamps at boundaries and scrolls minimally (never centers)
  * - Per-table selection and scroll offset are independent
- * - Enter on an empty table is a no-op; on a populated table switches to detail
+ * - Enter on an empty table is a no-op; on a populated task table switches to detail
+ * - Enter on epic pane is a no-op (no detail drill-down for epics)
  * - Return from detail resets to initial state
  * - Refresh clamps selection and scroll, preserves focused table, ensures visibility
  * - Selected row is always within the visible viewport slice
@@ -34,17 +36,17 @@ function stateWith(overrides: Partial<DashboardFocusState>): DashboardFocusState
 }
 
 /** Field accessors keyed by table name, so table-driven tests stay readable. */
-const sel = (s: DashboardFocusState, t: "active" | "done") =>
-  t === "active" ? s.activeSelectedIndex : s.doneSelectedIndex
-const scroll = (s: DashboardFocusState, t: "active" | "done") =>
-  t === "active" ? s.activeScrollOffset : s.doneScrollOffset
+const sel = (s: DashboardFocusState, t: "active" | "done" | "epic") =>
+  t === "active" ? s.activeSelectedIndex : t === "done" ? s.doneSelectedIndex : s.epicSelectedIndex
+const scroll = (s: DashboardFocusState, t: "active" | "done" | "epic") =>
+  t === "active" ? s.activeScrollOffset : t === "done" ? s.doneScrollOffset : s.epicScrollOffset
 
 // ---------------------------------------------------------------------------
 // Initial state
 // ---------------------------------------------------------------------------
 
 describe("initialDashboardFocusState", () => {
-  it("returns focus on active table, both indices at 0, both offsets at 0, dashboard mode", () => {
+  it("returns focus on active table, all indices at 0, all offsets at 0, dashboard mode", () => {
     const s = initialDashboardFocusState()
     expect(s).toEqual({
       focusedTable: "active",
@@ -52,6 +54,8 @@ describe("initialDashboardFocusState", () => {
       doneSelectedIndex: 0,
       activeScrollOffset: 0,
       doneScrollOffset: 0,
+      epicSelectedIndex: 0,
+      epicScrollOffset: 0,
       viewMode: "dashboard",
     })
   })
@@ -98,13 +102,18 @@ describe("clampScrollOffset", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Tab switching
+// Tab switching — three-pane cycle
 // ---------------------------------------------------------------------------
 
 describe("toggleFocusedTable", () => {
-  it("toggles between active and done", () => {
-    expect(toggleFocusedTable(stateWith({ focusedTable: "active" })).focusedTable).toBe("done")
-    expect(toggleFocusedTable(stateWith({ focusedTable: "done" })).focusedTable).toBe("active")
+  it("cycles active → done → epic → active", () => {
+    let s = stateWith({ focusedTable: "active" })
+    s = toggleFocusedTable(s)
+    expect(s.focusedTable).toBe("done")
+    s = toggleFocusedTable(s)
+    expect(s.focusedTable).toBe("epic")
+    s = toggleFocusedTable(s)
+    expect(s.focusedTable).toBe("active")
   })
 
   it("preserves selection indices, scroll offsets, and view mode", () => {
@@ -113,62 +122,75 @@ describe("toggleFocusedTable", () => {
         focusedTable: "active",
         activeSelectedIndex: 3,
         doneSelectedIndex: 1,
+        epicSelectedIndex: 2,
         activeScrollOffset: 5,
         doneScrollOffset: 2,
+        epicScrollOffset: 1,
       }),
     )
     expect(s.activeSelectedIndex).toBe(3)
     expect(s.doneSelectedIndex).toBe(1)
+    expect(s.epicSelectedIndex).toBe(2)
     expect(s.activeScrollOffset).toBe(5)
     expect(s.doneScrollOffset).toBe(2)
+    expect(s.epicScrollOffset).toBe(1)
     expect(s.viewMode).toBe("dashboard")
   })
 })
 
 // ---------------------------------------------------------------------------
-// Up/Down navigation — table-driven across active and done
+// Up/Down navigation — table-driven across active, done, and epic
 // ---------------------------------------------------------------------------
 
-describe("moveSelection (up/down, both tables)", () => {
+describe("moveSelection (up/down, all tables)", () => {
   const VIS = 5
 
-  // Navigation, boundary clamping, and empty-table cases in one table
+  // Navigation, boundary clamping, and empty-table cases
   it.each([
-    // [label, dir, table, startIdx, aCnt, dCnt, expectedIdx]
-    ["up active decrements",     "up",   "active", 2, 10, 3, 1],
-    ["up done decrements",       "up",   "done",   3, 5,  10, 2],
-    ["down active increments",   "down", "active", 1, 10, 3, 2],
-    ["down done increments",     "down", "done",   0, 5,  3, 1],
-    ["clamps at top (active)",   "up",   "active", 0, 5,  3, 0],
-    ["clamps at top (done)",     "up",   "done",   0, 5,  3, 0],
-    ["clamps at bottom (active)","down", "active", 4, 5,  3, 4],
-    ["clamps at bottom (done)",  "down", "done",   2, 5,  3, 2],
-    ["empty active up",          "up",   "active", 0, 0,  5, 0],
-    ["empty done up",            "up",   "done",   0, 5,  0, 0],
-    ["empty active down",        "down", "active", 0, 0,  5, 0],
-    ["empty done down",          "down", "done",   0, 5,  0, 0],
+    // [label, dir, table, startIdx, aCnt, dCnt, eCnt, expectedIdx]
+    ["up active decrements",     "up",   "active", 2, 10, 3, 2, 1],
+    ["up done decrements",       "up",   "done",   3, 5,  10, 2, 2],
+    ["up epic decrements",       "up",   "epic",   2, 5,  3, 5, 1],
+    ["down active increments",   "down", "active", 1, 10, 3, 2, 2],
+    ["down done increments",     "down", "done",   0, 5,  3, 2, 1],
+    ["down epic increments",     "down", "epic",   1, 5,  3, 5, 2],
+    ["clamps at top (active)",   "up",   "active", 0, 5,  3, 2, 0],
+    ["clamps at top (done)",     "up",   "done",   0, 5,  3, 2, 0],
+    ["clamps at top (epic)",     "up",   "epic",   0, 5,  3, 2, 0],
+    ["clamps at bottom (active)","down", "active", 4, 5,  3, 2, 4],
+    ["clamps at bottom (done)",  "down", "done",   2, 5,  3, 2, 2],
+    ["clamps at bottom (epic)",  "down", "epic",   1, 5,  3, 2, 1],
+    ["empty active up",          "up",   "active", 0, 0,  5, 2, 0],
+    ["empty done up",            "up",   "done",   0, 5,  0, 2, 0],
+    ["empty epic up",            "up",   "epic",   0, 5,  3, 0, 0],
+    ["empty active down",        "down", "active", 0, 0,  5, 2, 0],
+    ["empty done down",          "down", "done",   0, 5,  0, 2, 0],
+    ["empty epic down",          "down", "epic",   0, 5,  3, 0, 0],
   ] as const)(
     "%s",
-    (_label, dir, table, start, aCnt, dCnt, expected) => {
-      const key = table === "active" ? "activeSelectedIndex" : "doneSelectedIndex"
+    (_label, dir, table, start, aCnt, dCnt, eCnt, expected) => {
+      const key = table === "active" ? "activeSelectedIndex" : table === "done" ? "doneSelectedIndex" : "epicSelectedIndex"
       const base = stateWith({ focusedTable: table, [key]: start })
       const s =
         dir === "up"
           ? moveSelectionUp(base, VIS)
-          : moveSelectionDown(base, aCnt, dCnt, VIS)
+          : moveSelectionDown(base, aCnt, dCnt, VIS, eCnt)
       expect(sel(s, table)).toBe(expected)
     },
   )
 
-  // Viewport scrolling and boundary precision — both tables, both directions
+  // Viewport scrolling and boundary precision — all tables, both directions
   it.each([
     // [label, table, dir, startIdx, startScroll, rowCount, expectedIdx, expectedScroll]
     ["active crosses bottom",          "active", "down", 4, 0, 20, 5, 1],
     ["done crosses bottom",            "done",   "down", 4, 0, 20, 5, 1],
+    ["epic crosses bottom",            "epic",   "down", 4, 0, 20, 5, 1],
     ["active crosses top",             "active", "up",   5, 5, 20, 4, 4],
     ["done crosses top",               "done",   "up",   5, 5, 20, 4, 4],
+    ["epic crosses top",               "epic",   "up",   5, 5, 20, 4, 4],
     ["active within viewport (down)",  "active", "down", 2, 0, 20, 3, 0],
     ["done within viewport (down)",    "done",   "down", 2, 0, 20, 3, 0],
+    ["epic within viewport (down)",    "epic",   "down", 2, 0, 20, 3, 0],
     ["active within viewport (up)",    "active", "up",   3, 0, 20, 2, 0],
     // Boundary precision cases (regression)
     ["at exact bottom — no scroll",        "active", "down", 6, 3, 20, 7, 3],
@@ -179,12 +201,12 @@ describe("moveSelection (up/down, both tables)", () => {
   ] as const)(
     "viewport scroll: %s",
     (_label, table, dir, startIdx, startScroll, rowCount, expectedIdx, expectedScroll) => {
-      const selKey = table === "active" ? "activeSelectedIndex" : "doneSelectedIndex"
-      const scrollKey = table === "active" ? "activeScrollOffset" : "doneScrollOffset"
+      const selKey = table === "active" ? "activeSelectedIndex" : table === "done" ? "doneSelectedIndex" : "epicSelectedIndex"
+      const scrollKey = table === "active" ? "activeScrollOffset" : table === "done" ? "doneScrollOffset" : "epicScrollOffset"
       const base = stateWith({ focusedTable: table, [selKey]: startIdx, [scrollKey]: startScroll })
       const s =
         dir === "down"
-          ? moveSelectionDown(base, rowCount, rowCount, VIS)
+          ? moveSelectionDown(base, rowCount, rowCount, VIS, rowCount)
           : moveSelectionUp(base, VIS)
       expect(sel(s, table)).toBe(expectedIdx)
       expect(scroll(s, table)).toBe(expectedScroll)
@@ -204,20 +226,21 @@ describe("moveSelection (up/down, both tables)", () => {
     expect(s.activeSelectedIndex).toBeLessThan(s.activeScrollOffset + VIS)
   })
 
-  // Per-table independence: navigation does not affect the other table
+  // Per-table independence: navigation does not affect other tables
   it.each([
-    ["active nav preserves done", "active", "done", 7],
-    ["done nav preserves active", "done", "active", 3],
+    ["active nav preserves done and epic", "active", "done", 7],
+    ["done nav preserves active and epic", "done", "active", 3],
+    ["epic nav preserves active and done", "epic", "active", 3],
   ] as const)("%s", (_label, focused, other, otherScroll) => {
-    const scrollKey = other === "active" ? "activeScrollOffset" : "doneScrollOffset"
-    const selKey = focused === "active" ? "activeSelectedIndex" : "doneSelectedIndex"
+    const scrollKey = other === "active" ? "activeScrollOffset" : other === "done" ? "doneScrollOffset" : "epicScrollOffset"
+    const selKey = focused === "active" ? "activeSelectedIndex" : focused === "done" ? "doneSelectedIndex" : "epicSelectedIndex"
     let s = stateWith({
       focusedTable: focused,
       [selKey]: 4,
-      [focused === "active" ? "activeScrollOffset" : "doneScrollOffset"]: 0,
+      [focused === "active" ? "activeScrollOffset" : focused === "done" ? "doneScrollOffset" : "epicScrollOffset"]: 0,
       [scrollKey]: otherScroll,
     })
-    s = moveSelectionDown(s, 20, 20, VIS)
+    s = moveSelectionDown(s, 20, 20, VIS, 20)
     expect(scroll(s, focused)).toBe(1) // scrolled
     expect(scroll(s, other)).toBe(otherScroll) // unchanged
   })
@@ -234,6 +257,7 @@ describe("enterDetail", () => {
     ["done with items → detail",   "done",   0, 2, "detail",    false],
     ["active empty → no-op",       "active", 0, 3, "dashboard", true],
     ["done empty → no-op",         "done",   5, 0, "dashboard", true],
+    ["epic always → no-op",        "epic",   5, 3, "dashboard", true],
   ] as const)("%s", (_label, table, aCnt, dCnt, expectedMode, isNoOp) => {
     const before = stateWith({ focusedTable: table })
     const s = enterDetail(before, aCnt, dCnt)
@@ -247,21 +271,25 @@ describe("enterDetail", () => {
         focusedTable: "done",
         activeSelectedIndex: 2,
         doneSelectedIndex: 1,
+        epicSelectedIndex: 0,
         activeScrollOffset: 3,
         doneScrollOffset: 0,
+        epicScrollOffset: 0,
       }),
       5, 3,
     )
     expect(s.focusedTable).toBe("done")
     expect(s.activeSelectedIndex).toBe(2)
     expect(s.doneSelectedIndex).toBe(1)
+    expect(s.epicSelectedIndex).toBe(0)
     expect(s.activeScrollOffset).toBe(3)
     expect(s.doneScrollOffset).toBe(0)
+    expect(s.epicScrollOffset).toBe(0)
   })
 })
 
 describe("returnFromDetail", () => {
-  it("resets to initial state (top table, first row, dashboard mode)", () => {
+  it("resets to initial state (active table, first row, dashboard mode)", () => {
     expect(returnFromDetail()).toEqual(initialDashboardFocusState())
   })
 })
@@ -275,35 +303,35 @@ describe("clampAfterRefresh", () => {
 
   // Core clamping invariants collapsed into one table
   it.each([
-    // [label, overrides, aCnt, dCnt, aVis, dVis, checks]
+    // [label, overrides, aCnt, dCnt, aVis, dVis, eCnt, eVis, checks]
     [
       "preserves selection when tables did not shrink",
       { focusedTable: "done" as const, activeSelectedIndex: 2, doneSelectedIndex: 3 },
-      5, 5, VIS, VIS,
+      5, 5, VIS, VIS, 2, VIS,
       { activeSelectedIndex: 2, doneSelectedIndex: 3 },
     ],
     [
       "clamps both indices when tables shrink",
-      { activeSelectedIndex: 10, doneSelectedIndex: 10 },
-      3, 2, VIS, VIS,
-      { activeSelectedIndex: 2, doneSelectedIndex: 1 },
+      { activeSelectedIndex: 10, doneSelectedIndex: 10, epicSelectedIndex: 5 },
+      3, 2, VIS, VIS, 2, VIS,
+      { activeSelectedIndex: 2, doneSelectedIndex: 1, epicSelectedIndex: 1 },
     ],
     [
       "resets to 0 when tables become empty",
-      { activeSelectedIndex: 5, activeScrollOffset: 10, doneSelectedIndex: 3, doneScrollOffset: 7 },
-      0, 0, VIS, VIS,
-      { activeSelectedIndex: 0, doneSelectedIndex: 0, activeScrollOffset: 0, doneScrollOffset: 0 },
+      { activeSelectedIndex: 5, activeScrollOffset: 10, doneSelectedIndex: 3, doneScrollOffset: 7, epicSelectedIndex: 2, epicScrollOffset: 1 },
+      0, 0, VIS, VIS, 0, VIS,
+      { activeSelectedIndex: 0, doneSelectedIndex: 0, epicSelectedIndex: 0, activeScrollOffset: 0, doneScrollOffset: 0, epicScrollOffset: 0 },
     ],
     [
       "preserves focused table and view mode",
       { focusedTable: "done" as const, viewMode: "detail" as const, doneSelectedIndex: 4 },
-      5, 3, VIS, VIS,
+      5, 3, VIS, VIS, 2, VIS,
       { focusedTable: "done", viewMode: "detail" },
     ],
   ] as const)(
     "%s",
-    (_label, overrides, aCnt, dCnt, aVis, dVis, checks) => {
-      const s = clampAfterRefresh(stateWith(overrides), aCnt, dCnt, aVis, dVis)
+    (_label, overrides, aCnt, dCnt, aVis, dVis, eCnt, eVis, checks) => {
+      const s = clampAfterRefresh(stateWith(overrides), aCnt, dCnt, aVis, dVis, eCnt, eVis)
       for (const [key, val] of Object.entries(checks)) {
         expect(s[key as keyof DashboardFocusState]).toBe(val)
       }
@@ -327,13 +355,14 @@ describe("clampAfterRefresh", () => {
     },
   )
 
-  it("clamps both tables independently when both shrink (regression)", () => {
+  it("clamps all three tables independently when all shrink (regression)", () => {
     const s = clampAfterRefresh(
       stateWith({
         activeSelectedIndex: 15, activeScrollOffset: 12,
         doneSelectedIndex: 10, doneScrollOffset: 8,
+        epicSelectedIndex: 5, epicScrollOffset: 3,
       }),
-      6, 4, VIS, VIS,
+      6, 4, VIS, VIS, 3, VIS,
     )
     // active: selection → 5, offset → max(0, 6-5)=1, ensureVisible(1,5,5)=1
     expect(s.activeSelectedIndex).toBe(5)
@@ -341,6 +370,9 @@ describe("clampAfterRefresh", () => {
     // done: selection → 3, 4 rows <= 5 visible → offset 0
     expect(s.doneSelectedIndex).toBe(3)
     expect(s.doneScrollOffset).toBe(0)
+    // epic: selection → 2, 3 rows <= 5 visible → offset 0
+    expect(s.epicSelectedIndex).toBe(2)
+    expect(s.epicScrollOffset).toBe(0)
   })
 
   it("handles independent visible row counts per table", () => {
@@ -357,6 +389,17 @@ describe("clampAfterRefresh", () => {
     expect(s.activeScrollOffset).toBe(7) // max offset for active
     expect(s.doneSelectedIndex).toBe(4)
     expect(s.doneScrollOffset).toBe(0)   // 5 rows fits in 10 visible
+  })
+
+  it("backward-compatible: works without epic parameters", () => {
+    const s = clampAfterRefresh(
+      stateWith({ activeSelectedIndex: 2, doneSelectedIndex: 1 }),
+      5, 3, VIS, VIS,
+    )
+    expect(s.activeSelectedIndex).toBe(2)
+    expect(s.doneSelectedIndex).toBe(1)
+    expect(s.epicSelectedIndex).toBe(0)
+    expect(s.epicScrollOffset).toBe(0)
   })
 })
 
@@ -509,14 +552,14 @@ describe("refresh-preservation: detail view and clamp-on-invalid", () => {
 describe("end-to-end focus scenarios", () => {
   const VIS = 5
 
-  it("initial load → navigate → tab → navigate → enter → escape cycle", () => {
+  it("initial load → navigate → tab → tab → navigate epic → tab back cycle", () => {
     let s = initialDashboardFocusState()
     expect(s.focusedTable).toBe("active")
     expect(s.activeSelectedIndex).toBe(0)
 
-    // Move down twice in active table (5 active, 3 done)
-    s = moveSelectionDown(s, 5, 3, VIS)
-    s = moveSelectionDown(s, 5, 3, VIS)
+    // Move down twice in active table (5 active, 3 done, 2 epics)
+    s = moveSelectionDown(s, 5, 3, VIS, 2)
+    s = moveSelectionDown(s, 5, 3, VIS, 2)
     expect(s.activeSelectedIndex).toBe(2)
 
     // Tab to done table
@@ -524,19 +567,41 @@ describe("end-to-end focus scenarios", () => {
     expect(s.focusedTable).toBe("done")
     expect(s.doneSelectedIndex).toBe(0) // independent index
 
-    // Move down once in done table
-    s = moveSelectionDown(s, 5, 3, VIS)
-    expect(s.doneSelectedIndex).toBe(1)
+    // Tab to epic pane
+    s = toggleFocusedTable(s)
+    expect(s.focusedTable).toBe("epic")
+    expect(s.epicSelectedIndex).toBe(0) // independent index
 
-    // Enter detail
+    // Move down once in epic pane
+    s = moveSelectionDown(s, 5, 3, VIS, 2)
+    expect(s.epicSelectedIndex).toBe(1)
+
+    // Tab back to active — active state preserved
+    s = toggleFocusedTable(s)
+    expect(s.focusedTable).toBe("active")
+    expect(s.activeSelectedIndex).toBe(2) // preserved
+  })
+
+  it("enter detail from done table, escape resets to initial state", () => {
+    let s = initialDashboardFocusState()
+
+    // Tab to done, navigate, enter detail
+    s = toggleFocusedTable(s)
+    s = moveSelectionDown(s, 5, 3, VIS, 2)
     s = enterDetail(s, 5, 3)
     expect(s.viewMode).toBe("detail")
     expect(s.focusedTable).toBe("done")
-    expect(s.doneSelectedIndex).toBe(1)
 
-    // Return from detail — resets to top table, row 0
+    // Return from detail — resets to initial
     s = returnFromDetail()
     expect(s).toEqual(initialDashboardFocusState())
+  })
+
+  it("enter from epic pane is a no-op", () => {
+    let s = stateWith({ focusedTable: "epic", epicSelectedIndex: 1 })
+    const before = { ...s }
+    s = enterDetail(s, 5, 3)
+    expect(s).toEqual(before) // unchanged
   })
 
   it("navigating a long table scrolls viewport correctly in both directions", () => {
@@ -556,32 +621,42 @@ describe("end-to-end focus scenarios", () => {
     expect(s.activeScrollOffset).toBe(2) // scrolled up to reveal row 2
   })
 
-  it("active and done tables maintain independent viewport state through navigation", () => {
+  it("all three tables maintain independent viewport state through navigation", () => {
     let s = initialDashboardFocusState()
 
     // Scroll active table down
-    for (let i = 0; i < 8; i++) s = moveSelectionDown(s, 20, 20, VIS)
+    for (let i = 0; i < 8; i++) s = moveSelectionDown(s, 20, 20, VIS, 20)
     expect(s.activeSelectedIndex).toBe(8)
     expect(s.activeScrollOffset).toBe(4)
     expect(s.doneSelectedIndex).toBe(0)
     expect(s.doneScrollOffset).toBe(0)
+    expect(s.epicSelectedIndex).toBe(0)
+    expect(s.epicScrollOffset).toBe(0)
 
     // Tab to done, scroll it independently
     s = toggleFocusedTable(s)
-    for (let i = 0; i < 6; i++) s = moveSelectionDown(s, 20, 20, VIS)
+    for (let i = 0; i < 6; i++) s = moveSelectionDown(s, 20, 20, VIS, 20)
     expect(s.doneSelectedIndex).toBe(6)
     expect(s.doneScrollOffset).toBe(2)
 
-    // Active table state unchanged
+    // Tab to epic, scroll it
+    s = toggleFocusedTable(s)
+    for (let i = 0; i < 3; i++) s = moveSelectionDown(s, 20, 20, VIS, 20)
+    expect(s.epicSelectedIndex).toBe(3)
+
+    // Active and done state unchanged
     expect(s.activeSelectedIndex).toBe(8)
     expect(s.activeScrollOffset).toBe(4)
+    expect(s.doneSelectedIndex).toBe(6)
+    expect(s.doneScrollOffset).toBe(2)
 
-    // Tab back, navigate — done table unchanged
+    // Tab back to active, navigate — done and epic unchanged
     s = toggleFocusedTable(s)
     s = moveSelectionUp(s, VIS)
     expect(s.activeSelectedIndex).toBe(7)
     expect(s.doneSelectedIndex).toBe(6)
     expect(s.doneScrollOffset).toBe(2)
+    expect(s.epicSelectedIndex).toBe(3)
   })
 })
 
