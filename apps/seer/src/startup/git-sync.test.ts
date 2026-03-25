@@ -34,11 +34,11 @@ describe("syncTrackedBranch", () => {
 
   before(() => {
     // Create a bare "remote" repo
-    remoteDir = mkdtempSync(join(tmpdir(), "repochat-test-remote-"))
+    remoteDir = mkdtempSync(join(tmpdir(), "seer-test-remote-"))
     git(remoteDir, ["init", "--bare"])
 
     // Clone it to a "local" checkout
-    localDir = mkdtempSync(join(tmpdir(), "repochat-test-local-"))
+    localDir = mkdtempSync(join(tmpdir(), "seer-test-local-"))
     rmSync(localDir, { recursive: true })
     execFileSync("git", ["clone", remoteDir, localDir], { encoding: "utf-8" })
 
@@ -57,7 +57,7 @@ describe("syncTrackedBranch", () => {
 
   it("syncs local checkout to the remote tracked branch", async () => {
     // Push a new commit to the remote (via a temp clone)
-    const tempClone = mkdtempSync(join(tmpdir(), "repochat-test-temp-"))
+    const tempClone = mkdtempSync(join(tmpdir(), "seer-test-temp-"))
     try {
       rmSync(tempClone, { recursive: true })
       execFileSync("git", ["clone", remoteDir, tempClone], { encoding: "utf-8" })

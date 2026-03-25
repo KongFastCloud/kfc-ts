@@ -66,16 +66,16 @@ describe("reindex-worker", () => {
 
     // Signal — this triggers sync + reindex in the background.
     // We set env vars that cause fast failure so the test completes quickly.
-    const origRoot = process.env.REPOCHAT_REPO_ROOT
-    process.env.REPOCHAT_REPO_ROOT = "/tmp/nonexistent-repo-worker-test"
+    const origRoot = process.env.SEER_REPO_ROOT
+    process.env.SEER_REPO_ROOT = "/tmp/nonexistent-repo-worker-test"
 
     try {
       await assert.doesNotReject(() => run(requestReindex()))
       // Give the worker time to process
       await new Promise((r) => setTimeout(r, 500))
     } finally {
-      if (origRoot === undefined) delete process.env.REPOCHAT_REPO_ROOT
-      else process.env.REPOCHAT_REPO_ROOT = origRoot
+      if (origRoot === undefined) delete process.env.SEER_REPO_ROOT
+      else process.env.SEER_REPO_ROOT = origRoot
       await Effect.runPromise(Fiber.interrupt(fiber))
     }
   })
@@ -87,8 +87,8 @@ describe("reindex-worker", () => {
 
     await new Promise((r) => setTimeout(r, 50))
 
-    const origRoot = process.env.REPOCHAT_REPO_ROOT
-    process.env.REPOCHAT_REPO_ROOT = "/tmp/nonexistent-repo-worker-test"
+    const origRoot = process.env.SEER_REPO_ROOT
+    process.env.SEER_REPO_ROOT = "/tmp/nonexistent-repo-worker-test"
 
     try {
       // Fire the first signal
@@ -101,8 +101,8 @@ describe("reindex-worker", () => {
       // Give the worker time to process all runs
       await new Promise((r) => setTimeout(r, 2000))
     } finally {
-      if (origRoot === undefined) delete process.env.REPOCHAT_REPO_ROOT
-      else process.env.REPOCHAT_REPO_ROOT = origRoot
+      if (origRoot === undefined) delete process.env.SEER_REPO_ROOT
+      else process.env.SEER_REPO_ROOT = origRoot
       await Effect.runPromise(Fiber.interrupt(fiber))
     }
 

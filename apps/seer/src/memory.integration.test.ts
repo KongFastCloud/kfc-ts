@@ -27,7 +27,7 @@ import { MEMORY_CONFIG } from "./memory.ts"
 
 /** Create a temp directory that is cleaned up after the test suite. */
 function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), "repochat-mem-test-"))
+  return mkdtempSync(join(tmpdir(), "seer-mem-test-"))
 }
 
 /** Build a file: URL for a db in the given directory. */
@@ -531,11 +531,11 @@ describe("durable memory — normal chat flow", () => {
     await storage.saveMessages({
       messages: [
         {
-          id: "mt-1", content: [{ type: "text" as const, text: "What is repochat?" }],
+          id: "mt-1", content: [{ type: "text" as const, text: "What is seer?" }],
           role: "user" as const, createdAt: new Date(), threadId, resourceId, type: "text" as const,
         },
         {
-          id: "mt-2", content: [{ type: "text" as const, text: "Repochat is a codebase exploration chat service." }],
+          id: "mt-2", content: [{ type: "text" as const, text: "Seer is a codebase exploration chat service." }],
           role: "assistant" as const, createdAt: new Date(), threadId, resourceId, type: "text" as const,
         },
       ],

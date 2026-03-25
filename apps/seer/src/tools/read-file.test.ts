@@ -17,7 +17,7 @@ import { tmpdir } from "node:os"
 import { readFileTool } from "./read-file.ts"
 
 // Create a temporary repo root for testing
-const testRoot = join(tmpdir(), `repochat-read-file-test-${Date.now()}`)
+const testRoot = join(tmpdir(), `seer-read-file-test-${Date.now()}`)
 
 // Helper to execute the tool with a given context
 async function executeTool(input: {
@@ -25,9 +25,9 @@ async function executeTool(input: {
   startLine?: number
   endLine?: number
 }) {
-  // Save and set REPOCHAT_REPO_ROOT
-  const origRoot = process.env.REPOCHAT_REPO_ROOT
-  process.env.REPOCHAT_REPO_ROOT = testRoot
+  // Save and set SEER_REPO_ROOT
+  const origRoot = process.env.SEER_REPO_ROOT
+  process.env.SEER_REPO_ROOT = testRoot
 
   try {
     // The tool's execute function expects { context: input }
@@ -36,8 +36,8 @@ async function executeTool(input: {
       runtimeContext: {} as any,
     } as any)
   } finally {
-    if (origRoot === undefined) delete process.env.REPOCHAT_REPO_ROOT
-    else process.env.REPOCHAT_REPO_ROOT = origRoot
+    if (origRoot === undefined) delete process.env.SEER_REPO_ROOT
+    else process.env.SEER_REPO_ROOT = origRoot
   }
 }
 

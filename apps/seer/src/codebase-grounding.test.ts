@@ -85,8 +85,8 @@ describe("startup orchestration", () => {
       {
         // Point at a nonexistent dir — codemogger handles empty dirs gracefully
         // and sync will fail but be swallowed, so server starts
-        REPOCHAT_REPO_ROOT: "/tmp/nonexistent-startup-happy-test",
-        REPOCHAT_TRACKED_BRANCH: "main",
+        SEER_REPO_ROOT: "/tmp/nonexistent-startup-happy-test",
+        SEER_TRACKED_BRANCH: "main",
       },
       async () => {
         await assert.doesNotReject(() => runStartupTasks())
@@ -99,8 +99,8 @@ describe("startup orchestration", () => {
     withEnv(
       {
         // A path that is not a git repo — sync fails, reindex still runs
-        REPOCHAT_REPO_ROOT: "/tmp",
-        REPOCHAT_TRACKED_BRANCH: "nonexistent-branch-test",
+        SEER_REPO_ROOT: "/tmp",
+        SEER_TRACKED_BRANCH: "nonexistent-branch-test",
       },
       async () => {
         // runStartupTasks should not reject even though sync fails
@@ -113,8 +113,8 @@ describe("startup orchestration", () => {
     "reindex failure does not prevent server start (Promise resolves)",
     withEnv(
       {
-        REPOCHAT_REPO_ROOT: "/tmp/nonexistent-dir-reindex-fail-test",
-        REPOCHAT_TRACKED_BRANCH: "main",
+        SEER_REPO_ROOT: "/tmp/nonexistent-dir-reindex-fail-test",
+        SEER_TRACKED_BRANCH: "main",
       },
       async () => {
         // Both sync and reindex will fail but the function resolves
@@ -129,8 +129,8 @@ describe("startup orchestration", () => {
     "startup runs sync before reindex (sequential ordering)",
     withEnv(
       {
-        REPOCHAT_REPO_ROOT: "/tmp/nonexistent-ordering-test",
-        REPOCHAT_TRACKED_BRANCH: "main",
+        SEER_REPO_ROOT: "/tmp/nonexistent-ordering-test",
+        SEER_TRACKED_BRANCH: "main",
       },
       async () => {
         // We verify ordering by confirming the function completes
@@ -220,8 +220,8 @@ describe("webhook → worker integration", () => {
     "webhook for tracked branch signals the background worker",
     withEnv(
       {
-        REPOCHAT_TRACKED_BRANCH: "main",
-        REPOCHAT_REPO_ROOT: "/tmp/nonexistent-webhook-worker-test",
+        SEER_TRACKED_BRANCH: "main",
+        SEER_REPO_ROOT: "/tmp/nonexistent-webhook-worker-test",
       },
       async () => {
         // Start the worker
@@ -253,8 +253,8 @@ describe("webhook → worker integration", () => {
     "webhook returns immediately without blocking on indexing",
     withEnv(
       {
-        REPOCHAT_TRACKED_BRANCH: "main",
-        REPOCHAT_REPO_ROOT: "/tmp/nonexistent-webhook-fast-test",
+        SEER_TRACKED_BRANCH: "main",
+        SEER_REPO_ROOT: "/tmp/nonexistent-webhook-fast-test",
       },
       async () => {
         const fiber = Effect.runFork(
@@ -288,7 +288,7 @@ describe("webhook → worker integration", () => {
     "webhook for non-tracked branch does NOT trigger worker",
     withEnv(
       {
-        REPOCHAT_TRACKED_BRANCH: "main",
+        SEER_TRACKED_BRANCH: "main",
       },
       async () => {
         const fiber = Effect.runFork(
@@ -348,8 +348,8 @@ describe("coalescing and stale-index tolerance", () => {
     "multiple rapid webhook requests are coalesced into at most one follow-up",
     withEnv(
       {
-        REPOCHAT_TRACKED_BRANCH: "main",
-        REPOCHAT_REPO_ROOT: "/tmp/nonexistent-coalesce-test",
+        SEER_TRACKED_BRANCH: "main",
+        SEER_REPO_ROOT: "/tmp/nonexistent-coalesce-test",
       },
       async () => {
         const fiber = Effect.runFork(
@@ -396,7 +396,7 @@ describe("coalescing and stale-index tolerance", () => {
     "requestReindex signals coalesce when worker is already running",
     withEnv(
       {
-        REPOCHAT_REPO_ROOT: "/tmp/nonexistent-coalesce-direct-test",
+        SEER_REPO_ROOT: "/tmp/nonexistent-coalesce-direct-test",
       },
       async () => {
         const fiber = Effect.runFork(
@@ -441,8 +441,8 @@ describe("coalescing and stale-index tolerance", () => {
     const testRoot = mkdtempSync(join(tmpdir(), "grounding-stale-test-"))
     writeFileSync(join(testRoot, "stale.txt"), "still readable during reindex")
 
-    const origRoot = process.env.REPOCHAT_REPO_ROOT
-    process.env.REPOCHAT_REPO_ROOT = testRoot
+    const origRoot = process.env.SEER_REPO_ROOT
+    process.env.SEER_REPO_ROOT = testRoot
 
     try {
       // Signal a reindex (will fail fast on fake dir, but that's fine)
@@ -457,8 +457,8 @@ describe("coalescing and stale-index tolerance", () => {
       assert.ok(result.content.includes("still readable during reindex"))
       assert.equal(result.totalLines, 1)
     } finally {
-      if (origRoot === undefined) delete process.env.REPOCHAT_REPO_ROOT
-      else process.env.REPOCHAT_REPO_ROOT = origRoot
+      if (origRoot === undefined) delete process.env.SEER_REPO_ROOT
+      else process.env.SEER_REPO_ROOT = origRoot
       rmSync(testRoot, { recursive: true, force: true })
       await Effect.runPromise(Fiber.interrupt(fiber))
     }
@@ -520,16 +520,16 @@ describe("grounded answer flow — file-read verification", () => {
     startLine?: number
     endLine?: number
   }) {
-    const origRoot = process.env.REPOCHAT_REPO_ROOT
-    process.env.REPOCHAT_REPO_ROOT = testRoot
+    const origRoot = process.env.SEER_REPO_ROOT
+    process.env.SEER_REPO_ROOT = testRoot
     try {
       return await readFileTool.execute!({
         context: input,
         runtimeContext: {} as any,
       } as any)
     } finally {
-      if (origRoot === undefined) delete process.env.REPOCHAT_REPO_ROOT
-      else process.env.REPOCHAT_REPO_ROOT = origRoot
+      if (origRoot === undefined) delete process.env.SEER_REPO_ROOT
+      else process.env.SEER_REPO_ROOT = origRoot
     }
   }
 
@@ -672,8 +672,8 @@ describe("failure logging and graceful degradation", () => {
     "worker survives sync+reindex failures and continues waiting for signals",
     withEnv(
       {
-        REPOCHAT_REPO_ROOT: "/tmp/nonexistent-worker-survive-test",
-        REPOCHAT_TRACKED_BRANCH: "nonexistent-branch",
+        SEER_REPO_ROOT: "/tmp/nonexistent-worker-survive-test",
+        SEER_TRACKED_BRANCH: "nonexistent-branch",
       },
       async () => {
         const fiber = Effect.runFork(
@@ -701,7 +701,7 @@ describe("failure logging and graceful degradation", () => {
     "worker survives repeated failures without crashing",
     withEnv(
       {
-        REPOCHAT_REPO_ROOT: "/tmp/nonexistent-repeated-fail-test",
+        SEER_REPO_ROOT: "/tmp/nonexistent-repeated-fail-test",
       },
       async () => {
         const fiber = Effect.runFork(
@@ -766,7 +766,7 @@ describe("failure logging and graceful degradation", () => {
   it(
     "webhook with ref not in refs/heads/ format is ignored",
     withEnv(
-      { REPOCHAT_TRACKED_BRANCH: "main" },
+      { SEER_TRACKED_BRANCH: "main" },
       async () => {
         const fiber = Effect.runFork(
           reindexWorkerLoop.pipe(Effect.provide(logLayer)),
@@ -799,8 +799,8 @@ describe("failure logging and graceful degradation", () => {
 
   it("read_file returns clear error for path traversal (security boundary)", async () => {
     const testRoot = mkdtempSync(join(tmpdir(), "grounding-security-test-"))
-    const origRoot = process.env.REPOCHAT_REPO_ROOT
-    process.env.REPOCHAT_REPO_ROOT = testRoot
+    const origRoot = process.env.SEER_REPO_ROOT
+    process.env.SEER_REPO_ROOT = testRoot
 
     try {
       await assert.rejects(
@@ -815,8 +815,8 @@ describe("failure logging and graceful degradation", () => {
         },
       )
     } finally {
-      if (origRoot === undefined) delete process.env.REPOCHAT_REPO_ROOT
-      else process.env.REPOCHAT_REPO_ROOT = origRoot
+      if (origRoot === undefined) delete process.env.SEER_REPO_ROOT
+      else process.env.SEER_REPO_ROOT = origRoot
       rmSync(testRoot, { recursive: true, force: true })
     }
   })
@@ -827,8 +827,8 @@ describe("failure logging and graceful degradation", () => {
     "config defaults are reasonable when env vars are unset",
     withEnv(
       {
-        REPOCHAT_TRACKED_BRANCH: undefined,
-        REPOCHAT_REPO_ROOT: undefined,
+        SEER_TRACKED_BRANCH: undefined,
+        SEER_REPO_ROOT: undefined,
         CODEMOGGER_DB_PATH: undefined,
       },
       async () => {

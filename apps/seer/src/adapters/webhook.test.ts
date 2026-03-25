@@ -43,8 +43,8 @@ describe("handleBranchUpdateWebhook", () => {
   }
 
   it("GitHub push to tracked branch returns reindex_requested", async () => {
-    const origBranch = process.env.REPOCHAT_TRACKED_BRANCH
-    process.env.REPOCHAT_TRACKED_BRANCH = "main"
+    const origBranch = process.env.SEER_TRACKED_BRANCH
+    process.env.SEER_TRACKED_BRANCH = "main"
 
     try {
       const result = await handleBranchUpdateWebhook(
@@ -55,15 +55,15 @@ describe("handleBranchUpdateWebhook", () => {
       assert.equal(result.status, 200)
       assert.equal(result.body.action, "reindex_requested")
     } finally {
-      if (origBranch === undefined) delete process.env.REPOCHAT_TRACKED_BRANCH
-      else process.env.REPOCHAT_TRACKED_BRANCH = origBranch
+      if (origBranch === undefined) delete process.env.SEER_TRACKED_BRANCH
+      else process.env.SEER_TRACKED_BRANCH = origBranch
       await cleanup()
     }
   })
 
   it("GitHub push to non-tracked branch is ignored", async () => {
-    const origBranch = process.env.REPOCHAT_TRACKED_BRANCH
-    process.env.REPOCHAT_TRACKED_BRANCH = "main"
+    const origBranch = process.env.SEER_TRACKED_BRANCH
+    process.env.SEER_TRACKED_BRANCH = "main"
 
     try {
       const result = await handleBranchUpdateWebhook(
@@ -75,8 +75,8 @@ describe("handleBranchUpdateWebhook", () => {
       assert.equal(result.body.action, "ignored")
       assert.equal(result.body.reason, "branch_mismatch")
     } finally {
-      if (origBranch === undefined) delete process.env.REPOCHAT_TRACKED_BRANCH
-      else process.env.REPOCHAT_TRACKED_BRANCH = origBranch
+      if (origBranch === undefined) delete process.env.SEER_TRACKED_BRANCH
+      else process.env.SEER_TRACKED_BRANCH = origBranch
       await cleanup()
     }
   })
@@ -96,8 +96,8 @@ describe("handleBranchUpdateWebhook", () => {
   })
 
   it("GitLab Push Hook for tracked branch returns reindex_requested", async () => {
-    const origBranch = process.env.REPOCHAT_TRACKED_BRANCH
-    process.env.REPOCHAT_TRACKED_BRANCH = "main"
+    const origBranch = process.env.SEER_TRACKED_BRANCH
+    process.env.SEER_TRACKED_BRANCH = "main"
 
     try {
       const result = await handleBranchUpdateWebhook(
@@ -108,8 +108,8 @@ describe("handleBranchUpdateWebhook", () => {
       assert.equal(result.status, 200)
       assert.equal(result.body.action, "reindex_requested")
     } finally {
-      if (origBranch === undefined) delete process.env.REPOCHAT_TRACKED_BRANCH
-      else process.env.REPOCHAT_TRACKED_BRANCH = origBranch
+      if (origBranch === undefined) delete process.env.SEER_TRACKED_BRANCH
+      else process.env.SEER_TRACKED_BRANCH = origBranch
       await cleanup()
     }
   })
@@ -129,8 +129,8 @@ describe("handleBranchUpdateWebhook", () => {
   })
 
   it("generic ref payload for tracked branch returns reindex_requested", async () => {
-    const origBranch = process.env.REPOCHAT_TRACKED_BRANCH
-    process.env.REPOCHAT_TRACKED_BRANCH = "develop"
+    const origBranch = process.env.SEER_TRACKED_BRANCH
+    process.env.SEER_TRACKED_BRANCH = "develop"
 
     try {
       const result = await handleBranchUpdateWebhook(
@@ -141,8 +141,8 @@ describe("handleBranchUpdateWebhook", () => {
       assert.equal(result.status, 200)
       assert.equal(result.body.action, "reindex_requested")
     } finally {
-      if (origBranch === undefined) delete process.env.REPOCHAT_TRACKED_BRANCH
-      else process.env.REPOCHAT_TRACKED_BRANCH = origBranch
+      if (origBranch === undefined) delete process.env.SEER_TRACKED_BRANCH
+      else process.env.SEER_TRACKED_BRANCH = origBranch
       await cleanup()
     }
   })

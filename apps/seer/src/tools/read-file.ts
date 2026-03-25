@@ -7,7 +7,7 @@
  *
  * Security boundary:
  *   - Reads are scoped to a configurable repo root directory
- *     (REPOCHAT_REPO_ROOT, defaults to cwd).
+ *     (SEER_REPO_ROOT, defaults to cwd).
  *   - Path traversal outside the root is rejected.
  *   - Only regular files are readable (no directories, symlinks outside root).
  *   - File size is capped to avoid unbounded memory usage.
@@ -30,10 +30,10 @@ const MAX_LINE_RANGE = 500
 /**
  * Resolve the repo root directory.
  *
- * Uses REPOCHAT_REPO_ROOT if set, otherwise falls back to cwd.
+ * Uses SEER_REPO_ROOT if set, otherwise falls back to cwd.
  */
 function getRepoRoot(): string {
-  return process.env.REPOCHAT_REPO_ROOT || process.cwd()
+  return process.env.SEER_REPO_ROOT || process.cwd()
 }
 
 /**

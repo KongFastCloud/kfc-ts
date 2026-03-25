@@ -30,7 +30,7 @@ interface MockChatResponse {
 
 function makeGenerateReply(
   impl: (req: MockChatRequest) => Effect.Effect<MockChatResponse, unknown> = () =>
-    Effect.succeed({ text: "Mock reply from Repochat" }),
+    Effect.succeed({ text: "Mock reply from Seer" }),
 ) {
   return mock.fn(impl)
 }
@@ -124,7 +124,7 @@ describe("Bot message handler", () => {
     await simulateHandleMessage(thread, message, generateReply)
 
     assert.equal(thread.post.mock.callCount(), 1)
-    assert.equal(thread.post.mock.calls[0]!.arguments[0], "Mock reply from Repochat")
+    assert.equal(thread.post.mock.calls[0]!.arguments[0], "Mock reply from Seer")
   })
 
   it("posts a friendly error message when generateReply fails", async () => {

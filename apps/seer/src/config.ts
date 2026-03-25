@@ -14,19 +14,19 @@
 /**
  * Branch to sync the bot-owned checkout to on startup.
  *
- * Defaults to "main". Override via `REPOCHAT_TRACKED_BRANCH`.
+ * Defaults to "main". Override via `SEER_TRACKED_BRANCH`.
  */
 export function trackedBranch(): string {
-  return process.env.REPOCHAT_TRACKED_BRANCH ?? "main"
+  return process.env.SEER_TRACKED_BRANCH ?? "main"
 }
 
 /**
  * Root of the repository checkout used for file reads and indexing.
  *
- * Defaults to cwd. Override via `REPOCHAT_REPO_ROOT`.
+ * Defaults to cwd. Override via `SEER_REPO_ROOT`.
  */
 export function repoRoot(): string {
-  return process.env.REPOCHAT_REPO_ROOT || process.cwd()
+  return process.env.SEER_REPO_ROOT || process.cwd()
 }
 
 /**

@@ -1,8 +1,8 @@
-# repochat
+# seer
 
 Chat-first codebase exploration service that runs in the same Coder instance as the repository.
 
-`repochat` currently exposes a Google Chat webhook, routes incoming messages through an Effect-based boundary, and answers with a Mastra-backed agent using Vercel AI Gateway. GlitchTip MCP tools are loaded at startup when the required environment variables are present.
+`seer` currently exposes a Google Chat webhook, routes incoming messages through an Effect-based boundary, and answers with a Mastra-backed agent using Vercel AI Gateway. GlitchTip MCP tools are loaded at startup when the required environment variables are present.
 
 ## What It Does
 
@@ -22,12 +22,12 @@ Chat-first codebase exploration service that runs in the same Coder instance as 
 
 ## Setup
 
-Repochat is an HTTP service, not a browser UI. The local URL is for the running server inside your workspace. Chat platforms such as Google Chat should call the externally reachable HTTPS version of the webhook endpoint.
+Seer is an HTTP service, not a browser UI. The local URL is for the running server inside your workspace. Chat platforms such as Google Chat should call the externally reachable HTTPS version of the webhook endpoint.
 
 Typical setup flow:
 
 1. Copy env and fill in secrets.
-2. Start `repochat` in the workspace.
+2. Start `seer` in the workspace.
 3. Expose the server through your Coder workspace URL, tunnel, or reverse proxy.
 4. Configure Google Chat to send interaction events to the HTTPS webhook URL.
 5. Add the Chat app to a space and test it.
@@ -43,7 +43,7 @@ Typical setup flow:
 - `src/chat.ts`
   - Effect boundary around the Mastra agent call
 - `src/agent.ts`
-  - repochat-specific Mastra agent composition and prompt
+  - seer-specific Mastra agent composition and prompt
 - `src/memory.ts`
   - Mastra memory configuration
 - `src/mcp.ts`
@@ -55,13 +55,13 @@ Typical setup flow:
 
 ## Memory Storage
 
-Repochat uses local LibSQL for durable memory persistence. Both thread message history and resource-scoped working memory survive process restarts.
+Seer uses local LibSQL for durable memory persistence. Both thread message history and resource-scoped working memory survive process restarts.
 
 ### How it works
 
 - **Storage backend:** Local LibSQL (SQLite-compatible) via `@mastra/libsql`
 - **Database location:** `./data/memory.db` relative to the working directory (default)
-- **Override:** Set `REPOCHAT_MEMORY_DB_URL` to a `file:` URL to change placement
+- **Override:** Set `SEER_MEMORY_DB_URL` to a `file:` URL to change placement
 - **Auto-init:** The parent directory is created automatically on first startup
 - **Scope:** Single-process, single-file — no remote database or replication
 
@@ -82,7 +82,7 @@ The storage URL must be a local `file:` path. Remote URLs (`libsql://`, `https:/
 #   file:./data/memory.db
 
 # Custom path:
-REPOCHAT_MEMORY_DB_URL=file:/var/data/repochat/memory.db
+SEER_MEMORY_DB_URL=file:/var/data/seer/memory.db
 ```
 
 ### Fresh workspace
@@ -101,7 +101,7 @@ On first startup in a new workspace:
 
 ## Identity Model
 
-Repochat qualifies ids by platform before passing them into memory:
+Seer qualifies ids by platform before passing them into memory:
 
 - thread id: `gchat:<raw-thread-id>`
 - user id: `gchat:<raw-user-id>`
@@ -117,7 +117,7 @@ This gives:
 Copy the example file and fill in values:
 
 ```bash
-cd apps/repochat
+cd apps/seer
 cp .env.example .env.local
 ```
 
@@ -139,22 +139,22 @@ Optional for GlitchTip MCP:
 
 - `GLITCHTIP_BASE_URL`
 
-If the GlitchTip vars are missing, repochat still starts and serves normal codebase chat without error-inspection tools.
+If the GlitchTip vars are missing, seer still starts and serves normal codebase chat without error-inspection tools.
 
 You will also likely want to decide on:
 
 - the external HTTPS base URL that Google Chat can reach
-- the repo path that repochat should treat as its working checkout
-- the tracked branch repochat should sync and reindex
+- the repo path that seer should treat as its working checkout
+- the tracked branch seer should sync and reindex
 - the codemogger index db path if you do not want the default location
 
 Repository grounding env:
 
-- `REPOCHAT_REPO_ROOT`
-  - absolute path to the repo checkout repochat should read and index
+- `SEER_REPO_ROOT`
+  - absolute path to the repo checkout seer should read and index
   - defaults to the current working directory
-- `REPOCHAT_TRACKED_BRANCH`
-  - branch repochat should sync and watch for reindexing
+- `SEER_TRACKED_BRANCH`
+  - branch seer should sync and watch for reindexing
   - defaults to `main`
 - `CODEMOGGER_DB_PATH`
   - optional custom path for the codemogger SQLite db
@@ -163,13 +163,13 @@ Repository grounding env:
 ## Run
 
 ```bash
-pnpm --filter repochat dev
+pnpm --filter seer dev
 ```
 
 Production-style start:
 
 ```bash
-pnpm --filter repochat start
+pnpm --filter seer start
 ```
 
 Default local URL:
@@ -189,13 +189,13 @@ Expected response:
 ```json
 {
   "ok": true,
-  "service": "repochat"
+  "service": "seer"
 }
 ```
 
 ## Google Chat Setup
 
-Repochat is implemented as an interactive Google Chat app backed by an HTTP endpoint.
+Seer is implemented as an interactive Google Chat app backed by an HTTP endpoint.
 
 High-level steps:
 
@@ -207,20 +207,20 @@ High-level steps:
 6. Restrict visibility while testing.
 7. Add the app to a Chat space or direct message and verify replies.
 
-### 1. Run repochat and expose it over HTTPS
+### 1. Run seer and expose it over HTTPS
 
 Start the service locally in the workspace:
 
 ```bash
-pnpm --filter repochat start
+pnpm --filter seer start
 ```
 
 Example with explicit repo grounding config:
 
 ```bash
-REPOCHAT_REPO_ROOT=/absolute/path/to/repo \
-REPOCHAT_TRACKED_BRANCH=main \
-pnpm --filter repochat start
+SEER_REPO_ROOT=/absolute/path/to/repo \
+SEER_TRACKED_BRANCH=main \
+pnpm --filter seer start
 ```
 
 Then expose it through your workspace URL, tunnel, or reverse proxy.
@@ -256,9 +256,9 @@ Once configured:
 1. Open Google Chat.
 2. Add the app to a direct message or space.
 3. Send a message to the app or @mention it in a space.
-4. Verify that repochat logs the request and responds.
+4. Verify that seer logs the request and responds.
 
-Repochat currently handles:
+Seer currently handles:
 
 - `MESSAGE`
 - `ADDED_TO_SPACE`
@@ -268,8 +268,8 @@ Repochat currently handles:
 
 - Google Chat can retry delivery when your endpoint times out, fails, or returns a non-2xx status.
 - Synchronous responses should return quickly.
-- Repochat currently returns a direct JSON response rather than posting asynchronous follow-up messages through the Chat API.
-- If you later add asynchronous Chat API calls, you may need app authentication or additional Google auth setup. The current synchronous interaction-response path does not require separate Google auth inside repochat.
+- Seer currently returns a direct JSON response rather than posting asynchronous follow-up messages through the Chat API.
+- If you later add asynchronous Chat API calls, you may need app authentication or additional Google auth setup. The current synchronous interaction-response path does not require separate Google auth inside seer.
 
 Official references:
 
@@ -282,9 +282,9 @@ Official references:
 Run the package tests:
 
 ```bash
-pnpm --filter repochat test
-pnpm --filter repochat test:integration
-pnpm --filter repochat typecheck
+pnpm --filter seer test
+pnpm --filter seer test:integration
+pnpm --filter seer typecheck
 ```
 
 ## Current Behavior

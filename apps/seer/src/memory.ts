@@ -56,10 +56,10 @@ export const MEMORY_CONFIG: MemoryConfig = {
  * Local LibSQL storage URL for durable memory persistence.
  *
  * Defaults to `file:./data/memory.db` relative to the working directory.
- * Override via REPOCHAT_MEMORY_DB_URL to control placement explicitly.
+ * Override via SEER_MEMORY_DB_URL to control placement explicitly.
  */
 const MEMORY_DB_URL =
-  process.env.REPOCHAT_MEMORY_DB_URL ?? "file:./data/memory.db"
+  process.env.SEER_MEMORY_DB_URL ?? "file:./data/memory.db"
 
 /** LibSQL-backed durable storage for thread history and working memory. */
 const storage = createLocalLibSQLStorage({
