@@ -19,8 +19,11 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import dotenv from "dotenv"
 
+import { Effect, Fiber, Logger } from "effect"
+
 import { handler } from "./handler.ts"
 import { log } from "./log.ts"
+import { reindexWorkerLoop } from "./reindex-worker.ts"
 import { runStartupTasks } from "./startup/index.ts"
 
 const __filename = fileURLToPath(import.meta.url)
@@ -59,9 +62,21 @@ const server = http.createServer(async (req, res) => {
 // Failures are logged; the server starts regardless.
 await runStartupTasks()
 
+// ── Background reindex worker ──
+// Long-lived daemon fiber that processes webhook-triggered reindex requests.
+// Runs independently of the HTTP server; chat stays available while it works.
+const workerLogLayer = Logger.replace(
+  Logger.defaultLogger,
+  Logger.withLeveledConsole(Logger.logfmtLogger),
+)
+const workerFiber = Effect.runFork(
+  reindexWorkerLoop.pipe(Effect.provide(workerLogLayer)),
+)
+
 server.listen(port, () => {
   log(`listening on http://localhost:${port}`)
   log("routes:")
   log("  GET  /health                  — health check")
   log("  POST /google-chat/webhook     — Google Chat ingress")
+  log("  POST /webhook/branch-update   — Git provider branch-update webhook")
 })

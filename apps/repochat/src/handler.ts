@@ -8,6 +8,7 @@
  */
 
 import { handleGoogleChatWebhook } from "./adapters/google-chat.ts"
+import { handleBranchUpdateWebhook } from "./adapters/webhook.ts"
 import { log } from "./log.ts"
 
 const json = (value: unknown, init?: ResponseInit): Response =>
@@ -36,6 +37,17 @@ export const handler = async (request: Request): Promise<Response> => {
       return new Response(null, { status: result.status })
     }
 
+    return json(result.body, { status: result.status })
+  }
+
+  // ── Git provider webhook (tracked-branch updates) ──
+  if (request.method === "POST" && url.pathname === "/webhook/branch-update") {
+    const body = await request.text()
+    const headers: Record<string, string> = {}
+    request.headers.forEach((value, key) => {
+      headers[key] = value
+    })
+    const result = await handleBranchUpdateWebhook(body, headers)
     return json(result.body, { status: result.status })
   }
 
