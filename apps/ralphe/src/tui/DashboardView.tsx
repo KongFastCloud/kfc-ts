@@ -755,12 +755,16 @@ export interface PaneWidths {
  */
 export function computePaneWidths(terminalWidth: number): PaneWidths {
   // Bottom row: epic gets 1/3, done gets 2/3 — mirrors flexGrow 1:2.
-  // Use Math.floor for the epic estimate so it never exceeds the actual flex
-  // allocation.  Done gets the remainder, which may be 1 char larger than the
-  // actual flex allocation when the engine rounds epic up — the per-pane
-  // WIDTH_SAFETY_MARGIN absorbs this.
-  const epicPaneWidth = Math.max(24, Math.floor(terminalWidth / 3))
-  const donePaneWidth = Math.max(24, terminalWidth - epicPaneWidth)
+  // BOTH estimates use Math.floor so they are strictly ≤ the actual flex
+  // allocation regardless of how the engine rounds.  The 1-2 chars "lost"
+  // between floor(tw/3) + floor(2tw/3) and tw are intentional slack that
+  // joins WIDTH_SAFETY_MARGIN in preventing right-edge clipping.
+  //
+  // No artificial minimum clamp — the flex engine allocates based on the
+  // ratio, not our estimate, so clamping would make the estimate optimistic
+  // relative to reality and risk right-edge overflow.
+  const epicPaneWidth = Math.floor(terminalWidth / 3)
+  const donePaneWidth = Math.floor((terminalWidth * 2) / 3)
 
   // -- Active pane (full terminal width) --
   const activeTitleWidth = Math.max(0, terminalWidth - activeFixedWidth - WIDTH_SAFETY_MARGIN)
