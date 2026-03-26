@@ -12,7 +12,8 @@
  * The active table also shows Ready and Priority; the done table
  * replaces both with a wider Completed column.
  *
- * The epic pane shows: ID, Title, Status (not_started | active | dirty | queued_for_deletion).
+ * The epic pane shows: ID, Title, Status
+ * (error | not_started | active | dirty | queued_for_deletion).
  * It always renders so the split layout remains stable even when no epics exist yet.
  */
 
@@ -58,6 +59,7 @@ const taskStatusIndicator: Record<WatchTaskStatus, string> = {
 }
 
 const epicStatusColor: Record<EpicDisplayStatus, string> = {
+  error: colors.status.error,
   not_started: colors.fg.muted,
   active: colors.status.info,
   dirty: colors.status.warning,
@@ -65,6 +67,7 @@ const epicStatusColor: Record<EpicDisplayStatus, string> = {
 }
 
 const epicStatusIndicator: Record<EpicDisplayStatus, string> = {
+  error: "✗",
   not_started: "·",
   active: "●",
   dirty: "△",

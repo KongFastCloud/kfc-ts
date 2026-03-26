@@ -40,6 +40,8 @@ import type { EpicDisplayItem } from "./tui/epicStatus.js"
 import { deriveEpicDisplayItems, isEpicTask } from "./tui/epicStatus.js"
 import type { EpicWorktreeState } from "./epicWorktree.js"
 import { getEpicWorktreeState } from "./epicWorktree.js"
+import type { EpicRuntimeStatus } from "./epicRuntimeState.js"
+import { getEpicRuntimeStatus } from "./epicRuntimeState.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -100,6 +102,7 @@ export interface TuiWatchControllerDeps {
   readonly loadConfig: typeof loadConfig
   readonly closeEpic: typeof closeEpic
   readonly getEpicWorktreeState: typeof getEpicWorktreeState
+  readonly getEpicRuntimeStatus: typeof getEpicRuntimeStatus
   /** Test-only dependency overrides passed through to the worker. */
   readonly workerDeps?: Partial<TuiWorkerDeps>
 }
@@ -211,6 +214,7 @@ export function createTuiWatchController(
     loadConfig,
     closeEpic,
     getEpicWorktreeState,
+    getEpicRuntimeStatus,
     ...opts?.deps,
   }
 
@@ -279,6 +283,7 @@ export function createTuiWatchController(
 
     // Check worktree state for each epic in parallel
     const worktreeStates = new Map<string, EpicWorktreeState>()
+    const runtimeStates = new Map<string, EpicRuntimeStatus>()
     try {
       const results = await run(
         Effect.all(
@@ -299,7 +304,27 @@ export function createTuiWatchController(
       // If all checks fail, proceed with empty worktree states
     }
 
-    return deriveEpicDisplayItems(tasks, worktreeStates, epicDeletePendingIds)
+    try {
+      const results = await run(
+        Effect.all(
+          epicTasks.map((t) =>
+            deps.getEpicRuntimeStatus(t.id).pipe(
+              Effect.map((state) => [t.id, state] as const),
+              // If runtime-state read fails, treat as no_attempt.
+              Effect.catchAll(() => Effect.succeed([t.id, "no_attempt" as const] as const)),
+            ),
+          ),
+          { concurrency: "unbounded" },
+        ),
+      )
+      for (const [id, state] of results) {
+        runtimeStates.set(id, state)
+      }
+    } catch {
+      // If all checks fail, proceed with empty runtime states
+    }
+
+    return deriveEpicDisplayItems(tasks, worktreeStates, runtimeStates, epicDeletePendingIds)
   }
 
   // -----------------------------------------------------------------------

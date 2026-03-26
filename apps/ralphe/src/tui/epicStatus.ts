@@ -5,24 +5,16 @@
  * all inputs are pre-computed by the controller.
  *
  * Epic display statuses:
+ * - error: bootstrap/runtime state for the epic is currently errored
  * - not_started: no epic worktree exists yet (lazy creation pending)
  * - dirty: epic worktree exists and has uncommitted changes
+ * - active: epic worktree exists and is clean
  * - queued_for_deletion: operator marked the epic for deletion/cleanup
- *
- * The "clean" worktree state (exists, no uncommitted changes) is not
- * surfaced as a dedicated TUI status — it is implicit in the absence
- * of the other statuses. For TUI purposes, a clean worktree means the
- * epic is simply "active" with no special indicator needed, but since
- * the PRD requires exactly three statuses, clean maps to not_started=false
- * dirty=false, so we show no status badge (displayed as a dash or blank).
- *
- * Actually, re-reading the PRD: the three statuses are the only ones.
- * A clean epic worktree is just a normal state — no special status shown.
- * We display it as "active" since the worktree exists and is healthy.
  */
 
 import type { WatchTask } from "../beadsAdapter.js"
 import type { EpicWorktreeState } from "../epicWorktree.js"
+import type { EpicRuntimeStatus } from "../epicRuntimeState.js"
 import { isEpicIssue } from "../epic.js"
 
 // ---------------------------------------------------------------------------
@@ -34,6 +26,7 @@ import { isEpicIssue } from "../epic.js"
  * These are the only statuses shown in the epic pane per the PRD.
  */
 export type EpicDisplayStatus =
+  | "error"
   | "not_started"
   | "active"
   | "dirty"
@@ -67,16 +60,19 @@ export const isEpicTask = (task: WatchTask): boolean =>
  * Derive the display status for a single epic.
  *
  * Priority order:
- * 1. If the epic is in the deletion queue → queued_for_deletion
- * 2. If the worktree is dirty → dirty
- * 3. If no worktree exists → not_started
- * 4. Otherwise (worktree exists, clean) → active
+ * 1. If the epic runtime state is errored → error
+ * 2. If the epic is in the deletion queue → queued_for_deletion
+ * 3. If the worktree is dirty → dirty
+ * 4. If no worktree exists → not_started
+ * 5. Otherwise (worktree exists, clean) → active
  */
 export const deriveEpicDisplayStatus = (
   epicId: string,
   worktreeState: EpicWorktreeState | undefined,
+  runtimeStatus: EpicRuntimeStatus | undefined,
   deletionQueuedIds: ReadonlySet<string>,
 ): EpicDisplayStatus => {
+  if (runtimeStatus === "error") return "error"
   if (deletionQueuedIds.has(epicId)) return "queued_for_deletion"
 
   switch (worktreeState) {
@@ -104,6 +100,7 @@ export const deriveEpicDisplayStatus = (
 export const deriveEpicDisplayItems = (
   tasks: readonly WatchTask[],
   worktreeStates: ReadonlyMap<string, EpicWorktreeState>,
+  runtimeStates: ReadonlyMap<string, EpicRuntimeStatus>,
   deletionQueuedIds: ReadonlySet<string>,
 ): EpicDisplayItem[] => {
   const items: EpicDisplayItem[] = []
@@ -124,6 +121,7 @@ export const deriveEpicDisplayItems = (
       status: deriveEpicDisplayStatus(
         task.id,
         worktreeStates.get(task.id),
+        runtimeStates.get(task.id),
         deletionQueuedIds,
       ),
     })
