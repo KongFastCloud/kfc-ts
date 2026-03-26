@@ -1,12 +1,15 @@
 /**
- * ABOUTME: Tests for the dashboard partitioning logic and row-count derivation.
+ * ABOUTME: Tests for the dashboard partitioning logic, row-count derivation,
+ * and pane width budgeting.
  * Verifies that tasks are correctly split into non-done and done buckets,
- * preserving original ordering within each bucket, and that measured box
- * heights are correctly converted to visible row counts.
+ * preserving original ordering within each bucket, that measured box
+ * heights are correctly converted to visible row counts, and that pane
+ * title widths are conservatively derived so content never clips on the
+ * right edge.
  */
 
 import { describe, it, expect } from "bun:test"
-import { partitionTasks, sortDoneTasks, formatCompletedAt, formatIdCell, TABLE_CHROME_LINES, deriveVisibleRowCount } from "../src/tui/DashboardView.js"
+import { partitionTasks, sortDoneTasks, formatCompletedAt, formatIdCell, TABLE_CHROME_LINES, deriveVisibleRowCount, computePaneWidths } from "../src/tui/DashboardView.js"
 import type { WatchTask } from "../src/beadsAdapter.js"
 
 function makeTask(id: string, status: WatchTask["status"]): WatchTask {
@@ -313,5 +316,115 @@ describe("TABLE_CHROME_LINES", () => {
   it("accounts for border-top, border-bottom, section title, and column header", () => {
     // border top (1) + border bottom (1) + section title (1) + column header (1) = 4
     expect(TABLE_CHROME_LINES).toBe(4)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computePaneWidths — right-edge safety regression tests
+// ---------------------------------------------------------------------------
+
+describe("computePaneWidths", () => {
+  it("produces non-negative title widths at a standard 80-column terminal", () => {
+    const w = computePaneWidths(80)
+    expect(w.activeTitleWidth).toBeGreaterThanOrEqual(0)
+    expect(w.doneTitleWidth).toBeGreaterThanOrEqual(0)
+    expect(w.epicTitleWidth).toBeGreaterThanOrEqual(0)
+  })
+
+  it("produces non-negative title widths at a narrow 40-column terminal", () => {
+    const w = computePaneWidths(40)
+    expect(w.activeTitleWidth).toBeGreaterThanOrEqual(0)
+    expect(w.doneTitleWidth).toBeGreaterThanOrEqual(0)
+    expect(w.epicTitleWidth).toBeGreaterThanOrEqual(0)
+  })
+
+  it("produces non-negative title widths at an extremely narrow terminal", () => {
+    const w = computePaneWidths(20)
+    expect(w.activeTitleWidth).toBe(0) // clamped to minimum
+    expect(w.doneTitleWidth).toBe(0)
+    expect(w.epicTitleWidth).toBe(0)
+  })
+
+  it("splits bottom panes to match the 1:2 flex ratio (conservative floor for epic)", () => {
+    const w = computePaneWidths(120)
+    // Epic gets ~1/3 (floor for conservative estimate), done gets remainder
+    expect(w.epicPaneWidth).toBe(Math.floor(120 / 3))
+    expect(w.donePaneWidth).toBe(120 - Math.floor(120 / 3))
+  })
+
+  it("bottom pane widths sum to at most the terminal width", () => {
+    for (const tw of [60, 80, 100, 120, 150, 200, 300]) {
+      const w = computePaneWidths(tw)
+      // donePaneWidth + epicPaneWidth should never exceed terminalWidth
+      expect(w.donePaneWidth + w.epicPaneWidth).toBeLessThanOrEqual(tw)
+    }
+  })
+
+  it("active row content fits within terminal width", () => {
+    // Active pane content: id(12) + sep(3) + title + status(12) + ready(14) + priority(5) + duration(10) + padding(2) + border(2)
+    const fixedActive = 12 + 3 + 12 + 14 + 5 + 10 + 2 + 2
+    for (const tw of [80, 120, 200, 300]) {
+      const w = computePaneWidths(tw)
+      const totalRowWidth = fixedActive + w.activeTitleWidth
+      expect(totalRowWidth).toBeLessThanOrEqual(tw)
+    }
+  })
+
+  it("done row content fits within its pane width at all widths", () => {
+    // Done pane content: id(12) + sep(3) + title + status(12) + completed(dynamic) + duration(10) + padding(2) + border(2)
+    const fixedDone = 12 + 3 + 12 + 10 + 2 + 2
+    for (const tw of [80, 100, 120, 150, 200, 300]) {
+      const w = computePaneWidths(tw)
+      const totalRowWidth = fixedDone + w.doneTitleWidth + w.doneCompletedWidth
+      expect(totalRowWidth).toBeLessThanOrEqual(w.donePaneWidth)
+    }
+  })
+
+  it("epic row content fits within its pane width at all widths", () => {
+    // Epic pane content: id(12) + sep(3) + title + epicStatus(dynamic) + padding(2) + border(2)
+    const fixedEpic = 12 + 3 + 2 + 2
+    for (const tw of [80, 100, 120, 150, 200, 300]) {
+      const w = computePaneWidths(tw)
+      const totalRowWidth = fixedEpic + w.epicTitleWidth + w.epicStatusWidth
+      expect(totalRowWidth).toBeLessThanOrEqual(w.epicPaneWidth)
+    }
+  })
+
+  it("title widths grow as terminal width increases", () => {
+    const w80 = computePaneWidths(80)
+    const w200 = computePaneWidths(200)
+    expect(w200.activeTitleWidth).toBeGreaterThan(w80.activeTitleWidth)
+    expect(w200.doneTitleWidth).toBeGreaterThan(w80.doneTitleWidth)
+    expect(w200.epicTitleWidth).toBeGreaterThan(w80.epicTitleWidth)
+  })
+
+  it("epic status column reaches full width at wide terminals", () => {
+    const w = computePaneWidths(300)
+    expect(w.epicStatusWidth).toBe(22) // COL.epicStatus
+  })
+
+  it("done completed column reaches full width at wide terminals", () => {
+    const w = computePaneWidths(300)
+    expect(w.doneCompletedWidth).toBe(22) // COL.completedDone
+  })
+
+  it("dynamic columns shrink gracefully at narrow terminals", () => {
+    const w = computePaneWidths(80)
+    // At 80 cols, panes are narrow — dynamic columns should shrink
+    expect(w.epicStatusWidth).toBeLessThan(22)
+    expect(w.epicStatusWidth).toBeGreaterThanOrEqual(0)
+    expect(w.doneCompletedWidth).toBeLessThanOrEqual(22)
+    expect(w.doneCompletedWidth).toBeGreaterThanOrEqual(0)
+  })
+
+  it("all column widths remain non-negative at any terminal width", () => {
+    for (const tw of [20, 40, 60, 80, 100, 120, 200]) {
+      const w = computePaneWidths(tw)
+      expect(w.activeTitleWidth).toBeGreaterThanOrEqual(0)
+      expect(w.doneTitleWidth).toBeGreaterThanOrEqual(0)
+      expect(w.epicTitleWidth).toBeGreaterThanOrEqual(0)
+      expect(w.epicStatusWidth).toBeGreaterThanOrEqual(0)
+      expect(w.doneCompletedWidth).toBeGreaterThanOrEqual(0)
+    }
   })
 })
