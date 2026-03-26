@@ -124,7 +124,8 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
       calls.push({ op: "writeMetadata", id, metadata })
       return Effect.succeed(undefined)
     },
-    setEpicBranchMetadata: () => Effect.succeed(undefined),
+    addLabel: () => Effect.succeed(undefined),
+    removeLabel: () => Effect.succeed(undefined),
     readMetadata: (id: string) => {
       calls.push({ op: "readMetadata", id })
       return Effect.succeed(undefined)
@@ -142,6 +143,9 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
     addComment: (_id: string, _text: string) => Effect.succeed(undefined),
     engineResolverLayer: makeMockEngineResolverLayer(),
     ensureEpicWorktree: () => Effect.succeed("/tmp/ralphe-worktrees/mock"),
+    getEpicRuntimeStatus: () => Effect.succeed("ready"),
+    setEpicRuntimeStatus: () => Effect.succeed(undefined),
+    bootstrapEpicWorktree: () => Effect.succeed(undefined),
   }
 }
 

@@ -29,6 +29,7 @@ import { FatalError } from "../src/errors.js"
 import type { BeadsIssue, BeadsMetadata } from "../src/beads.js"
 import type { RalpheConfig } from "../src/config.js"
 import type { WatchTask } from "../src/beadsAdapter.js"
+import type { EpicRuntimeStatus } from "../src/epicRuntimeState.js"
 import { EngineResolver } from "../src/EngineResolver.js"
 import {
   processClaimedTask,
@@ -77,10 +78,14 @@ let epicDetailsByParentId: Map<string, WatchTask | undefined> = new Map()
 let worktreePathsByEpicId: Map<string, string> = new Map()
 // Track ensureEpicWorktree calls
 let worktreeCalls: Array<{ epicId: string; branch: string }> = []
-// Track epic branch provisioning writes
-let epicBranchWrites: Array<{ epicId: string; branch: string }> = []
 // Optional failure override for ensureEpicWorktree
 let worktreeFailure: FatalError | undefined = undefined
+// Track bootstrap runs
+let bootstrapCalls: Array<{ worktreePath: string }> = []
+// Optional failure override for bootstrap
+let bootstrapFailure: FatalError | undefined = undefined
+// Local runtime state by epic ID
+let runtimeStateByEpicId: Map<string, EpicRuntimeStatus> = new Map()
 
 // ---------------------------------------------------------------------------
 // Local dependency harness
@@ -159,12 +164,10 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
       calls.push({ op: "writeMetadata", id, metadata })
       return Effect.succeed(undefined)
     },
-    setEpicBranchMetadata: (id: string, branch: string) => {
-      epicBranchWrites.push({ epicId: id, branch })
-      const existing = epicDetailsByParentId.get(id)
-      if (existing) {
-        epicDetailsByParentId.set(id, { ...existing, branch })
-      }
+    addLabel: (id: string, label: string) => {
+      return Effect.succeed(undefined)
+    },
+    removeLabel: (id: string, label: string) => {
       return Effect.succeed(undefined)
     },
     closeTaskSuccess: (id: string, reason?: string) => {
@@ -190,6 +193,18 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
       const worktreePath = worktreePathsByEpicId.get(epic.id) ?? `/tmp/ralphe-worktrees/${epic.id}`
       return Effect.succeed(worktreePath)
     },
+    getEpicRuntimeStatus: (epicId: string) => Effect.succeed(runtimeStateByEpicId.get(epicId) ?? "no_attempt"),
+    setEpicRuntimeStatus: (epicId: string, status: EpicRuntimeStatus) => {
+      runtimeStateByEpicId.set(epicId, status)
+      return Effect.succeed(undefined)
+    },
+    bootstrapEpicWorktree: (worktreePath: string) => {
+      bootstrapCalls.push({ worktreePath })
+      if (bootstrapFailure) {
+        return Effect.fail(bootstrapFailure)
+      }
+      return Effect.succeed(undefined)
+    },
   }
 }
 
@@ -205,9 +220,11 @@ beforeEach(() => {
   calls = []
   assembledPrompts = []
   worktreeCalls = []
-  epicBranchWrites = []
   worktreePathsByEpicId = new Map()
   worktreeFailure = undefined
+  bootstrapCalls = []
+  bootstrapFailure = undefined
+  runtimeStateByEpicId = new Map()
   // Pre-populate the default epic so existing tests pass with epic validation
   epicDetailsByParentId = new Map([
     [DEFAULT_EPIC_ID, makeEpic(DEFAULT_EPIC_ID, "Default Epic", "Default epic PRD body.")],
@@ -1280,7 +1297,64 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
     expect(worktreeCalls[1]!.epicId).toBe("epic-b")
   })
 
-  test("epic without branch is provisioned before worktree creation", async () => {
+  test("runtime no_attempt bootstraps once and transitions to ready", async () => {
+    epicDetailsByParentId.set("boot-no-attempt", makeEpic("boot-no-attempt", "Bootstrap Epic", "PRD"))
+    const issue = makeIssue("boot-task-1", "Bootstrap task", "boot-no-attempt")
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(true)
+    expect(bootstrapCalls).toHaveLength(1)
+    expect(runtimeStateByEpicId.get("boot-no-attempt")).toBe("ready")
+  })
+
+  test("runtime ready skips bootstrap", async () => {
+    epicDetailsByParentId.set("boot-ready", makeEpic("boot-ready", "Bootstrap Epic", "PRD"))
+    runtimeStateByEpicId.set("boot-ready", "ready")
+    const issue = makeIssue("boot-task-2", "Bootstrap skip", "boot-ready")
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(true)
+    expect(bootstrapCalls).toHaveLength(0)
+    expect(runtimeStateByEpicId.get("boot-ready")).toBe("ready")
+  })
+
+  test("runtime error re-attempts bootstrap and clears error state on success", async () => {
+    epicDetailsByParentId.set("boot-error", makeEpic("boot-error", "Bootstrap Epic", "PRD"))
+    runtimeStateByEpicId.set("boot-error", "error")
+    const issue = makeIssue("boot-task-3", "Bootstrap retry", "boot-error")
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(true)
+    expect(bootstrapCalls).toHaveLength(1)
+    expect(runtimeStateByEpicId.get("boot-error")).toBe("ready")
+  })
+
+  test("bootstrap failure marks task exhausted and persists epic runtime error", async () => {
+    epicDetailsByParentId.set("boot-fail", makeEpic("boot-fail", "Bootstrap Epic", "PRD"))
+    bootstrapFailure = new FatalError({ command: "pnpm install --frozen-lockfile", message: "lockfile mismatch" })
+    const issue = makeIssue("boot-task-4", "Bootstrap fail", "boot-fail")
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain("Failed to bootstrap epic worktree")
+    expect(result.error).toContain("lockfile mismatch")
+    expect(runtimeStateByEpicId.get("boot-fail")).toBe("error")
+    expect(calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "boot-task-4")).toBe(true)
+  })
+
+  test("epic without branch fails with explicit epic_uninitialized reason", async () => {
     epicDetailsByParentId.set("no-branch-epic", {
       id: "no-branch-epic",
       title: "Epic Without Branch",
@@ -1295,10 +1369,9 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
       processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
     )
 
-    expect(result.success).toBe(true)
-    expect(result.error).toBeUndefined()
-    expect(epicBranchWrites).toEqual([{ epicId: "no-branch-epic", branch: "epic/no-branch-epic" }])
-    expect(worktreeCalls.length).toBe(1)
-    expect(worktreeCalls[0]!.branch).toBe("epic/no-branch-epic")
+    expect(result.success).toBe(false)
+    expect(result.error).toBe("epic_uninitialized")
+    expect(worktreeCalls.length).toBe(0)
+    expect(bootstrapCalls.length).toBe(0)
   })
 })

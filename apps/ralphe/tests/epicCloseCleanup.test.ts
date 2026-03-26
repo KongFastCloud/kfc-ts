@@ -55,7 +55,6 @@ let engineResult: Effect.Effect<AgentResult, FatalError> =
 
 let epicDetailsByParentId: Map<string, WatchTask | undefined> = new Map()
 let worktreeCalls: Array<{ epicId: string; branch: string }> = []
-let epicBranchWrites: Array<{ epicId: string; branch: string }> = []
 let worktreeFailure: FatalError | undefined = undefined
 let worktreePathsByEpicId: Map<string, string> = new Map()
 
@@ -119,12 +118,12 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
       calls.push({ op: "writeMetadata", id, metadata })
       return Effect.succeed(undefined)
     },
-    setEpicBranchMetadata: (id: string, branch: string) => {
-      epicBranchWrites.push({ epicId: id, branch })
-      const existing = epicDetailsByParentId.get(id)
-      if (existing) {
-        epicDetailsByParentId.set(id, { ...existing, branch })
-      }
+    addLabel: (id: string, label: string) => {
+      calls.push({ op: `addLabel:${label}`, id })
+      return Effect.succeed(undefined)
+    },
+    removeLabel: (id: string, label: string) => {
+      calls.push({ op: `removeLabel:${label}`, id })
       return Effect.succeed(undefined)
     },
     closeTaskSuccess: (id: string, reason?: string) => {
@@ -148,6 +147,9 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
       const worktreePath = worktreePathsByEpicId.get(epic.id) ?? `/tmp/ralphe-worktrees/${epic.id}`
       return Effect.succeed(worktreePath)
     },
+    getEpicRuntimeStatus: () => Effect.succeed("ready"),
+    setEpicRuntimeStatus: () => Effect.succeed(undefined),
+    bootstrapEpicWorktree: () => Effect.succeed(undefined),
   }
 }
 
@@ -159,7 +161,6 @@ beforeEach(() => {
     [DEFAULT_EPIC_ID, makeEpic(DEFAULT_EPIC_ID, "Default Epic", "Default epic PRD body.")],
   ])
   worktreeCalls = []
-  epicBranchWrites = []
   worktreePathsByEpicId = new Map()
   worktreeFailure = undefined
 })
@@ -363,7 +364,7 @@ describe("processClaimedTask: invalid context is surfaced operationally", () => 
     expect(calls.filter((c) => c.op === "writeMetadata").length).toBe(0)
   })
 
-  test("task with missing branch epic provisions branch and continues", async () => {
+  test("task with missing branch epic fails as epic_uninitialized", async () => {
     epicDetailsByParentId.set("no-branch", {
       id: "no-branch",
       title: "Epic Without Branch",
@@ -378,11 +379,10 @@ describe("processClaimedTask: invalid context is surfaced operationally", () => 
       processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
     )
 
-    expect(result.success).toBe(true)
-    expect(result.error).toBeUndefined()
-    expect(epicBranchWrites).toEqual([{ epicId: "no-branch", branch: "epic/no-branch" }])
-    expect(worktreeCalls).toEqual([{ epicId: "no-branch", branch: "epic/no-branch" }])
-    expect(calls.find((c) => c.op === "markTaskExhaustedFailure")).toBeUndefined()
+    expect(result.success).toBe(false)
+    expect(result.error).toBe("epic_uninitialized")
+    expect(worktreeCalls).toHaveLength(0)
+    expect(calls.find((c) => c.op === "markTaskExhaustedFailure")).toBeTruthy()
   })
 
   test("task whose parent has empty PRD body is errored, not silently skipped", async () => {

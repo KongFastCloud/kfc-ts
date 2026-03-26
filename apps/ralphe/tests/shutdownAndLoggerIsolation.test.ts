@@ -92,6 +92,7 @@ function makeControllerDeps(): TuiWatchControllerDeps {
     loadConfig: () => baseConfig,
     closeEpic: () => Effect.succeed({ removed: false, wasDirty: false }),
     getEpicWorktreeState: () => Effect.succeed("not_started" as const),
+    getEpicRuntimeStatus: () => Effect.succeed("no_attempt" as const),
   }
 }
 

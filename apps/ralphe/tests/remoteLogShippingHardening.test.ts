@@ -90,7 +90,8 @@ function makeWorkflowDeps(overrides?: Partial<WatchWorkflowDeps>): WatchWorkflow
       workflowCalls.push({ op: "writeMetadata", id })
       return Effect.succeed(undefined)
     },
-    setEpicBranchMetadata: () => Effect.succeed(undefined),
+    addLabel: () => Effect.succeed(undefined),
+    removeLabel: () => Effect.succeed(undefined),
     readMetadata: (id) => {
       workflowCalls.push({ op: "readMetadata", id })
       return Effect.succeed(undefined)
@@ -103,6 +104,9 @@ function makeWorkflowDeps(overrides?: Partial<WatchWorkflowDeps>): WatchWorkflow
     addComment: (_id, _text) => Effect.succeed(undefined),
     engineResolverLayer: makeMockEngineResolverLayer(),
     ensureEpicWorktree: () => Effect.succeed("/tmp/ralphe-worktrees/mock"),
+    getEpicRuntimeStatus: () => Effect.succeed("ready"),
+    setEpicRuntimeStatus: () => Effect.succeed(undefined),
+    bootstrapEpicWorktree: () => Effect.succeed(undefined),
     ...overrides,
   }
 }
@@ -541,6 +545,7 @@ describe("TUI orchestration with active remote shipping", () => {
       loadConfig: () => baseConfig,
       closeEpic: () => Effect.succeed({ removed: false, wasDirty: false }),
       getEpicWorktreeState: () => Effect.succeed("not_started" as const),
+      getEpicRuntimeStatus: () => Effect.succeed("no_attempt" as const),
     }
 
     const ctrl = createTuiWatchController(TuiLoggerLayer, {

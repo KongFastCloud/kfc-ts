@@ -93,6 +93,7 @@ function makeControllerDeps(
     loadConfig: () => baseConfig,
     closeEpic: () => Effect.succeed({ removed: false, wasDirty: false }),
     getEpicWorktreeState: () => Effect.succeed("not_started" as const),
+    getEpicRuntimeStatus: () => Effect.succeed("no_attempt" as const),
     ...overrides,
   }
 }
@@ -620,6 +621,27 @@ describe("TuiWatchController — epic pane state", () => {
     const dirty = state.epics.find((e) => e.id === "E-dirty")
     expect(clean!.status).toBe("active") // clean worktree → active
     expect(dirty!.status).toBe("dirty")
+
+    await ctrl.stop()
+  })
+
+  test("epic display items reflect runtime error state with highest precedence", async () => {
+    const epicTasks = [
+      { id: "E-error", title: "Errored Epic", status: "backlog" as const, labels: ["epic"] },
+    ]
+    const ctrl = makeController({
+      deps: {
+        queryAllTasks: () => Effect.succeed(epicTasks),
+        getEpicWorktreeState: () => Effect.succeed("dirty" as const),
+        getEpicRuntimeStatus: () => Effect.succeed("error" as const),
+      } as unknown as Partial<TuiWatchControllerDeps>,
+    })
+
+    await ctrl.refresh()
+
+    const state = ctrl.getState()
+    const errored = state.epics.find((e) => e.id === "E-error")
+    expect(errored!.status).toBe("error")
 
     await ctrl.stop()
   })

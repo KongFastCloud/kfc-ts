@@ -7,6 +7,7 @@
 import { describe, it, expect } from "bun:test"
 import type { WatchTask } from "../src/beadsAdapter.js"
 import type { EpicWorktreeState } from "../src/epicWorktree.js"
+import type { EpicRuntimeStatus } from "../src/epicRuntimeState.js"
 import {
   isEpicTask,
   deriveEpicDisplayStatus,
@@ -68,26 +69,30 @@ describe("isEpicTask", () => {
 describe("deriveEpicDisplayStatus", () => {
   const emptyDeletionSet: ReadonlySet<string> = new Set()
 
+  it("returns error when runtime status is error (highest priority)", () => {
+    expect(deriveEpicDisplayStatus("E-1", "dirty", "error", emptyDeletionSet)).toBe("error")
+  })
+
   it("returns queued_for_deletion when epic is in deletion queue (highest priority)", () => {
     const deletionSet = new Set(["E-1"])
-    // Even if worktree is dirty, deletion takes precedence
-    expect(deriveEpicDisplayStatus("E-1", "dirty", deletionSet)).toBe("queued_for_deletion")
+    // Runtime state is healthy, so deletion takes precedence over worktree state
+    expect(deriveEpicDisplayStatus("E-1", "dirty", "ready", deletionSet)).toBe("queued_for_deletion")
   })
 
   it("returns dirty when worktree state is dirty", () => {
-    expect(deriveEpicDisplayStatus("E-1", "dirty", emptyDeletionSet)).toBe("dirty")
+    expect(deriveEpicDisplayStatus("E-1", "dirty", "ready", emptyDeletionSet)).toBe("dirty")
   })
 
   it("returns not_started when worktree state is not_started", () => {
-    expect(deriveEpicDisplayStatus("E-1", "not_started", emptyDeletionSet)).toBe("not_started")
+    expect(deriveEpicDisplayStatus("E-1", "not_started", "ready", emptyDeletionSet)).toBe("not_started")
   })
 
   it("returns not_started when worktree state is undefined", () => {
-    expect(deriveEpicDisplayStatus("E-1", undefined, emptyDeletionSet)).toBe("not_started")
+    expect(deriveEpicDisplayStatus("E-1", undefined, "ready", emptyDeletionSet)).toBe("not_started")
   })
 
   it("returns active when worktree state is clean", () => {
-    expect(deriveEpicDisplayStatus("E-1", "clean", emptyDeletionSet)).toBe("active")
+    expect(deriveEpicDisplayStatus("E-1", "clean", "ready", emptyDeletionSet)).toBe("active")
   })
 })
 
@@ -97,24 +102,25 @@ describe("deriveEpicDisplayStatus", () => {
 
 describe("deriveEpicDisplayItems", () => {
   const emptyWorktreeStates = new Map<string, EpicWorktreeState>()
+  const emptyRuntimeStates = new Map<string, EpicRuntimeStatus>()
   const emptyDeletionSet: ReadonlySet<string> = new Set()
 
   it("returns empty array when no tasks have the epic label", () => {
     const tasks = [makeTask("T-1", "backlog"), makeTask("T-2", "done")]
-    const result = deriveEpicDisplayItems(tasks, emptyWorktreeStates, emptyDeletionSet)
+    const result = deriveEpicDisplayItems(tasks, emptyWorktreeStates, emptyRuntimeStates, emptyDeletionSet)
     expect(result).toHaveLength(0)
   })
 
   it("includes open epics", () => {
     const tasks = [makeEpic("E-1", "backlog"), makeEpic("E-2", "active")]
-    const result = deriveEpicDisplayItems(tasks, emptyWorktreeStates, emptyDeletionSet)
+    const result = deriveEpicDisplayItems(tasks, emptyWorktreeStates, emptyRuntimeStates, emptyDeletionSet)
     expect(result).toHaveLength(2)
     expect(result.map((e) => e.id)).toEqual(["E-1", "E-2"])
   })
 
   it("excludes closed epics that are NOT queued for deletion", () => {
     const tasks = [makeEpic("E-1", "done"), makeEpic("E-2", "backlog")]
-    const result = deriveEpicDisplayItems(tasks, emptyWorktreeStates, emptyDeletionSet)
+    const result = deriveEpicDisplayItems(tasks, emptyWorktreeStates, emptyRuntimeStates, emptyDeletionSet)
     expect(result).toHaveLength(1)
     expect(result[0]!.id).toBe("E-2")
   })
@@ -122,7 +128,7 @@ describe("deriveEpicDisplayItems", () => {
   it("includes closed epics that ARE queued for deletion", () => {
     const tasks = [makeEpic("E-1", "done")]
     const deletionSet = new Set(["E-1"])
-    const result = deriveEpicDisplayItems(tasks, emptyWorktreeStates, deletionSet)
+    const result = deriveEpicDisplayItems(tasks, emptyWorktreeStates, emptyRuntimeStates, deletionSet)
     expect(result).toHaveLength(1)
     expect(result[0]!.id).toBe("E-1")
     expect(result[0]!.status).toBe("queued_for_deletion")
@@ -139,7 +145,7 @@ describe("deriveEpicDisplayItems", () => {
       ["E-2", "clean"],
       ["E-3", "dirty"],
     ])
-    const result = deriveEpicDisplayItems(tasks, worktreeStates, emptyDeletionSet)
+    const result = deriveEpicDisplayItems(tasks, worktreeStates, emptyRuntimeStates, emptyDeletionSet)
     expect(result).toHaveLength(3)
     expect(result[0]!.status).toBe("not_started")
     expect(result[1]!.status).toBe("active")
@@ -148,7 +154,7 @@ describe("deriveEpicDisplayItems", () => {
 
   it("includes title from the task", () => {
     const tasks = [makeEpic("E-1", "backlog")]
-    const result = deriveEpicDisplayItems(tasks, emptyWorktreeStates, emptyDeletionSet)
+    const result = deriveEpicDisplayItems(tasks, emptyWorktreeStates, emptyRuntimeStates, emptyDeletionSet)
     expect(result[0]!.title).toBe("Epic E-1")
   })
 
@@ -158,7 +164,7 @@ describe("deriveEpicDisplayItems", () => {
       makeEpic("E-1", "backlog"),
       makeTask("T-2", "active"),
     ]
-    const result = deriveEpicDisplayItems(tasks, emptyWorktreeStates, emptyDeletionSet)
+    const result = deriveEpicDisplayItems(tasks, emptyWorktreeStates, emptyRuntimeStates, emptyDeletionSet)
     expect(result).toHaveLength(1)
     expect(result[0]!.id).toBe("E-1")
   })
@@ -167,8 +173,17 @@ describe("deriveEpicDisplayItems", () => {
     const tasks = [makeEpic("E-1", "backlog")]
     const worktreeStates = new Map<string, EpicWorktreeState>([["E-1", "dirty"]])
     const deletionSet = new Set(["E-1"])
-    const result = deriveEpicDisplayItems(tasks, worktreeStates, deletionSet)
+    const result = deriveEpicDisplayItems(tasks, worktreeStates, emptyRuntimeStates, deletionSet)
     expect(result[0]!.status).toBe("queued_for_deletion")
+  })
+
+  it("runtime error takes precedence over deletion queue and worktree state", () => {
+    const tasks = [makeEpic("E-1", "backlog")]
+    const worktreeStates = new Map<string, EpicWorktreeState>([["E-1", "dirty"]])
+    const runtimeStates = new Map<string, EpicRuntimeStatus>([["E-1", "error"]])
+    const deletionSet = new Set(["E-1"])
+    const result = deriveEpicDisplayItems(tasks, worktreeStates, runtimeStates, deletionSet)
+    expect(result[0]!.status).toBe("error")
   })
 })
 
