@@ -18,12 +18,17 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeTask(id: string, status: WatchTask["status"], labels?: string[]): WatchTask {
-  return { id, title: `Task ${id}`, status, labels }
+function makeTask(
+  id: string,
+  status: WatchTask["status"],
+  labels?: string[],
+  issueType?: string,
+): WatchTask {
+  return { id, title: `Task ${id}`, status, labels, issueType }
 }
 
 function makeEpic(id: string, status: WatchTask["status"] = "backlog"): WatchTask {
-  return { id, title: `Epic ${id}`, status, labels: ["epic"] }
+  return { id, title: `Epic ${id}`, status, issueType: "epic", labels: ["epic"] }
 }
 
 // ---------------------------------------------------------------------------
@@ -35,12 +40,16 @@ describe("isEpicTask", () => {
     expect(isEpicTask(makeEpic("E-1"))).toBe(true)
   })
 
+  it("returns true for tasks with Beads epic type and no epic label", () => {
+    expect(isEpicTask(makeTask("E-2", "backlog", undefined, "epic"))).toBe(true)
+  })
+
   it("returns true when epic is one of several labels", () => {
     expect(isEpicTask(makeTask("T-1", "backlog", ["urgent", "epic", "p1"]))).toBe(true)
   })
 
-  it("returns false for tasks without the epic label", () => {
-    expect(isEpicTask(makeTask("T-1", "backlog", ["ready"]))).toBe(false)
+  it("returns false for tasks without epic type or epic label", () => {
+    expect(isEpicTask(makeTask("T-1", "backlog", ["ready"], "task"))).toBe(false)
   })
 
   it("returns false for tasks with no labels", () => {

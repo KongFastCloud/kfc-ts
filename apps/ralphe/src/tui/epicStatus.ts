@@ -23,6 +23,7 @@
 
 import type { WatchTask } from "../beadsAdapter.js"
 import type { EpicWorktreeState } from "../epicWorktree.js"
+import { isEpicIssue } from "../epic.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,10 +57,11 @@ export interface EpicDisplayItem {
 
 /**
  * Predicate: is this task an epic issue?
- * Epics are identified by the presence of the "epic" label.
+ * Canonical signal is Beads type `epic`; the legacy `epic` label is still
+ * accepted during migration.
  */
 export const isEpicTask = (task: WatchTask): boolean =>
-  task.labels?.includes("epic") === true
+  isEpicIssue(task)
 
 /**
  * Derive the display status for a single epic.

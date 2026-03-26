@@ -225,10 +225,12 @@ function WatchHeader({
 }
 
 function WatchFooter({ viewMode, hasMarkReady, hasEpicDelete }: { viewMode: "dashboard" | "detail"; hasMarkReady?: boolean; hasEpicDelete?: boolean }): ReactNode {
+  const { width: termWidth } = useTerminalDimensions()
   const navShortcuts =
     viewMode === "detail"
       ? "Esc/Backspace:Back  ^Q:Quit"
       : `↑↓:Navigate  Tab:Switch Pane  Enter:Detail  r:Refresh${hasMarkReady ? "  m:Mark Ready" : ""}${hasEpicDelete ? "  d:Delete Epic" : ""}  ^Q:Quit`
+  const safeWidth = Math.max(0, termWidth - 2)
   return (
     <box
       style={{
@@ -242,7 +244,7 @@ function WatchFooter({ viewMode, hasMarkReady, hasEpicDelete }: { viewMode: "das
         paddingRight: 1,
       }}
     >
-      <text fg={colors.fg.muted}>{navShortcuts}</text>
+      <text fg={colors.fg.muted}>{truncate(navShortcuts, safeWidth)}</text>
     </box>
   )
 }

@@ -21,7 +21,7 @@ import {
   isInvalidEpicContextError,
   EPIC_ERROR_NO_PARENT,
   EPIC_ERROR_PARENT_NOT_FOUND,
-  EPIC_ERROR_MISSING_LABEL,
+  EPIC_ERROR_NOT_EPIC,
   EPIC_ERROR_EMPTY_BODY,
   EPIC_ERROR_MISSING_BRANCH,
 } from "../src/epic.js"
@@ -73,6 +73,7 @@ function makeEpic(id: string, title = `Epic ${id}`, description = `PRD for ${id}
     id,
     title,
     status: "backlog",
+    issueType: "epic",
     description,
     labels: ["epic"],
     branch,
@@ -294,8 +295,8 @@ describe("isInvalidEpicContextError: error classification", () => {
     expect(isInvalidEpicContextError(EPIC_ERROR_PARENT_NOT_FOUND("some-epic"))).toBe(true)
   })
 
-  test("recognizes EPIC_ERROR_MISSING_LABEL as invalid context", () => {
-    expect(isInvalidEpicContextError(EPIC_ERROR_MISSING_LABEL("some-epic"))).toBe(true)
+  test("recognizes EPIC_ERROR_NOT_EPIC as invalid context", () => {
+    expect(isInvalidEpicContextError(EPIC_ERROR_NOT_EPIC("some-epic"))).toBe(true)
   })
 
   test("recognizes EPIC_ERROR_EMPTY_BODY as invalid context", () => {
@@ -406,7 +407,7 @@ describe("processClaimedTask: invalid context is surfaced operationally", () => 
     expect(worktreeCalls.length).toBe(0)
   })
 
-  test("task whose parent lacks epic label is errored explicitly", async () => {
+  test("task whose parent is not an epic is errored explicitly", async () => {
     epicDetailsByParentId.set("not-epic", {
       id: "not-epic",
       title: "Regular Issue",
@@ -422,7 +423,7 @@ describe("processClaimedTask: invalid context is surfaced operationally", () => 
     )
 
     expect(result.success).toBe(false)
-    expect(result.error).toBe(EPIC_ERROR_MISSING_LABEL("not-epic"))
+    expect(result.error).toBe(EPIC_ERROR_NOT_EPIC("not-epic"))
     expect(isInvalidEpicContextError(result.error!)).toBe(true)
   })
 
@@ -571,7 +572,7 @@ describe("error classification: invalid-context vs worktree vs execution", () =>
     // Invalid-context errors (recognized by isInvalidEpicContextError)
     expect(isInvalidEpicContextError(EPIC_ERROR_NO_PARENT)).toBe(true)
     expect(isInvalidEpicContextError(EPIC_ERROR_PARENT_NOT_FOUND("x"))).toBe(true)
-    expect(isInvalidEpicContextError(EPIC_ERROR_MISSING_LABEL("x"))).toBe(true)
+    expect(isInvalidEpicContextError(EPIC_ERROR_NOT_EPIC("x"))).toBe(true)
     expect(isInvalidEpicContextError(EPIC_ERROR_EMPTY_BODY("x"))).toBe(true)
     expect(isInvalidEpicContextError(EPIC_ERROR_MISSING_BRANCH("x"))).toBe(true)
 

@@ -16,7 +16,7 @@ import {
   buildEpicPreamble,
   EPIC_ERROR_NO_PARENT,
   EPIC_ERROR_PARENT_NOT_FOUND,
-  EPIC_ERROR_MISSING_LABEL,
+  EPIC_ERROR_NOT_EPIC,
   EPIC_ERROR_EMPTY_BODY,
   EPIC_ERROR_MISSING_BRANCH,
   type EpicContext,
@@ -32,6 +32,7 @@ function makeEpicIssue(overrides?: Partial<WatchTask>): WatchTask {
     title: "Implement user authentication",
     status: "backlog",
     description: "Full PRD content for user authentication feature.",
+    issueType: "epic",
     labels: ["epic"],
     branch: "epic/user-auth",
     ...overrides,
@@ -57,34 +58,43 @@ describe("validateEpicContext", () => {
     }
   })
 
-  test("issue without epic label returns Err", () => {
+  test("issue with epic type and no epic label is still valid", () => {
     const issue = makeEpicIssue({ labels: ["feature", "priority-high"] })
     const result = validateEpicContext(issue)
 
-    expect(result._tag).toBe("Err")
-    if (result._tag === "Err") {
-      expect(result.reason).toContain("does not have the \"epic\" label")
-      expect(result.reason).toContain("epic-1")
+    expect(result._tag).toBe("Ok")
+    if (result._tag === "Ok") {
+      expect(result.context.id).toBe("epic-1")
     }
   })
 
-  test("issue with no labels returns Err", () => {
+  test("issue with no labels is still valid when Beads type is epic", () => {
     const issue = makeEpicIssue({ labels: undefined })
     const result = validateEpicContext(issue)
 
-    expect(result._tag).toBe("Err")
-    if (result._tag === "Err") {
-      expect(result.reason).toContain("does not have the \"epic\" label")
+    expect(result._tag).toBe("Ok")
+    if (result._tag === "Ok") {
+      expect(result.context.id).toBe("epic-1")
     }
   })
 
-  test("issue with empty labels returns Err", () => {
+  test("issue with empty labels is still valid when Beads type is epic", () => {
     const issue = makeEpicIssue({ labels: [] })
+    const result = validateEpicContext(issue)
+
+    expect(result._tag).toBe("Ok")
+  })
+
+  test("issue without epic type or epic label returns Err", () => {
+    const issue = makeEpicIssue({
+      issueType: "task",
+      labels: ["feature", "priority-high"],
+    })
     const result = validateEpicContext(issue)
 
     expect(result._tag).toBe("Err")
     if (result._tag === "Err") {
-      expect(result.reason).toContain("does not have the \"epic\" label")
+      expect(result.reason).toBe(EPIC_ERROR_NOT_EPIC("epic-1"))
     }
   })
 
@@ -214,9 +224,10 @@ describe("loadEpicContext", () => {
     }
   })
 
-  test("parent without epic label fails with missing-label error", async () => {
+  test("parent without epic type or label fails with not-epic error", async () => {
     const mockQuery = () => Effect.succeed(makeEpicIssue({
       id: "parent-1",
+      issueType: "task",
       labels: ["feature"],
     }))
 
@@ -226,7 +237,7 @@ describe("loadEpicContext", () => {
 
     expect(result._tag).toBe("Left")
     if (result._tag === "Left") {
-      expect(result.left).toBe(EPIC_ERROR_MISSING_LABEL("parent-1"))
+      expect(result.left).toBe(EPIC_ERROR_NOT_EPIC("parent-1"))
     }
   })
 

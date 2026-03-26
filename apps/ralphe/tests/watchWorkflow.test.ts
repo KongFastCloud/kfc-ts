@@ -40,7 +40,7 @@ import {
 import {
   EPIC_ERROR_NO_PARENT,
   EPIC_ERROR_PARENT_NOT_FOUND,
-  EPIC_ERROR_MISSING_LABEL,
+  EPIC_ERROR_NOT_EPIC,
   EPIC_ERROR_EMPTY_BODY,
   EPIC_ERROR_MISSING_BRANCH,
 } from "../src/epic.js"
@@ -118,6 +118,7 @@ function makeEpic(id: string, title = `Epic ${id}`, description = `PRD for ${id}
     id,
     title,
     status: "backlog",
+    issueType: "epic",
     description,
     labels: ["epic"],
     branch,
@@ -834,7 +835,7 @@ describe("processClaimedTask: epic context validation", () => {
     expect(result.error).toBe(EPIC_ERROR_PARENT_NOT_FOUND("nonexistent-epic"))
   })
 
-  test("task whose parent lacks epic label is rejected", async () => {
+  test("task whose parent is not an epic is rejected", async () => {
     epicDetailsByParentId.set("not-an-epic", {
       id: "not-an-epic",
       title: "Regular issue",
@@ -850,7 +851,7 @@ describe("processClaimedTask: epic context validation", () => {
     )
 
     expect(result.success).toBe(false)
-    expect(result.error).toBe(EPIC_ERROR_MISSING_LABEL("not-an-epic"))
+    expect(result.error).toBe(EPIC_ERROR_NOT_EPIC("not-an-epic"))
   })
 
   test("task whose parent epic has empty body is rejected", async () => {
