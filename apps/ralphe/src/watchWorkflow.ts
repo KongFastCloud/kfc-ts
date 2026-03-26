@@ -11,7 +11,7 @@
  * propagate FatalError.
  */
 
-import { Effect, Either, Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { FatalError } from "./errors.js"
 import { loadConfig, type RalpheConfig } from "./config.js"
 import { buildRunWorkflow } from "./buildRunWorkflow.js"
@@ -24,7 +24,8 @@ import {
   closeTaskSuccess,
   writeMetadata,
   readMetadata,
-  setEpicBranchMetadata,
+  addLabel,
+  removeLabel,
   buildPromptFromIssue,
   markTaskExhaustedFailure,
   addComment,
@@ -34,12 +35,12 @@ import {
 import {
   loadEpicContext,
   buildEpicPreamble,
-  deriveEpicBranchName,
-  isEpicIssue,
   EPIC_ERROR_MISSING_BRANCH,
   type EpicContext,
 } from "./epic.js"
 import { ensureEpicWorktree } from "./epicWorktree.js"
+import { bootstrapEpicWorktree } from "./epicBootstrap.js"
+import { getEpicRuntimeStatus, setEpicRuntimeStatus } from "./epicRuntimeState.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -74,7 +75,8 @@ export interface WatchWorkflowDeps {
   // Beads write operations (observer uses writeMetadata + addComment;
   // processClaimedTask uses closeTaskSuccess + markTaskExhaustedFailure)
   readonly writeMetadata: typeof writeMetadata
-  readonly setEpicBranchMetadata: typeof setEpicBranchMetadata
+  readonly addLabel: typeof addLabel
+  readonly removeLabel: typeof removeLabel
   readonly closeTaskSuccess: typeof closeTaskSuccess
   readonly markTaskExhaustedFailure: typeof markTaskExhaustedFailure
   readonly addComment: typeof addComment
@@ -82,6 +84,11 @@ export interface WatchWorkflowDeps {
   readonly engineResolverLayer: Layer.Layer<EngineResolver>
   // Epic worktree lifecycle (lazily create or reuse the epic worktree)
   readonly ensureEpicWorktree: typeof ensureEpicWorktree
+  // Epic local runtime bootstrap state
+  readonly getEpicRuntimeStatus: typeof getEpicRuntimeStatus
+  readonly setEpicRuntimeStatus: typeof setEpicRuntimeStatus
+  // Deterministic bootstrap command runner for epic worktrees
+  readonly bootstrapEpicWorktree: typeof bootstrapEpicWorktree
 }
 
 // ---------------------------------------------------------------------------
@@ -116,12 +123,16 @@ export const processClaimedTask = (
       readMetadata,
       buildPromptFromIssue,
       writeMetadata,
-      setEpicBranchMetadata,
+      addLabel,
+      removeLabel,
       closeTaskSuccess,
       markTaskExhaustedFailure,
       addComment,
       engineResolverLayer: DefaultEngineResolverLayer,
       ensureEpicWorktree,
+      getEpicRuntimeStatus,
+      setEpicRuntimeStatus,
+      bootstrapEpicWorktree,
       ...depsOverride,
     }
 
@@ -129,50 +140,16 @@ export const processClaimedTask = (
     // Epic context validation: tasks must belong to a valid epic
     // -----------------------------------------------------------------------
 
-    let epicResult = yield* loadEpicContext(
+    const epicResult = yield* loadEpicContext(
       issue.parentId,
       deps.queryTaskDetail,
     ).pipe(Effect.either)
 
-    if (
-      epicResult._tag === "Left" &&
-      issue.parentId &&
-      epicResult.left === EPIC_ERROR_MISSING_BRANCH(issue.parentId)
-    ) {
-      const epicIssueResult = yield* deps.queryTaskDetail(issue.parentId).pipe(Effect.either)
-
-      if (epicIssueResult._tag === "Left") {
-        epicResult = Either.left(
-          `Failed to load epic "${issue.parentId}" for branch provisioning: ${epicIssueResult.left.message}`,
-        )
-      } else if (epicIssueResult.right && isEpicIssue(epicIssueResult.right)) {
-        const epicIssue = epicIssueResult.right
-        const body = epicIssue.description?.trim()
-        if (body) {
-          const branch = deriveEpicBranchName(epicIssue.id)
-          const branchWrite = yield* deps.setEpicBranchMetadata(epicIssue.id, branch).pipe(Effect.either)
-
-          if (branchWrite._tag === "Left") {
-            epicResult = Either.left(
-              `Failed to persist canonical branch for epic "${epicIssue.id}": ${branchWrite.left.message}`,
-            )
-          } else {
-            yield* Effect.logInfo(`Provisioned canonical epic branch ${branch} for ${epicIssue.id}`)
-            epicResult = Either.right({
-              id: epicIssue.id,
-              title: epicIssue.title,
-              body,
-              labels: epicIssue.labels ?? [],
-              branch,
-            })
-          }
-        }
-      }
-    }
-
     if (epicResult._tag === "Left") {
       // Invalid epic context — mark the task as errored with a clear reason
-      const reason = epicResult.left
+      const reason = issue.parentId && epicResult.left === EPIC_ERROR_MISSING_BRANCH(issue.parentId)
+        ? "epic_uninitialized"
+        : epicResult.left
       yield* Effect.logWarning(`Epic context invalid for task ${issue.id}: ${reason}`)
       const now = new Date().toISOString()
       yield* deps.markTaskExhaustedFailure(
@@ -227,6 +204,97 @@ export const processClaimedTask = (
     }
 
     const epicWorktreePath = worktreeResult.right
+    const runtimeStatus = yield* deps.getEpicRuntimeStatus(epicContext.id)
+
+    if (runtimeStatus !== "ready") {
+      if (runtimeStatus === "error") {
+        // Best-effort cleanup for operator visibility before retrying bootstrap.
+        yield* deps.removeLabel(epicContext.id, "error").pipe(
+          Effect.catchTag("FatalError", (error) =>
+            Effect.logWarning(`Could not clear epic error label for ${epicContext.id}: ${error.message}`),
+          ),
+        )
+      }
+
+      const bootstrapResult = yield* deps.bootstrapEpicWorktree(epicWorktreePath).pipe(Effect.either)
+
+      if (bootstrapResult._tag === "Left") {
+        const bootstrapReason = `Failed to bootstrap epic worktree: ${bootstrapResult.left.message}`
+
+        // Local runtime state write is best-effort — task failure still proceeds.
+        yield* deps.setEpicRuntimeStatus(epicContext.id, "error", bootstrapResult.left.message).pipe(
+          Effect.catchTag("FatalError", (error) =>
+            Effect.logWarning(`Could not persist epic runtime error state for ${epicContext.id}: ${error.message}`),
+          ),
+        )
+        // Label writes are also best-effort to avoid masking root bootstrap failures.
+        yield* deps.addLabel(epicContext.id, "error").pipe(
+          Effect.catchTag("FatalError", (error) =>
+            Effect.logWarning(`Could not add epic error label for ${epicContext.id}: ${error.message}`),
+          ),
+        )
+        // Keep bootstrap diagnostics visible on the task thread as requested.
+        yield* deps.addComment(
+          issue.id,
+          `Bootstrap failed for epic "${epicContext.id}" in worktree "${epicWorktreePath}": ${bootstrapResult.left.message}`,
+        ).pipe(
+          Effect.catchAll(() =>
+            Effect.logWarning(`Could not write bootstrap failure comment for task ${issue.id}.`),
+          ),
+        )
+
+        yield* Effect.logWarning(`Bootstrap failed for task ${issue.id}: ${bootstrapReason}`)
+        const now = new Date().toISOString()
+        yield* deps.markTaskExhaustedFailure(
+          issue.id,
+          bootstrapReason,
+          {
+            engine: config.engine,
+            workerId,
+            timestamp: now,
+            startedAt: now,
+            finishedAt: now,
+          },
+        )
+        return {
+          success: false,
+          taskId: issue.id,
+          engine: config.engine,
+          error: bootstrapReason,
+        }
+      }
+
+      const runtimeWrite = yield* deps.setEpicRuntimeStatus(epicContext.id, "ready").pipe(Effect.either)
+      if (runtimeWrite._tag === "Left") {
+        const reason = `Failed to persist epic runtime state: ${runtimeWrite.left.message}`
+        yield* Effect.logWarning(`Runtime state write failed for task ${issue.id}: ${reason}`)
+        const now = new Date().toISOString()
+        yield* deps.markTaskExhaustedFailure(
+          issue.id,
+          reason,
+          {
+            engine: config.engine,
+            workerId,
+            timestamp: now,
+            startedAt: now,
+            finishedAt: now,
+          },
+        )
+        return {
+          success: false,
+          taskId: issue.id,
+          engine: config.engine,
+          error: reason,
+        }
+      }
+
+      // Best-effort: clear stale epic error label after successful bootstrap.
+      yield* deps.removeLabel(epicContext.id, "error").pipe(
+        Effect.catchTag("FatalError", (error) =>
+          Effect.logWarning(`Could not clear epic error label for ${epicContext.id}: ${error.message}`),
+        ),
+      )
+    }
 
     // Read existing metadata before overwriting to capture previous error
     const existingMeta = yield* Effect.either(deps.readMetadata(issue.id))
@@ -320,12 +388,16 @@ export const pollClaimAndProcess = (
       readMetadata,
       buildPromptFromIssue,
       writeMetadata,
-      setEpicBranchMetadata,
+      addLabel,
+      removeLabel,
       closeTaskSuccess,
       markTaskExhaustedFailure,
       addComment,
       engineResolverLayer: DefaultEngineResolverLayer,
       ensureEpicWorktree,
+      getEpicRuntimeStatus,
+      setEpicRuntimeStatus,
+      bootstrapEpicWorktree,
       ...depsOverride,
     }
     const config = deps.loadConfig(workDir)

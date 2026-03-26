@@ -52,6 +52,17 @@ export {
   sanitizeEpicId,
 } from "./epicWorktree.js"
 export {
+  bootstrapEpicWorktree,
+  detectBootstrapPackageManager,
+  bootstrapCommandFor,
+} from "./epicBootstrap.js"
+export {
+  readEpicRuntimeState,
+  getEpicRuntimeStatus,
+  setEpicRuntimeStatus,
+} from "./epicRuntimeState.js"
+export type { EpicRuntimeStatus, EpicRuntimeState } from "./epicRuntimeState.js"
+export {
   buildPromptFromIssue,
   queryReady,
   claimTask,
