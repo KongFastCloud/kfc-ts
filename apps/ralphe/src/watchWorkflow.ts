@@ -11,7 +11,7 @@
  * propagate FatalError.
  */
 
-import { Effect, Layer } from "effect"
+import { Effect, Either, Layer } from "effect"
 import { FatalError } from "./errors.js"
 import { loadConfig, type RalpheConfig } from "./config.js"
 import { buildRunWorkflow } from "./buildRunWorkflow.js"
@@ -24,13 +24,21 @@ import {
   closeTaskSuccess,
   writeMetadata,
   readMetadata,
+  setEpicBranchMetadata,
   buildPromptFromIssue,
   markTaskExhaustedFailure,
   addComment,
   type BeadsIssue,
   type BeadsMetadata,
 } from "./beads.js"
-import { loadEpicContext, buildEpicPreamble, type EpicContext } from "./epic.js"
+import {
+  loadEpicContext,
+  buildEpicPreamble,
+  deriveEpicBranchName,
+  isEpicIssue,
+  EPIC_ERROR_MISSING_BRANCH,
+  type EpicContext,
+} from "./epic.js"
 import { ensureEpicWorktree } from "./epicWorktree.js"
 
 // ---------------------------------------------------------------------------
@@ -66,6 +74,7 @@ export interface WatchWorkflowDeps {
   // Beads write operations (observer uses writeMetadata + addComment;
   // processClaimedTask uses closeTaskSuccess + markTaskExhaustedFailure)
   readonly writeMetadata: typeof writeMetadata
+  readonly setEpicBranchMetadata: typeof setEpicBranchMetadata
   readonly closeTaskSuccess: typeof closeTaskSuccess
   readonly markTaskExhaustedFailure: typeof markTaskExhaustedFailure
   readonly addComment: typeof addComment
@@ -107,6 +116,7 @@ export const processClaimedTask = (
       readMetadata,
       buildPromptFromIssue,
       writeMetadata,
+      setEpicBranchMetadata,
       closeTaskSuccess,
       markTaskExhaustedFailure,
       addComment,
@@ -119,10 +129,46 @@ export const processClaimedTask = (
     // Epic context validation: tasks must belong to a valid epic
     // -----------------------------------------------------------------------
 
-    const epicResult = yield* loadEpicContext(
+    let epicResult = yield* loadEpicContext(
       issue.parentId,
       deps.queryTaskDetail,
     ).pipe(Effect.either)
+
+    if (
+      epicResult._tag === "Left" &&
+      issue.parentId &&
+      epicResult.left === EPIC_ERROR_MISSING_BRANCH(issue.parentId)
+    ) {
+      const epicIssueResult = yield* deps.queryTaskDetail(issue.parentId).pipe(Effect.either)
+
+      if (epicIssueResult._tag === "Left") {
+        epicResult = Either.left(
+          `Failed to load epic "${issue.parentId}" for branch provisioning: ${epicIssueResult.left.message}`,
+        )
+      } else if (epicIssueResult.right && isEpicIssue(epicIssueResult.right)) {
+        const epicIssue = epicIssueResult.right
+        const body = epicIssue.description?.trim()
+        if (body) {
+          const branch = deriveEpicBranchName(epicIssue.id)
+          const branchWrite = yield* deps.setEpicBranchMetadata(epicIssue.id, branch).pipe(Effect.either)
+
+          if (branchWrite._tag === "Left") {
+            epicResult = Either.left(
+              `Failed to persist canonical branch for epic "${epicIssue.id}": ${branchWrite.left.message}`,
+            )
+          } else {
+            yield* Effect.logInfo(`Provisioned canonical epic branch ${branch} for ${epicIssue.id}`)
+            epicResult = Either.right({
+              id: epicIssue.id,
+              title: epicIssue.title,
+              body,
+              labels: epicIssue.labels ?? [],
+              branch,
+            })
+          }
+        }
+      }
+    }
 
     if (epicResult._tag === "Left") {
       // Invalid epic context — mark the task as errored with a clear reason
@@ -274,6 +320,7 @@ export const pollClaimAndProcess = (
       readMetadata,
       buildPromptFromIssue,
       writeMetadata,
+      setEpicBranchMetadata,
       closeTaskSuccess,
       markTaskExhaustedFailure,
       addComment,

@@ -28,6 +28,8 @@ export interface BeadsMetadata {
   readonly finishedAt?: string | undefined
   /** Error message when the task exhausted all retries. */
   readonly error?: string | undefined
+  /** Canonical epic branch name stored in the ralphe metadata namespace. */
+  readonly branch?: string | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +102,41 @@ const runBd = (
   })
 
 type JsonRecord = Record<string, unknown>
+
+type RalpheMetadataRecord = Partial<BeadsMetadata> & {
+  readonly branch?: string | undefined
+}
+
+const parseRalpheMetadata = (raw: unknown): RalpheMetadataRecord | undefined => {
+  if (raw == null) return undefined
+
+  const parsed =
+    typeof raw === "string"
+      ? (() => {
+          try {
+            return JSON.parse(raw) as unknown
+          } catch {
+            return undefined
+          }
+        })()
+      : raw
+
+  if (!parsed || typeof parsed !== "object") {
+    return undefined
+  }
+
+  const obj = parsed as Record<string, unknown>
+  return {
+    engine: obj.engine === "codex" ? "codex" : obj.engine === "claude" ? "claude" : undefined,
+    workerId: typeof obj.workerId === "string" ? obj.workerId : undefined,
+    timestamp: typeof obj.timestamp === "string" ? obj.timestamp : undefined,
+    resumeToken: typeof obj.resumeToken === "string" ? obj.resumeToken : undefined,
+    startedAt: typeof obj.startedAt === "string" ? obj.startedAt : undefined,
+    finishedAt: typeof obj.finishedAt === "string" ? obj.finishedAt : undefined,
+    error: typeof obj.error === "string" ? obj.error : undefined,
+    branch: typeof obj.branch === "string" ? obj.branch : undefined,
+  }
+}
 
 const parseIssueJson = (json: string): BeadsIssue[] => {
   try {
@@ -270,13 +307,8 @@ export const readMetadata = (
       try {
         const parsed = JSON.parse(stdout)
         const item = Array.isArray(parsed) ? parsed[0] : parsed
-        const ralphe = item?.metadata?.ralphe
-        if (ralphe == null) return undefined
-
-        // Handle both structured object and serialized JSON string
-        const obj =
-          typeof ralphe === "string" ? JSON.parse(ralphe) : ralphe
-        if (!obj || typeof obj !== "object") return undefined
+        const obj = parseRalpheMetadata(item?.metadata?.ralphe)
+        if (!obj) return undefined
 
         return {
           engine: obj.engine ?? "claude",
@@ -303,6 +335,45 @@ export const writeMetadata = (
   runBd(["update", id, "--set-metadata", `ralphe=${JSON.stringify(metadata)}`]).pipe(
     Effect.map(() => undefined),
   )
+
+const readRalpheMetadataRecord = (
+  id: string,
+): Effect.Effect<RalpheMetadataRecord | undefined, FatalError> =>
+  runBd(["show", id, "--json"]).pipe(
+    Effect.map((stdout) => {
+      try {
+        const parsed = JSON.parse(stdout)
+        const item = Array.isArray(parsed) ? parsed[0] : parsed
+        return parseRalpheMetadata(item?.metadata?.ralphe)
+      } catch {
+        return undefined
+      }
+    }),
+  )
+
+const writeRalpheMetadataRecord = (
+  id: string,
+  metadata: RalpheMetadataRecord,
+): Effect.Effect<void, FatalError> =>
+  runBd(["update", id, "--set-metadata", `ralphe=${JSON.stringify(metadata)}`]).pipe(
+    Effect.map(() => undefined),
+  )
+
+/**
+ * Persist the canonical branch owned by an epic into the `ralphe` metadata
+ * namespace without discarding any existing metadata fields.
+ */
+export const setEpicBranchMetadata = (
+  id: string,
+  branch: string,
+): Effect.Effect<void, FatalError> =>
+  Effect.gen(function* () {
+    const existing = yield* readRalpheMetadataRecord(id)
+    yield* writeRalpheMetadataRecord(id, {
+      ...existing,
+      branch,
+    })
+  })
 
 /**
  * Reopen a task by setting its Beads status back to `open`.

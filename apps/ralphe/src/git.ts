@@ -246,9 +246,19 @@ export const gitPush = (cwd?: string): Effect.Effect<GitPushResult, FatalError> 
       Effect.map((result) => result.stdout.trim() || "origin"),
       Effect.catchTag("FatalError", () => Effect.succeed("origin")),
     )
+    const hasUpstream = yield* run(
+      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+      cwd,
+    ).pipe(
+      Effect.as(true),
+      Effect.catchTag("FatalError", () => Effect.succeed(false)),
+    )
 
     yield* Effect.logDebug("Pushing...")
-    const pushOutput = (yield* run(["push"], cwd)).stdout.trim()
+    const pushOutput = (yield* run(
+      hasUpstream ? ["push"] : ["push", "--set-upstream", remote, ref],
+      cwd,
+    )).stdout.trim()
     yield* Effect.logInfo("Pushed.")
 
     return { remote, ref, output: pushOutput }

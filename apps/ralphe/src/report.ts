@@ -66,16 +66,17 @@ const parseReportResult = (response: string): ReportResult => {
 export const report = (
   task: string,
   mode: "browser" | "basic",
+  cwd = process.cwd(),
 ): Effect.Effect<ReportResult, CheckFailure | FatalError, Engine> =>
   Effect.gen(function* () {
     const engine = yield* Engine
 
-    const reportsDir = path.join(process.cwd(), REPORTS_DIR)
+    const reportsDir = path.join(cwd, REPORTS_DIR)
     fs.mkdirSync(reportsDir, { recursive: true })
 
     yield* Effect.logInfo(`Running verification (${mode})...`)
     const prompt = buildPrompt(task, mode)
-    const result = yield* engine.execute(prompt, process.cwd())
+    const result = yield* engine.execute(prompt, cwd)
 
     const reportResult = parseReportResult(result.response)
 

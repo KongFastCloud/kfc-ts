@@ -87,7 +87,7 @@ export const buildRunWorkflow = (
           pipeline = pipe(
             pipeline,
             Effect.andThen(
-              report(request.task, request.reportMode).pipe(Effect.withSpan("report.verify")),
+              report(request.task, request.reportMode, cwd).pipe(Effect.withSpan("report.verify")),
             ),
           )
         }

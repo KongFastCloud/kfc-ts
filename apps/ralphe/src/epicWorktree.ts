@@ -139,6 +139,12 @@ const worktreeExistsAt = (worktreePath: string): boolean => {
 const getWorktreeBranch = (worktreePath: string): Effect.Effect<string, FatalError> =>
   runGit(["rev-parse", "--abbrev-ref", "HEAD"], worktreePath)
 
+const localBranchExists = (branch: string): Effect.Effect<boolean, never> =>
+  runGit(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]).pipe(
+    Effect.as(true),
+    Effect.catchTag("FatalError", () => Effect.succeed(false)),
+  )
+
 /**
  * Remove a stale worktree and recreate it on the correct branch.
  * Used when a worktree exists but is on the wrong branch.
@@ -176,9 +182,15 @@ const createWorktree = (
     // manually deleted.
     yield* runGit(["worktree", "prune"])
 
-    // Create the worktree. Uses the branch directly — the branch must
-    // already exist (created during epic setup).
-    yield* runGit(["worktree", "add", worktreePath, branch])
+    const branchExists = yield* localBranchExists(branch)
+
+    // Create the worktree on the canonical branch. If the branch has not
+    // been materialized locally yet, create it from the current HEAD.
+    yield* runGit(
+      branchExists
+        ? ["worktree", "add", worktreePath, branch]
+        : ["worktree", "add", "-b", branch, worktreePath, "HEAD"],
+    )
   })
 
 /**

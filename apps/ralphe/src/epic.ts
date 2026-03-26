@@ -81,6 +81,20 @@ export const isInvalidEpicContextError = (reason: string): boolean =>
 export const isEpicIssue = (issue: WatchTask): boolean =>
   issue.issueType === "epic" || issue.labels?.includes("epic") === true
 
+/**
+ * Derive the canonical branch name for an epic when branch metadata has not
+ * been provisioned yet. The result is intentionally conservative so the
+ * branch name is valid across normal Beads issue IDs and manual epic names.
+ */
+export const deriveEpicBranchName = (epicId: string): string => {
+  const sanitized = epicId
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+
+  return `epic/${sanitized || "untitled"}`
+}
+
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------

@@ -42,7 +42,6 @@ import {
   EPIC_ERROR_PARENT_NOT_FOUND,
   EPIC_ERROR_NOT_EPIC,
   EPIC_ERROR_EMPTY_BODY,
-  EPIC_ERROR_MISSING_BRANCH,
 } from "../src/epic.js"
 
 // ---------------------------------------------------------------------------
@@ -78,6 +77,8 @@ let epicDetailsByParentId: Map<string, WatchTask | undefined> = new Map()
 let worktreePathsByEpicId: Map<string, string> = new Map()
 // Track ensureEpicWorktree calls
 let worktreeCalls: Array<{ epicId: string; branch: string }> = []
+// Track epic branch provisioning writes
+let epicBranchWrites: Array<{ epicId: string; branch: string }> = []
 // Optional failure override for ensureEpicWorktree
 let worktreeFailure: FatalError | undefined = undefined
 
@@ -158,6 +159,14 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
       calls.push({ op: "writeMetadata", id, metadata })
       return Effect.succeed(undefined)
     },
+    setEpicBranchMetadata: (id: string, branch: string) => {
+      epicBranchWrites.push({ epicId: id, branch })
+      const existing = epicDetailsByParentId.get(id)
+      if (existing) {
+        epicDetailsByParentId.set(id, { ...existing, branch })
+      }
+      return Effect.succeed(undefined)
+    },
     closeTaskSuccess: (id: string, reason?: string) => {
       calls.push({ op: "closeTaskSuccess", id, reason })
       return Effect.succeed(undefined)
@@ -196,6 +205,7 @@ beforeEach(() => {
   calls = []
   assembledPrompts = []
   worktreeCalls = []
+  epicBranchWrites = []
   worktreePathsByEpicId = new Map()
   worktreeFailure = undefined
   // Pre-populate the default epic so existing tests pass with epic validation
@@ -1270,7 +1280,7 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
     expect(worktreeCalls[1]!.epicId).toBe("epic-b")
   })
 
-  test("epic without branch is rejected before worktree creation", async () => {
+  test("epic without branch is provisioned before worktree creation", async () => {
     epicDetailsByParentId.set("no-branch-epic", {
       id: "no-branch-epic",
       title: "Epic Without Branch",
@@ -1285,9 +1295,10 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
       processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
     )
 
-    expect(result.success).toBe(false)
-    expect(result.error).toBe(EPIC_ERROR_MISSING_BRANCH("no-branch-epic"))
-    // ensureEpicWorktree should NOT have been called
-    expect(worktreeCalls.length).toBe(0)
+    expect(result.success).toBe(true)
+    expect(result.error).toBeUndefined()
+    expect(epicBranchWrites).toEqual([{ epicId: "no-branch-epic", branch: "epic/no-branch-epic" }])
+    expect(worktreeCalls.length).toBe(1)
+    expect(worktreeCalls[0]!.branch).toBe("epic/no-branch-epic")
   })
 })

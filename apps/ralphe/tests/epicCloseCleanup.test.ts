@@ -55,6 +55,7 @@ let engineResult: Effect.Effect<AgentResult, FatalError> =
 
 let epicDetailsByParentId: Map<string, WatchTask | undefined> = new Map()
 let worktreeCalls: Array<{ epicId: string; branch: string }> = []
+let epicBranchWrites: Array<{ epicId: string; branch: string }> = []
 let worktreeFailure: FatalError | undefined = undefined
 let worktreePathsByEpicId: Map<string, string> = new Map()
 
@@ -118,6 +119,14 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
       calls.push({ op: "writeMetadata", id, metadata })
       return Effect.succeed(undefined)
     },
+    setEpicBranchMetadata: (id: string, branch: string) => {
+      epicBranchWrites.push({ epicId: id, branch })
+      const existing = epicDetailsByParentId.get(id)
+      if (existing) {
+        epicDetailsByParentId.set(id, { ...existing, branch })
+      }
+      return Effect.succeed(undefined)
+    },
     closeTaskSuccess: (id: string, reason?: string) => {
       calls.push({ op: "closeTaskSuccess", id, reason })
       return Effect.succeed(undefined)
@@ -150,6 +159,7 @@ beforeEach(() => {
     [DEFAULT_EPIC_ID, makeEpic(DEFAULT_EPIC_ID, "Default Epic", "Default epic PRD body.")],
   ])
   worktreeCalls = []
+  epicBranchWrites = []
   worktreePathsByEpicId = new Map()
   worktreeFailure = undefined
 })
@@ -353,7 +363,7 @@ describe("processClaimedTask: invalid context is surfaced operationally", () => 
     expect(calls.filter((c) => c.op === "writeMetadata").length).toBe(0)
   })
 
-  test("task with missing branch epic is surfaced with timing metadata", async () => {
+  test("task with missing branch epic provisions branch and continues", async () => {
     epicDetailsByParentId.set("no-branch", {
       id: "no-branch",
       title: "Epic Without Branch",
@@ -368,16 +378,11 @@ describe("processClaimedTask: invalid context is surfaced operationally", () => 
       processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
     )
 
-    expect(result.success).toBe(false)
-    expect(result.error).toBe(EPIC_ERROR_MISSING_BRANCH("no-branch"))
-
-    const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
-    expect(exhaustedCall).toBeTruthy()
-    // Timing metadata is present
-    expect(exhaustedCall?.metadata?.startedAt).toBeTruthy()
-    expect(exhaustedCall?.metadata?.finishedAt).toBeTruthy()
-    expect(exhaustedCall?.metadata?.workerId).toBe("worker-1")
-    expect(exhaustedCall?.metadata?.engine).toBe("claude")
+    expect(result.success).toBe(true)
+    expect(result.error).toBeUndefined()
+    expect(epicBranchWrites).toEqual([{ epicId: "no-branch", branch: "epic/no-branch" }])
+    expect(worktreeCalls).toEqual([{ epicId: "no-branch", branch: "epic/no-branch" }])
+    expect(calls.find((c) => c.op === "markTaskExhaustedFailure")).toBeUndefined()
   })
 
   test("task whose parent has empty PRD body is errored, not silently skipped", async () => {

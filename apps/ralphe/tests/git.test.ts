@@ -130,4 +130,31 @@ describe("gitPush", () => {
       fs.rmSync(remoteDir, { recursive: true })
     }
   })
+
+  test("sets upstream on first push when branch has no tracking configuration", async () => {
+    const remoteDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphe-git-remote-"))
+    try {
+      Bun.spawnSync(["git", "init", "--bare", remoteDir], { cwd: tmpDir })
+      Bun.spawnSync(["git", "remote", "add", "origin", remoteDir], { cwd: tmpDir })
+
+      fs.writeFileSync(path.join(tmpDir, "first-push.txt"), "hello")
+      await Effect.runPromise(
+        gitCommit().pipe(Effect.provide(mockEngine("feat: first push branch"))),
+      )
+
+      const pushResult = await Effect.runPromise(gitPush())
+      const branch = new TextDecoder().decode(
+        Bun.spawnSync(["git", "rev-parse", "--abbrev-ref", "HEAD"], { cwd: tmpDir }).stdout,
+      ).trim()
+      const upstream = new TextDecoder().decode(
+        Bun.spawnSync(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], { cwd: tmpDir }).stdout,
+      ).trim()
+
+      expect(pushResult.remote).toBe("origin")
+      expect(pushResult.ref).toBe(branch)
+      expect(upstream).toBe(`origin/${branch}`)
+    } finally {
+      fs.rmSync(remoteDir, { recursive: true })
+    }
+  })
 })

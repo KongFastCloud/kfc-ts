@@ -90,6 +90,7 @@ function makeWorkflowDeps(overrides?: Partial<WatchWorkflowDeps>): WatchWorkflow
       workflowCalls.push({ op: "writeMetadata", id })
       return Effect.succeed(undefined)
     },
+    setEpicBranchMetadata: () => Effect.succeed(undefined),
     readMetadata: (id) => {
       workflowCalls.push({ op: "readMetadata", id })
       return Effect.succeed(undefined)

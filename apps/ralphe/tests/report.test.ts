@@ -7,6 +7,9 @@
 
 import { describe, test, expect } from "bun:test"
 import { Effect, Layer } from "effect"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import { Engine, type AgentResult } from "../src/engine/Engine.js"
 import type { CheckFailure, FatalError } from "../src/errors.js"
 
@@ -91,5 +94,31 @@ describe("report", () => {
 
     await Effect.runPromise(report("add CLI flag", "basic").pipe(Effect.provide(layer)))
     expect(capturedPrompt).not.toContain("agent-browser")
+  })
+
+  test("uses provided cwd for engine workdir and reports directory", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ralphe-report-"))
+    let capturedWorkDir = ""
+
+    try {
+      const layer = Layer.succeed(
+        Engine,
+        {
+          execute: (_prompt: string, workDir: string): Effect.Effect<AgentResult, CheckFailure | FatalError> => {
+            capturedWorkDir = workDir
+            return Effect.succeed({
+              response: '```json\n{"success": true, "report": "OK"}\n```',
+            })
+          },
+        } satisfies Engine,
+      )
+
+      await Effect.runPromise(report("verify epic branch flow", "basic", cwd).pipe(Effect.provide(layer)))
+
+      expect(capturedWorkDir).toBe(cwd)
+      expect(fs.existsSync(path.join(cwd, ".ralphe", "reports"))).toBe(true)
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true })
+    }
   })
 })
