@@ -1,8 +1,9 @@
 /**
  * ABOUTME: Shared Effect-native watch-task workflow.
  * Canonical task-processing pipeline covering queued-task discovery,
- * claim handling, previous-error loading, and task execution through
- * the shared workflow builder (buildRunWorkflow).
+ * claim handling, workspace preparation via blueprints pipeline,
+ * previous-error loading, and task execution through the shared
+ * workflow builder (buildRunWorkflow).
  *
  * Both headless watch and TUI watch consume this shared workflow to avoid
  * duplicated watch-domain logic. In-flight Beads lifecycle writes (metadata,
@@ -38,8 +39,9 @@ import {
   EPIC_ERROR_MISSING_BRANCH,
   type EpicContext,
 } from "./epic.js"
-import { ensureEpicWorktree } from "./epicWorktree.js"
-import { bootstrapEpicWorktree } from "./epicBootstrap.js"
+import { ensureEpicWorktree, deriveEpicWorktreePath, getRepoRoot } from "./epicWorktree.js"
+import { workspacePrepare as defaultWorkspacePrepare } from "@workspace/blueprints"
+import type { WorkspacePrepareInput, WorkspacePrepareResult } from "@workspace/blueprints"
 import { getEpicRuntimeStatus, setEpicRuntimeStatus } from "./epicRuntimeState.js"
 
 // ---------------------------------------------------------------------------
@@ -84,11 +86,15 @@ export interface WatchWorkflowDeps {
   readonly engineResolverLayer: Layer.Layer<EngineResolver>
   // Epic worktree lifecycle (lazily create or reuse the epic worktree)
   readonly ensureEpicWorktree: typeof ensureEpicWorktree
+  // Epic worktree path derivation (pure path resolution, no creation)
+  readonly deriveEpicWorktreePath: typeof deriveEpicWorktreePath
+  // Repository root for workspace-prepare source workspace
+  readonly getRepoRoot: typeof getRepoRoot
   // Epic local runtime bootstrap state
   readonly getEpicRuntimeStatus: typeof getEpicRuntimeStatus
   readonly setEpicRuntimeStatus: typeof setEpicRuntimeStatus
-  // Deterministic bootstrap command runner for epic worktrees
-  readonly bootstrapEpicWorktree: typeof bootstrapEpicWorktree
+  // Blueprints workspace-prepare pipeline (ensure → copy-ignored → bootstrap)
+  readonly workspacePrepare: typeof defaultWorkspacePrepare
 }
 
 // ---------------------------------------------------------------------------
@@ -130,9 +136,11 @@ export const processClaimedTask = (
       addComment,
       engineResolverLayer: DefaultEngineResolverLayer,
       ensureEpicWorktree,
+      deriveEpicWorktreePath,
+      getRepoRoot,
       getEpicRuntimeStatus,
       setEpicRuntimeStatus,
-      bootstrapEpicWorktree,
+      workspacePrepare: defaultWorkspacePrepare,
       ...depsOverride,
     }
 
@@ -175,14 +183,14 @@ export const processClaimedTask = (
     const epicPreamble = buildEpicPreamble(epicContext)
 
     // -----------------------------------------------------------------------
-    // Epic worktree lifecycle: lazily create or reuse the epic worktree
+    // Epic workspace lifecycle: prepare or reuse the epic worktree
     // -----------------------------------------------------------------------
 
-    const worktreeResult = yield* deps.ensureEpicWorktree(epicContext).pipe(Effect.either)
-
-    if (worktreeResult._tag === "Left") {
-      const reason = `Failed to ensure epic worktree: ${worktreeResult.left.message}`
-      yield* Effect.logWarning(`Worktree setup failed for task ${issue.id}: ${reason}`)
+    // Derive the canonical worktree path (pure path resolution, no creation)
+    const worktreePathResult = yield* deps.deriveEpicWorktreePath(epicContext.id).pipe(Effect.either)
+    if (worktreePathResult._tag === "Left") {
+      const reason = `Failed to derive epic worktree path: ${worktreePathResult.left.message}`
+      yield* Effect.logWarning(`Worktree path resolution failed for task ${issue.id}: ${reason}`)
       const now = new Date().toISOString()
       yield* deps.markTaskExhaustedFailure(
         issue.id,
@@ -202,13 +210,12 @@ export const processClaimedTask = (
         error: reason,
       }
     }
-
-    const epicWorktreePath = worktreeResult.right
+    const epicWorktreePath = worktreePathResult.right
     const runtimeStatus = yield* deps.getEpicRuntimeStatus(epicContext.id)
 
     if (runtimeStatus !== "ready") {
       if (runtimeStatus === "error") {
-        // Best-effort cleanup for operator visibility before retrying bootstrap.
+        // Best-effort cleanup for operator visibility before retrying.
         yield* deps.removeLabel(epicContext.id, "error").pipe(
           Effect.catchTag("FatalError", (error) =>
             Effect.logWarning(`Could not clear epic error label for ${epicContext.id}: ${error.message}`),
@@ -216,38 +223,15 @@ export const processClaimedTask = (
         )
       }
 
-      const bootstrapResult = yield* deps.bootstrapEpicWorktree(epicWorktreePath).pipe(Effect.either)
-
-      if (bootstrapResult._tag === "Left") {
-        const bootstrapReason = `Failed to bootstrap epic worktree: ${bootstrapResult.left.message}`
-
-        // Local runtime state write is best-effort — task failure still proceeds.
-        yield* deps.setEpicRuntimeStatus(epicContext.id, "error", bootstrapResult.left.message).pipe(
-          Effect.catchTag("FatalError", (error) =>
-            Effect.logWarning(`Could not persist epic runtime error state for ${epicContext.id}: ${error.message}`),
-          ),
-        )
-        // Label writes are also best-effort to avoid masking root bootstrap failures.
-        yield* deps.addLabel(epicContext.id, "error").pipe(
-          Effect.catchTag("FatalError", (error) =>
-            Effect.logWarning(`Could not add epic error label for ${epicContext.id}: ${error.message}`),
-          ),
-        )
-        // Keep bootstrap diagnostics visible on the task thread as requested.
-        yield* deps.addComment(
-          issue.id,
-          `Bootstrap failed for epic "${epicContext.id}" in worktree "${epicWorktreePath}": ${bootstrapResult.left.message}`,
-        ).pipe(
-          Effect.catchAll(() =>
-            Effect.logWarning(`Could not write bootstrap failure comment for task ${issue.id}.`),
-          ),
-        )
-
-        yield* Effect.logWarning(`Bootstrap failed for task ${issue.id}: ${bootstrapReason}`)
+      // Full workspace-prepare pipeline: ensure → copy-ignored → bootstrap
+      const repoRootResult = yield* deps.getRepoRoot().pipe(Effect.either)
+      if (repoRootResult._tag === "Left") {
+        const reason = `Failed to resolve repository root: ${repoRootResult.left.message}`
+        yield* Effect.logWarning(`Repository root resolution failed for task ${issue.id}: ${reason}`)
         const now = new Date().toISOString()
         yield* deps.markTaskExhaustedFailure(
           issue.id,
-          bootstrapReason,
+          reason,
           {
             engine: config.engine,
             workerId,
@@ -260,7 +244,60 @@ export const processClaimedTask = (
           success: false,
           taskId: issue.id,
           engine: config.engine,
-          error: bootstrapReason,
+          error: reason,
+        }
+      }
+      const repoRoot = repoRootResult.right
+      const prepareResult = yield* deps.workspacePrepare({
+        worktreePath: epicWorktreePath,
+        branch: epicContext.branch,
+        sourceWorkspace: repoRoot,
+        sourceCwd: repoRoot,
+      }).pipe(Effect.either)
+
+      if (prepareResult._tag === "Left") {
+        const prepareReason = `Workspace prepare failed: ${prepareResult.left.message}`
+
+        // Local runtime state write is best-effort — task failure still proceeds.
+        yield* deps.setEpicRuntimeStatus(epicContext.id, "error", prepareResult.left.message).pipe(
+          Effect.catchTag("FatalError", (error) =>
+            Effect.logWarning(`Could not persist epic runtime error state for ${epicContext.id}: ${error.message}`),
+          ),
+        )
+        // Label writes are also best-effort to avoid masking root pipeline failures.
+        yield* deps.addLabel(epicContext.id, "error").pipe(
+          Effect.catchTag("FatalError", (error) =>
+            Effect.logWarning(`Could not add epic error label for ${epicContext.id}: ${error.message}`),
+          ),
+        )
+        // Keep workspace-prepare diagnostics visible on the task thread.
+        yield* deps.addComment(
+          issue.id,
+          `Workspace prepare failed for epic "${epicContext.id}" in worktree "${epicWorktreePath}": ${prepareResult.left.message}`,
+        ).pipe(
+          Effect.catchAll(() =>
+            Effect.logWarning(`Could not write workspace prepare failure comment for task ${issue.id}.`),
+          ),
+        )
+
+        yield* Effect.logWarning(`Workspace prepare failed for task ${issue.id}: ${prepareReason}`)
+        const now = new Date().toISOString()
+        yield* deps.markTaskExhaustedFailure(
+          issue.id,
+          prepareReason,
+          {
+            engine: config.engine,
+            workerId,
+            timestamp: now,
+            startedAt: now,
+            finishedAt: now,
+          },
+        )
+        return {
+          success: false,
+          taskId: issue.id,
+          engine: config.engine,
+          error: prepareReason,
         }
       }
 
@@ -288,12 +325,38 @@ export const processClaimedTask = (
         }
       }
 
-      // Best-effort: clear stale epic error label after successful bootstrap.
+      // Best-effort: clear stale epic error label after successful pipeline run.
       yield* deps.removeLabel(epicContext.id, "error").pipe(
         Effect.catchTag("FatalError", (error) =>
           Effect.logWarning(`Could not clear epic error label for ${epicContext.id}: ${error.message}`),
         ),
       )
+    } else {
+      // Runtime already ready — just ensure the worktree still exists
+      const ensureResult = yield* deps.ensureEpicWorktree(epicContext).pipe(Effect.either)
+
+      if (ensureResult._tag === "Left") {
+        const reason = `Failed to ensure epic worktree: ${ensureResult.left.message}`
+        yield* Effect.logWarning(`Worktree setup failed for task ${issue.id}: ${reason}`)
+        const now = new Date().toISOString()
+        yield* deps.markTaskExhaustedFailure(
+          issue.id,
+          reason,
+          {
+            engine: config.engine,
+            workerId,
+            timestamp: now,
+            startedAt: now,
+            finishedAt: now,
+          },
+        )
+        return {
+          success: false,
+          taskId: issue.id,
+          engine: config.engine,
+          error: reason,
+        }
+      }
     }
 
     // Read existing metadata before overwriting to capture previous error
@@ -395,9 +458,11 @@ export const pollClaimAndProcess = (
       addComment,
       engineResolverLayer: DefaultEngineResolverLayer,
       ensureEpicWorktree,
+      deriveEpicWorktreePath,
+      getRepoRoot,
       getEpicRuntimeStatus,
       setEpicRuntimeStatus,
-      bootstrapEpicWorktree,
+      workspacePrepare: defaultWorkspacePrepare,
       ...depsOverride,
     }
     const config = deps.loadConfig(workDir)

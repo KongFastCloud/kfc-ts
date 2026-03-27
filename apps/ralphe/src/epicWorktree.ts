@@ -10,15 +10,24 @@
  * missing (e.g. manually deleted), it is recreated from the epic's
  * canonical branch.
  *
- * This module is the authoritative source for worktree path derivation
- * and lifecycle operations.
+ * This module is the authoritative source for epic-level worktree path
+ * derivation and lifecycle operations. It delegates generic worktree
+ * mechanics to @workspace/blueprints workspace primitives and owns only
+ * the epic-specific identity mapping and policy.
  */
 
 import path from "node:path"
-import fs from "node:fs"
 import { Effect } from "effect"
 import { FatalError } from "./errors.js"
 import type { EpicContext } from "./epic.js"
+import {
+  sanitizeWorkspaceId,
+  getRepoRoot as blueprintsGetRepoRoot,
+  ensureWorktree,
+  getWorktreeState,
+  isWorkspaceDirty,
+  removeWorktreeWithCleanup,
+} from "@workspace/blueprints"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -31,67 +40,21 @@ import type { EpicContext } from "./epic.js"
 const WORKTREE_DIR_NAME = ".ralphe-worktrees"
 
 // ---------------------------------------------------------------------------
-// Git command runner (local to this module)
-// ---------------------------------------------------------------------------
-
-/**
- * Run a git command and return stdout. Accepts an optional cwd for
- * commands that need to run inside a specific worktree or repo root.
- */
-const runGit = (
-  args: string[],
-  cwd?: string,
-): Effect.Effect<string, FatalError> =>
-  Effect.tryPromise({
-    try: async () => {
-      const proc = Bun.spawn(["git", ...args], {
-        stdout: "pipe",
-        stderr: "pipe",
-        cwd,
-      })
-
-      const stdout = await new Response(proc.stdout).text()
-      const stderr = await new Response(proc.stderr).text()
-      const exitCode = await proc.exited
-
-      if (exitCode !== 0) {
-        throw { stderr, exitCode }
-      }
-
-      return stdout.trim()
-    },
-    catch: (error) => {
-      if (error && typeof error === "object" && "stderr" in error) {
-        const e = error as { stderr: string; exitCode: number }
-        return new FatalError({
-          command: `git ${args.join(" ")}`,
-          message: e.stderr.trim() || `exited with code ${e.exitCode}`,
-        })
-      }
-      return new FatalError({
-        command: `git ${args.join(" ")}`,
-        message: `Failed to run git: ${error}`,
-      })
-    },
-  })
-
-// ---------------------------------------------------------------------------
 // Path derivation (pure)
 // ---------------------------------------------------------------------------
 
 /**
  * Sanitize an epic ID for use as a directory name.
- * Replaces any character that is not alphanumeric, underscore, hyphen, or
- * dot with an underscore. This prevents path traversal and filesystem issues.
+ * Delegates to the blueprints workspace primitive.
  */
 export const sanitizeEpicId = (epicId: string): string =>
-  epicId.replace(/[^a-zA-Z0-9_.-]/g, "_")
+  sanitizeWorkspaceId(epicId)
 
 /**
  * Get the git repository root directory.
  */
 export const getRepoRoot = (): Effect.Effect<string, FatalError> =>
-  runGit(["rev-parse", "--show-toplevel"])
+  blueprintsGetRepoRoot()
 
 /**
  * Get the global ralphe worktree root path.
@@ -114,84 +77,8 @@ export const deriveEpicWorktreePath = (epicId: string): Effect.Effect<string, Fa
   )
 
 // ---------------------------------------------------------------------------
-// Worktree lifecycle
+// Worktree lifecycle (delegates to blueprints)
 // ---------------------------------------------------------------------------
-
-/**
- * Check whether a worktree directory exists and contains a valid git linkage.
- * A valid worktree has a `.git` file (not directory) that links back to the
- * main repository.
- */
-const worktreeExistsAt = (worktreePath: string): boolean => {
-  const gitPath = path.join(worktreePath, ".git")
-  try {
-    const stat = fs.statSync(gitPath)
-    // Worktrees have a .git file (not directory) containing the gitdir path
-    return stat.isFile()
-  } catch {
-    return false
-  }
-}
-
-/**
- * Get the current branch of a worktree.
- */
-const getWorktreeBranch = (worktreePath: string): Effect.Effect<string, FatalError> =>
-  runGit(["rev-parse", "--abbrev-ref", "HEAD"], worktreePath)
-
-const localBranchExists = (branch: string): Effect.Effect<boolean, never> =>
-  runGit(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]).pipe(
-    Effect.as(true),
-    Effect.catchTag("FatalError", () => Effect.succeed(false)),
-  )
-
-/**
- * Remove a stale worktree and recreate it on the correct branch.
- * Used when a worktree exists but is on the wrong branch.
- */
-const recreateWorktree = (
-  worktreePath: string,
-  branch: string,
-): Effect.Effect<void, FatalError> =>
-  Effect.gen(function* () {
-    yield* Effect.logWarning(`Worktree at ${worktreePath} is on wrong branch. Recreating...`)
-    // Remove the stale worktree via git
-    yield* runGit(["worktree", "remove", "--force", worktreePath])
-    // Prune any dangling worktree references
-    yield* runGit(["worktree", "prune"])
-    // Recreate on the correct branch
-    yield* createWorktree(worktreePath, branch)
-  })
-
-/**
- * Create a new git worktree at the given path for the given branch.
- * Ensures the parent directory exists and prunes stale worktree references
- * before creation.
- */
-const createWorktree = (
-  worktreePath: string,
-  branch: string,
-): Effect.Effect<void, FatalError> =>
-  Effect.gen(function* () {
-    // Ensure parent directory exists
-    const parentDir = path.dirname(worktreePath)
-    fs.mkdirSync(parentDir, { recursive: true })
-
-    // Prune stale worktree entries so git doesn't complain about
-    // paths that were previously used but whose directories were
-    // manually deleted.
-    yield* runGit(["worktree", "prune"])
-
-    const branchExists = yield* localBranchExists(branch)
-
-    // Create the worktree on the canonical branch. If the branch has not
-    // been materialized locally yet, create it from the current HEAD.
-    yield* runGit(
-      branchExists
-        ? ["worktree", "add", worktreePath, branch]
-        : ["worktree", "add", "-b", branch, worktreePath, "HEAD"],
-    )
-  })
 
 /**
  * Ensure the epic worktree exists, creating it lazily if missing.
@@ -210,26 +97,7 @@ export const ensureEpicWorktree = (
 ): Effect.Effect<string, FatalError> =>
   Effect.gen(function* () {
     const worktreePath = yield* deriveEpicWorktreePath(epic.id)
-
-    if (worktreeExistsAt(worktreePath)) {
-      // Worktree exists — verify it's on the correct branch
-      const currentBranch = yield* getWorktreeBranch(worktreePath)
-
-      if (currentBranch === epic.branch) {
-        yield* Effect.logInfo(`Reusing epic worktree at ${worktreePath} (branch: ${epic.branch})`)
-        return worktreePath
-      }
-
-      // Branch mismatch — recreate the worktree
-      yield* recreateWorktree(worktreePath, epic.branch)
-      yield* Effect.logInfo(`Recreated epic worktree at ${worktreePath} (branch: ${epic.branch})`)
-      return worktreePath
-    }
-
-    // Worktree does not exist — create it lazily
-    yield* createWorktree(worktreePath, epic.branch)
-    yield* Effect.logInfo(`Created epic worktree at ${worktreePath} (branch: ${epic.branch})`)
-    return worktreePath
+    return yield* ensureWorktree(worktreePath, epic.branch)
   }).pipe(
     Effect.annotateLogs({ epicId: epic.id, epicBranch: epic.branch }),
   )
@@ -259,13 +127,17 @@ export const getEpicWorktreeState = (
 ): Effect.Effect<EpicWorktreeState, FatalError> =>
   Effect.gen(function* () {
     const worktreePath = yield* deriveEpicWorktreePath(epicId)
+    const state = yield* getWorktreeState(worktreePath)
 
-    if (!worktreeExistsAt(worktreePath)) {
-      return "not_started" as const
+    // Map blueprints WorktreeState to ralphe EpicWorktreeState
+    switch (state) {
+      case "not_found":
+        return "not_started" as const
+      case "clean":
+        return "clean" as const
+      case "dirty":
+        return "dirty" as const
     }
-
-    const status = yield* runGit(["status", "--porcelain"], worktreePath)
-    return status.trim().length > 0 ? ("dirty" as const) : ("clean" as const)
   })
 
 // ---------------------------------------------------------------------------
@@ -282,13 +154,7 @@ export const isEpicWorktreeDirty = (
 ): Effect.Effect<boolean, FatalError> =>
   Effect.gen(function* () {
     const worktreePath = yield* deriveEpicWorktreePath(epicId)
-
-    if (!worktreeExistsAt(worktreePath)) {
-      return false
-    }
-
-    const status = yield* runGit(["status", "--porcelain"], worktreePath)
-    return status.trim().length > 0
+    return yield* isWorkspaceDirty(worktreePath)
   })
 
 // ---------------------------------------------------------------------------
@@ -324,33 +190,7 @@ export const removeEpicWorktree = (
 ): Effect.Effect<EpicWorktreeCleanupResult, FatalError> =>
   Effect.gen(function* () {
     const worktreePath = yield* deriveEpicWorktreePath(epicId)
-
-    if (!worktreeExistsAt(worktreePath)) {
-      yield* Effect.logInfo(`No worktree to clean up for epic ${epicId}`)
-      return { removed: false, wasDirty: false }
-    }
-
-    // Check for dirty state before removal so we can warn
-    const dirty = yield* isEpicWorktreeDirty(epicId)
-
-    if (dirty) {
-      yield* Effect.logWarning(
-        `Epic worktree at ${worktreePath} has uncommitted changes. ` +
-        `Proceeding with cleanup — uncommitted work will be discarded.`,
-      )
-    }
-
-    // Force-remove the worktree via git (handles dirty state)
-    yield* runGit(["worktree", "remove", "--force", worktreePath])
-    // Prune dangling references
-    yield* runGit(["worktree", "prune"])
-
-    yield* Effect.logInfo(
-      `Removed epic worktree at ${worktreePath}` +
-      (dirty ? " (was dirty — uncommitted changes discarded)" : ""),
-    )
-
-    return { removed: true, wasDirty: dirty, worktreePath }
+    return yield* removeWorktreeWithCleanup(worktreePath)
   }).pipe(
     Effect.annotateLogs({ epicId }),
   )

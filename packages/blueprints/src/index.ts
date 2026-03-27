@@ -16,6 +16,7 @@
  * - Git primitives (commit, push, CI wait, dirty check)
  * - Git composition helpers (buildCiGitStep, executePostLoopGitOps)
  * - Shared tagged error types (CheckFailure, FatalError)
+ * - Workspace-prepare pipeline (ensure → copy-ignored → bootstrap)
  *
  * ## What apps own
  *
@@ -85,4 +86,53 @@ export type {
 
 export { buildCiGitStep, executePostLoopGitOps, defaultGitOps } from "./git-steps.js"
 export type { GitMode, GitOps } from "./git-steps.js"
+
+// ============================================================================
+// Workspace lifecycle primitives
+// ============================================================================
+
+export {
+  sanitizeWorkspaceId,
+  getRepoRoot,
+  worktreeExistsAt,
+  getWorktreeBranch,
+  createWorktree,
+  removeWorktree,
+  recreateWorktree,
+  ensureWorktree,
+  getWorktreeState,
+  isWorktreeDirty as isWorkspaceDirty,
+  removeWorktreeWithCleanup,
+} from "./workspace.js"
+export type { WorktreeState, WorktreeCleanupResult } from "./workspace.js"
+
+// ============================================================================
+// Bootstrap install primitives
+// ============================================================================
+
+export {
+  detectPackageManager,
+  bootstrapCommandFor,
+  bootstrapInstall,
+} from "./bootstrap.js"
+export type { BootstrapPackageManager } from "./bootstrap.js"
+
+// ============================================================================
+// Copy-ignored primitives
+// ============================================================================
+
+export {
+  discoverIgnoredEntries,
+  readWorktreeInclude,
+  filterByWorktreeInclude,
+  copyIgnored,
+} from "./copy.js"
+export type { CopyIgnoredResult } from "./copy.js"
+
+// ============================================================================
+// Workspace-prepare pipeline
+// ============================================================================
+
+export { workspacePrepare } from "./workspace-prepare.js"
+export type { WorkspacePrepareInput, WorkspacePrepareResult } from "./workspace-prepare.js"
 

@@ -74,16 +74,22 @@ let assembledPrompts: string[] = []
 // Mock epic data returned by queryTaskDetail (for parent epic loading)
 let epicDetailsByParentId: Map<string, WatchTask | undefined> = new Map()
 
-// Mock worktree paths returned by ensureEpicWorktree
+// Mock worktree paths returned by ensureEpicWorktree / deriveEpicWorktreePath
 let worktreePathsByEpicId: Map<string, string> = new Map()
-// Track ensureEpicWorktree calls
+// Track ensureEpicWorktree calls (used when runtime is "ready")
 let worktreeCalls: Array<{ epicId: string; branch: string }> = []
 // Optional failure override for ensureEpicWorktree
 let worktreeFailure: FatalError | undefined = undefined
-// Track bootstrap runs
-let bootstrapCalls: Array<{ worktreePath: string }> = []
-// Optional failure override for bootstrap
-let bootstrapFailure: FatalError | undefined = undefined
+// Optional failure override for deriveEpicWorktreePath
+let deriveWorktreePathFailure: FatalError | undefined = undefined
+// Track workspace-prepare pipeline calls (used when runtime is NOT "ready")
+let workspacePrepareCalls: Array<{ worktreePath: string; branch: string; sourceWorkspace: string; sourceCwd?: string }> = []
+// Optional failure override for workspace-prepare pipeline
+let workspacePrepareFailure: FatalError | undefined = undefined
+// Mock repo root for getRepoRoot
+const mockRepoRoot = "/tmp/mock-repo-root"
+// Optional failure override for getRepoRoot
+let repoRootFailure: FatalError | undefined = undefined
 // Local runtime state by epic ID
 let runtimeStateByEpicId: Map<string, EpicRuntimeStatus> = new Map()
 
@@ -184,7 +190,7 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
     },
     // Engine resolver layer for the workflow builder
     engineResolverLayer: makeMockEngineResolverLayer(),
-    // Epic worktree lifecycle
+    // Epic worktree lifecycle (used when runtime is "ready")
     ensureEpicWorktree: (epic) => {
       worktreeCalls.push({ epicId: epic.id, branch: epic.branch })
       if (worktreeFailure) {
@@ -193,17 +199,42 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
       const worktreePath = worktreePathsByEpicId.get(epic.id) ?? `/tmp/ralphe-worktrees/${epic.id}`
       return Effect.succeed(worktreePath)
     },
+    // Pure path derivation (no creation)
+    deriveEpicWorktreePath: (epicId: string) => {
+      if (deriveWorktreePathFailure) {
+        return Effect.fail(deriveWorktreePathFailure)
+      }
+      const worktreePath = worktreePathsByEpicId.get(epicId) ?? `/tmp/ralphe-worktrees/${epicId}`
+      return Effect.succeed(worktreePath)
+    },
+    // Repository root for workspace-prepare source workspace
+    getRepoRoot: () => {
+      if (repoRootFailure) {
+        return Effect.fail(repoRootFailure)
+      }
+      return Effect.succeed(mockRepoRoot)
+    },
     getEpicRuntimeStatus: (epicId: string) => Effect.succeed(runtimeStateByEpicId.get(epicId) ?? "no_attempt"),
     setEpicRuntimeStatus: (epicId: string, status: EpicRuntimeStatus) => {
       runtimeStateByEpicId.set(epicId, status)
       return Effect.succeed(undefined)
     },
-    bootstrapEpicWorktree: (worktreePath: string) => {
-      bootstrapCalls.push({ worktreePath })
-      if (bootstrapFailure) {
-        return Effect.fail(bootstrapFailure)
+    // Blueprints workspace-prepare pipeline (used when runtime is NOT "ready")
+    workspacePrepare: (input) => {
+      workspacePrepareCalls.push({
+        worktreePath: input.worktreePath,
+        branch: input.branch,
+        sourceWorkspace: input.sourceWorkspace,
+        sourceCwd: input.sourceCwd,
+      })
+      if (workspacePrepareFailure) {
+        return Effect.fail(workspacePrepareFailure)
       }
-      return Effect.succeed(undefined)
+      return Effect.succeed({
+        worktreePath: input.worktreePath,
+        copyResult: { copied: 0, skipped: 0, failures: [] },
+        completedStage: "bootstrap" as const,
+      })
     },
   }
 }
@@ -222,8 +253,10 @@ beforeEach(() => {
   worktreeCalls = []
   worktreePathsByEpicId = new Map()
   worktreeFailure = undefined
-  bootstrapCalls = []
-  bootstrapFailure = undefined
+  deriveWorktreePathFailure = undefined
+  workspacePrepareCalls = []
+  workspacePrepareFailure = undefined
+  repoRootFailure = undefined
   runtimeStateByEpicId = new Map()
   // Pre-populate the default epic so existing tests pass with epic validation
   epicDetailsByParentId = new Map([
@@ -983,7 +1016,7 @@ describe("pollClaimAndProcess: epic context in poll cycle", () => {
 // ===========================================================================
 
 describe("processClaimedTask: epic-child context inheritance", () => {
-  test("child task inherits epic branch via ensureEpicWorktree", async () => {
+  test("child task inherits epic branch via workspace-prepare pipeline", async () => {
     epicDetailsByParentId.set("inherit-epic", makeEpic("inherit-epic", "Auth Epic", "PRD body.", "epic/auth-branch"))
     const issue = makeIssue("child-inherit", "Login page", "inherit-epic")
     engineResult = Effect.succeed({ response: "done" })
@@ -992,10 +1025,9 @@ describe("processClaimedTask: epic-child context inheritance", () => {
       processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
     )
 
-    // ensureEpicWorktree was called with the epic's canonical branch
-    expect(worktreeCalls).toHaveLength(1)
-    expect(worktreeCalls[0]!.epicId).toBe("inherit-epic")
-    expect(worktreeCalls[0]!.branch).toBe("epic/auth-branch")
+    // workspace-prepare was called with the epic's canonical branch
+    expect(workspacePrepareCalls).toHaveLength(1)
+    expect(workspacePrepareCalls[0]!.branch).toBe("epic/auth-branch")
   })
 
   test("child task inherits epic ID and body for prompt preamble", async () => {
@@ -1069,7 +1101,7 @@ describe("processClaimedTask: orphan-task invalidity", () => {
 })
 
 describe("processClaimedTask: lazy worktree creation", () => {
-  test("first task for an epic triggers ensureEpicWorktree", async () => {
+  test("first task for an epic triggers workspace-prepare pipeline", async () => {
     epicDetailsByParentId.set("lazy-epic", makeEpic("lazy-epic", "Lazy Epic", "PRD.", "epic/lazy"))
     const issue = makeIssue("first-child", "First task", "lazy-epic")
     engineResult = Effect.succeed({ response: "done" })
@@ -1078,13 +1110,13 @@ describe("processClaimedTask: lazy worktree creation", () => {
       processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
     )
 
-    expect(worktreeCalls).toHaveLength(1)
-    expect(worktreeCalls[0]!.epicId).toBe("lazy-epic")
+    expect(workspacePrepareCalls).toHaveLength(1)
+    expect(workspacePrepareCalls[0]!.branch).toBe("epic/lazy")
   })
 
-  test("worktree failure marks the task as exhausted", async () => {
+  test("workspace-prepare failure marks the task as exhausted", async () => {
     epicDetailsByParentId.set("wt-fail-epic", makeEpic("wt-fail-epic", "WT Fail Epic", "PRD.", "epic/wt-fail"))
-    worktreeFailure = new FatalError({ command: "git worktree add", message: "branch does not exist" })
+    workspacePrepareFailure = new FatalError({ command: "git worktree add", message: "branch does not exist" })
 
     const issue = makeIssue("child-wt-fail", "Task", "wt-fail-epic")
 
@@ -1093,7 +1125,7 @@ describe("processClaimedTask: lazy worktree creation", () => {
     )
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain("Failed to ensure epic worktree")
+    expect(result.error).toContain("Workspace prepare failed")
     expect(result.error).toContain("branch does not exist")
 
     const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
@@ -1103,7 +1135,7 @@ describe("processClaimedTask: lazy worktree creation", () => {
 })
 
 describe("processClaimedTask: worktree reuse", () => {
-  test("two tasks under the same epic use the same worktree path", async () => {
+  test("two tasks under the same epic: first uses workspace-prepare, second uses ensureEpicWorktree", async () => {
     epicDetailsByParentId.set("reuse-epic", makeEpic("reuse-epic", "Reuse Epic", "PRD.", "epic/reuse"))
     worktreePathsByEpicId.set("reuse-epic", "/tmp/ralphe-worktrees/reuse-epic")
     engineResult = Effect.succeed({ response: "done" })
@@ -1111,6 +1143,7 @@ describe("processClaimedTask: worktree reuse", () => {
     const issue1 = makeIssue("reuse-child-1", "Task 1", "reuse-epic")
     const issue2 = makeIssue("reuse-child-2", "Task 2", "reuse-epic")
 
+    // First task (runtime no_attempt → workspace-prepare → ready)
     await Effect.runPromise(
       processClaimedTask(issue1, baseConfig, "worker-1", makeWorkflowDeps()),
     )
@@ -1118,21 +1151,22 @@ describe("processClaimedTask: worktree reuse", () => {
     // Reset calls to isolate second task's behavior
     calls = []
 
+    // Second task (runtime now "ready" → ensureEpicWorktree only)
     await Effect.runPromise(
       processClaimedTask(issue2, baseConfig, "worker-1", makeWorkflowDeps()),
     )
 
-    // Both tasks called ensureEpicWorktree with the same epic
-    expect(worktreeCalls).toHaveLength(2)
+    // First task used workspace-prepare, second used ensureEpicWorktree
+    expect(workspacePrepareCalls).toHaveLength(1)
+    expect(workspacePrepareCalls[0]!.branch).toBe("epic/reuse")
+    expect(worktreeCalls).toHaveLength(1)
     expect(worktreeCalls[0]!.epicId).toBe("reuse-epic")
-    expect(worktreeCalls[1]!.epicId).toBe("reuse-epic")
     expect(worktreeCalls[0]!.branch).toBe("epic/reuse")
-    expect(worktreeCalls[1]!.branch).toBe("epic/reuse")
   })
 })
 
 describe("processClaimedTask: cross-epic isolation", () => {
-  test("tasks under different epics use different worktree paths", async () => {
+  test("tasks under different epics use different workspace-prepare calls", async () => {
     epicDetailsByParentId.set("epic-a", makeEpic("epic-a", "Epic A", "PRD A.", "epic/a"))
     epicDetailsByParentId.set("epic-b", makeEpic("epic-b", "Epic B", "PRD B.", "epic/b"))
     worktreePathsByEpicId.set("epic-a", "/tmp/ralphe-worktrees/epic-a")
@@ -1149,12 +1183,12 @@ describe("processClaimedTask: cross-epic isolation", () => {
       processClaimedTask(issueB, baseConfig, "worker-1", makeWorkflowDeps()),
     )
 
-    // Two ensureEpicWorktree calls, one per epic
-    expect(worktreeCalls).toHaveLength(2)
-    expect(worktreeCalls[0]!.epicId).toBe("epic-a")
-    expect(worktreeCalls[0]!.branch).toBe("epic/a")
-    expect(worktreeCalls[1]!.epicId).toBe("epic-b")
-    expect(worktreeCalls[1]!.branch).toBe("epic/b")
+    // Two workspace-prepare calls, one per epic
+    expect(workspacePrepareCalls).toHaveLength(2)
+    expect(workspacePrepareCalls[0]!.worktreePath).toBe("/tmp/ralphe-worktrees/epic-a")
+    expect(workspacePrepareCalls[0]!.branch).toBe("epic/a")
+    expect(workspacePrepareCalls[1]!.worktreePath).toBe("/tmp/ralphe-worktrees/epic-b")
+    expect(workspacePrepareCalls[1]!.branch).toBe("epic/b")
   })
 
   test("epic A's context does not affect epic B's task execution", async () => {
@@ -1189,7 +1223,7 @@ describe("processClaimedTask: cross-epic isolation", () => {
 // ===========================================================================
 
 describe("processClaimedTask: epic worktree lifecycle", () => {
-  test("ensureEpicWorktree is called with the epic context", async () => {
+  test("workspace-prepare pipeline is called for new epic (no_attempt)", async () => {
     epicDetailsByParentId.set("wt-epic", makeEpic("wt-epic", "Worktree Epic", "PRD for worktree test"))
     const issue = makeIssue("wt-task-1", "Worktree task", "wt-epic")
     engineResult = Effect.succeed({ response: "done" })
@@ -1199,16 +1233,59 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
     )
 
     expect(result.success).toBe(true)
-    // Verify ensureEpicWorktree was called with the correct epic
-    expect(worktreeCalls.length).toBe(1)
-    expect(worktreeCalls[0]!.epicId).toBe("wt-epic")
-    expect(worktreeCalls[0]!.branch).toBe("epic/wt-epic")
+    // Verify workspace-prepare was called (not ensureEpicWorktree, since runtime is no_attempt)
+    expect(workspacePrepareCalls.length).toBe(1)
+    expect(workspacePrepareCalls[0]!.branch).toBe("epic/wt-epic")
+    expect(workspacePrepareCalls[0]!.sourceWorkspace).toBe(mockRepoRoot)
+    expect(workspacePrepareCalls[0]!.sourceCwd).toBe(mockRepoRoot)
+    // ensureEpicWorktree should NOT be called when not ready (workspace-prepare handles ensure)
+    expect(worktreeCalls.length).toBe(0)
   })
 
-  test("worktree failure marks task as exhausted failure", async () => {
+  test("deriveEpicWorktreePath failure marks task exhausted before workspace-prepare", async () => {
+    epicDetailsByParentId.set("wt-derive-fail", makeEpic("wt-derive-fail", "Derive Fail Epic", "PRD"))
+    const issue = makeIssue("wt-derive-task", "Task with derive failure", "wt-derive-fail")
+    deriveWorktreePathFailure = new FatalError({
+      command: "git rev-parse --show-toplevel",
+      message: "not a git repository",
+    })
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain("Failed to derive epic worktree path")
+    expect(result.error).toContain("not a git repository")
+    expect(calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "wt-derive-task")).toBe(true)
+    expect(workspacePrepareCalls).toHaveLength(0)
+    expect(worktreeCalls).toHaveLength(0)
+  })
+
+  test("getRepoRoot failure marks task exhausted before workspace-prepare", async () => {
+    epicDetailsByParentId.set("wt-root-fail", makeEpic("wt-root-fail", "Root Fail Epic", "PRD"))
+    const issue = makeIssue("wt-root-task", "Task with repo-root failure", "wt-root-fail")
+    repoRootFailure = new FatalError({
+      command: "git rev-parse --show-toplevel",
+      message: "permission denied",
+    })
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain("Failed to resolve repository root")
+    expect(result.error).toContain("permission denied")
+    expect(calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "wt-root-task")).toBe(true)
+    expect(workspacePrepareCalls).toHaveLength(0)
+    expect(worktreeCalls).toHaveLength(0)
+  })
+
+  test("workspace-prepare failure marks task as exhausted failure", async () => {
     epicDetailsByParentId.set("wt-fail-epic", makeEpic("wt-fail-epic", "Failing Epic", "PRD body"))
     const issue = makeIssue("wt-fail-task", "Task with worktree failure", "wt-fail-epic")
-    worktreeFailure = new FatalError({
+    workspacePrepareFailure = new FatalError({
       command: "git worktree add",
       message: "branch 'epic/wt-fail-epic' does not exist",
     })
@@ -1218,7 +1295,7 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
     )
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain("Failed to ensure epic worktree")
+    expect(result.error).toContain("Workspace prepare failed")
     expect(result.error).toContain("does not exist")
 
     // Should have called markTaskExhaustedFailure
@@ -1243,39 +1320,39 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
     )
 
     expect(result.success).toBe(true)
-    // The worktree path should have been passed through to execution
-    expect(worktreeCalls.length).toBe(1)
-    expect(worktreeCalls[0]!.epicId).toBe("cwd-epic")
+    // workspace-prepare was called with the correct worktree path
+    expect(workspacePrepareCalls.length).toBe(1)
+    expect(workspacePrepareCalls[0]!.worktreePath).toBe(customPath)
   })
 
-  test("multiple tasks under same epic reuse the worktree", async () => {
+  test("multiple tasks under same epic reuse the worktree via workspace-prepare", async () => {
     epicDetailsByParentId.set("reuse-epic", makeEpic("reuse-epic", "Reuse Epic", "PRD for reuse test"))
     worktreePathsByEpicId.set("reuse-epic", "/tmp/ralphe-worktrees/reuse-epic")
     engineResult = Effect.succeed({ response: "done" })
 
-    // First task
+    // First task (runtime no_attempt → workspace-prepare → ready)
     const issue1 = makeIssue("reuse-task-1", "First task", "reuse-epic")
     const result1 = await Effect.runPromise(
       processClaimedTask(issue1, baseConfig, "worker-1", makeWorkflowDeps()),
     )
     expect(result1.success).toBe(true)
 
-    // Second task
+    // Second task (runtime is now "ready" → ensureEpicWorktree only)
     const issue2 = makeIssue("reuse-task-2", "Second task", "reuse-epic")
     const result2 = await Effect.runPromise(
       processClaimedTask(issue2, baseConfig, "worker-1", makeWorkflowDeps()),
     )
     expect(result2.success).toBe(true)
 
-    // Both calls should have the same epic ID and branch
-    expect(worktreeCalls.length).toBe(2)
+    // First task used workspace-prepare, second used ensureEpicWorktree
+    expect(workspacePrepareCalls.length).toBe(1)
+    expect(workspacePrepareCalls[0]!.branch).toBe("epic/reuse-epic")
+    expect(worktreeCalls.length).toBe(1)
     expect(worktreeCalls[0]!.epicId).toBe("reuse-epic")
-    expect(worktreeCalls[1]!.epicId).toBe("reuse-epic")
     expect(worktreeCalls[0]!.branch).toBe("epic/reuse-epic")
-    expect(worktreeCalls[1]!.branch).toBe("epic/reuse-epic")
   })
 
-  test("tasks under different epics get different worktree calls", async () => {
+  test("tasks under different epics get different workspace-prepare calls", async () => {
     epicDetailsByParentId.set("epic-a", makeEpic("epic-a", "Epic A", "PRD A"))
     epicDetailsByParentId.set("epic-b", makeEpic("epic-b", "Epic B", "PRD B"))
     worktreePathsByEpicId.set("epic-a", "/tmp/ralphe-worktrees/epic-a")
@@ -1292,12 +1369,12 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
       processClaimedTask(issue2, baseConfig, "worker-1", makeWorkflowDeps()),
     )
 
-    expect(worktreeCalls.length).toBe(2)
-    expect(worktreeCalls[0]!.epicId).toBe("epic-a")
-    expect(worktreeCalls[1]!.epicId).toBe("epic-b")
+    expect(workspacePrepareCalls.length).toBe(2)
+    expect(workspacePrepareCalls[0]!.worktreePath).toBe("/tmp/ralphe-worktrees/epic-a")
+    expect(workspacePrepareCalls[1]!.worktreePath).toBe("/tmp/ralphe-worktrees/epic-b")
   })
 
-  test("runtime no_attempt bootstraps once and transitions to ready", async () => {
+  test("runtime no_attempt runs workspace-prepare and transitions to ready", async () => {
     epicDetailsByParentId.set("boot-no-attempt", makeEpic("boot-no-attempt", "Bootstrap Epic", "PRD"))
     const issue = makeIssue("boot-task-1", "Bootstrap task", "boot-no-attempt")
 
@@ -1306,11 +1383,11 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
     )
 
     expect(result.success).toBe(true)
-    expect(bootstrapCalls).toHaveLength(1)
+    expect(workspacePrepareCalls).toHaveLength(1)
     expect(runtimeStateByEpicId.get("boot-no-attempt")).toBe("ready")
   })
 
-  test("runtime ready skips bootstrap", async () => {
+  test("runtime ready skips workspace-prepare and uses ensureEpicWorktree", async () => {
     epicDetailsByParentId.set("boot-ready", makeEpic("boot-ready", "Bootstrap Epic", "PRD"))
     runtimeStateByEpicId.set("boot-ready", "ready")
     const issue = makeIssue("boot-task-2", "Bootstrap skip", "boot-ready")
@@ -1320,11 +1397,13 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
     )
 
     expect(result.success).toBe(true)
-    expect(bootstrapCalls).toHaveLength(0)
+    expect(workspacePrepareCalls).toHaveLength(0)
+    expect(worktreeCalls).toHaveLength(1)
+    expect(worktreeCalls[0]!.epicId).toBe("boot-ready")
     expect(runtimeStateByEpicId.get("boot-ready")).toBe("ready")
   })
 
-  test("runtime error re-attempts bootstrap and clears error state on success", async () => {
+  test("runtime error re-attempts workspace-prepare and clears error state on success", async () => {
     epicDetailsByParentId.set("boot-error", makeEpic("boot-error", "Bootstrap Epic", "PRD"))
     runtimeStateByEpicId.set("boot-error", "error")
     const issue = makeIssue("boot-task-3", "Bootstrap retry", "boot-error")
@@ -1334,13 +1413,13 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
     )
 
     expect(result.success).toBe(true)
-    expect(bootstrapCalls).toHaveLength(1)
+    expect(workspacePrepareCalls).toHaveLength(1)
     expect(runtimeStateByEpicId.get("boot-error")).toBe("ready")
   })
 
-  test("bootstrap failure marks task exhausted and persists epic runtime error", async () => {
+  test("workspace-prepare failure marks task exhausted and persists epic runtime error", async () => {
     epicDetailsByParentId.set("boot-fail", makeEpic("boot-fail", "Bootstrap Epic", "PRD"))
-    bootstrapFailure = new FatalError({ command: "pnpm install --frozen-lockfile", message: "lockfile mismatch" })
+    workspacePrepareFailure = new FatalError({ command: "pnpm install --frozen-lockfile", message: "lockfile mismatch" })
     const issue = makeIssue("boot-task-4", "Bootstrap fail", "boot-fail")
 
     const result = await Effect.runPromise(
@@ -1348,10 +1427,35 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
     )
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain("Failed to bootstrap epic worktree")
+    expect(result.error).toContain("Workspace prepare failed")
     expect(result.error).toContain("lockfile mismatch")
     expect(runtimeStateByEpicId.get("boot-fail")).toBe("error")
     expect(calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "boot-task-4")).toBe(true)
+  })
+
+  test("ensureEpicWorktree failure when runtime ready marks task exhausted", async () => {
+    epicDetailsByParentId.set("wt-ready-fail", makeEpic("wt-ready-fail", "Ready Failing Epic", "PRD body"))
+    runtimeStateByEpicId.set("wt-ready-fail", "ready")
+    const issue = makeIssue("wt-ready-fail-task", "Task with ensure failure", "wt-ready-fail")
+    worktreeFailure = new FatalError({
+      command: "git worktree add",
+      message: "worktree directory disappeared",
+    })
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain("Failed to ensure epic worktree")
+    expect(result.error).toContain("worktree directory disappeared")
+
+    const exhaustedCall = calls.find((c) => c.op === "markTaskExhaustedFailure")
+    expect(exhaustedCall).toBeTruthy()
+    expect(exhaustedCall?.id).toBe("wt-ready-fail-task")
+
+    // workspace-prepare should NOT have been called (runtime was ready)
+    expect(workspacePrepareCalls.length).toBe(0)
   })
 
   test("epic without branch fails with explicit epic_uninitialized reason", async () => {
@@ -1372,6 +1476,6 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
     expect(result.success).toBe(false)
     expect(result.error).toBe("epic_uninitialized")
     expect(worktreeCalls.length).toBe(0)
-    expect(bootstrapCalls.length).toBe(0)
+    expect(workspacePrepareCalls.length).toBe(0)
   })
 })
