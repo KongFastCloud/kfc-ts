@@ -63,7 +63,8 @@ const taskStatusIndicator: Record<WatchTaskStatus, string> = {
   error: "✗",
 }
 
-const epicStatusColor: Record<EpicDisplayStatus, string> = {
+/** @internal Exported for testing the rendering contract. */
+export const epicStatusColor: Record<EpicDisplayStatus, string> = {
   error: colors.status.error,
   not_started: colors.fg.muted,
   active: colors.status.info,
@@ -71,12 +72,22 @@ const epicStatusColor: Record<EpicDisplayStatus, string> = {
   queued_for_deletion: colors.status.warning,
 }
 
-const epicStatusIndicator: Record<EpicDisplayStatus, string> = {
+/** @internal Exported for testing the rendering contract. */
+export const epicStatusIndicator: Record<EpicDisplayStatus, string> = {
   error: "✗",
   not_started: "·",
   active: "●",
   dirty: "△",
   queued_for_deletion: "◌",
+}
+
+/** @internal Exported for testing the rendering contract. */
+export const epicStatusLabel: Record<EpicDisplayStatus, string> = {
+  error: "error",
+  not_started: "not_started",
+  active: "active",
+  dirty: "dirty",
+  queued_for_deletion: "deleting",
 }
 
 // ---------------------------------------------------------------------------
@@ -536,7 +547,7 @@ function EpicRow({
 
   const idStr = formatIdCell(epic.id)
   const titleStr = titleWidth > 0 ? pad(truncate(epic.title, titleWidth - 1), titleWidth) : ""
-  const statusLabel = epic.status === "queued_for_deletion" ? "deleting" : epic.status
+  const statusLabel = epicStatusLabel[epic.status]
   const statusStr = statusWidth > 0 ? pad(truncate(`${indicator} ${statusLabel}`, statusWidth - 1), statusWidth) : ""
 
   const idColor = effectiveDimmed ? colors.fg.dim : colors.fg.muted
@@ -734,9 +745,9 @@ export interface PaneWidths {
   epicStatusWidth: number
   /** Dynamic done-completed column width (capped at COL.completedDone). Shrinks when the done pane is narrow. */
   doneCompletedWidth: number
-  /** Estimated done-pane width matching the 2:1 flex split. */
+  /** Estimated done-pane width matching the 1:1 flex split. */
   donePaneWidth: number
-  /** Estimated epic-pane width matching the 2:1 flex split. */
+  /** Estimated epic-pane width matching the 1:1 flex split. */
   epicPaneWidth: number
 }
 

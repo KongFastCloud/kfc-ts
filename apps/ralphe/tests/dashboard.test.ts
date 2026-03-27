@@ -1,16 +1,18 @@
 /**
  * ABOUTME: Tests for the dashboard partitioning logic, row-count derivation,
- * and pane width budgeting.
+ * pane width budgeting, and epic status rendering contracts.
  * Verifies that tasks are correctly split into non-done and done buckets,
  * preserving original ordering within each bucket, that measured box
- * heights are correctly converted to visible row counts, and that pane
+ * heights are correctly converted to visible row counts, that pane
  * title widths are conservatively derived so content never clips on the
- * right edge.
+ * right edge, and that queued_for_deletion renders with the approved
+ * deleting label, warning color, and loading indicator.
  */
 
 import { describe, it, expect } from "bun:test"
-import { partitionTasks, sortDoneTasks, formatCompletedAt, formatIdCell, TABLE_CHROME_LINES, deriveVisibleRowCount, computePaneWidths } from "../src/tui/DashboardView.js"
+import { partitionTasks, sortDoneTasks, formatCompletedAt, formatIdCell, TABLE_CHROME_LINES, deriveVisibleRowCount, computePaneWidths, epicStatusColor, epicStatusIndicator, epicStatusLabel } from "../src/tui/DashboardView.js"
 import type { WatchTask } from "../src/beadsAdapter.js"
+import type { EpicDisplayStatus } from "../src/tui/epicStatus.js"
 
 function makeTask(id: string, status: WatchTask["status"]): WatchTask {
   return { id, title: `Task ${id}`, status }
@@ -479,5 +481,71 @@ describe("computePaneWidths", () => {
       const total = fixedEpic + w.epicTitleWidth + w.epicStatusWidth
       expect(total).toBeLessThanOrEqual(w.epicPaneWidth)
     }
+  })
+
+  it("both bottom panes use equal 50:50 budget (contract guard)", () => {
+    // Explicitly lock in the 1:1 bottom-row split so future changes
+    // cannot silently reintroduce a weighted (e.g. 1:2) split.
+    for (const tw of [60, 80, 100, 120, 200]) {
+      const w = computePaneWidths(tw)
+      expect(w.epicPaneWidth).toBe(w.donePaneWidth)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Epic status rendering contract — queued_for_deletion presentation
+// ---------------------------------------------------------------------------
+
+describe("epic status rendering contract", () => {
+  /** The warning color from the dashboard theme (orange). */
+  const WARNING_COLOR = "#e0af68"
+
+  it("queued_for_deletion uses warning/orange color", () => {
+    expect(epicStatusColor.queued_for_deletion).toBe(WARNING_COLOR)
+  })
+
+  it("queued_for_deletion uses the loading indicator ◌", () => {
+    expect(epicStatusIndicator.queued_for_deletion).toBe("◌")
+  })
+
+  it("queued_for_deletion displays as 'deleting' label", () => {
+    expect(epicStatusLabel.queued_for_deletion).toBe("deleting")
+  })
+
+  it("queued_for_deletion color matches dirty (both use warning)", () => {
+    // Both in-progress states share the same orange/warning color
+    expect(epicStatusColor.queued_for_deletion).toBe(epicStatusColor.dirty)
+  })
+
+  it("queued_for_deletion indicator differs from error indicator", () => {
+    // Deletion-in-progress must not look like a hard failure
+    expect(epicStatusIndicator.queued_for_deletion).not.toBe(epicStatusIndicator.error)
+  })
+
+  it("queued_for_deletion color differs from error color", () => {
+    expect(epicStatusColor.queued_for_deletion).not.toBe(epicStatusColor.error)
+  })
+
+  it("all epic statuses have a defined color, indicator, and label", () => {
+    const allStatuses: EpicDisplayStatus[] = [
+      "error", "not_started", "active", "dirty", "queued_for_deletion",
+    ]
+    for (const s of allStatuses) {
+      expect(epicStatusColor[s]).toBeDefined()
+      expect(epicStatusColor[s].length).toBeGreaterThan(0)
+      expect(epicStatusIndicator[s]).toBeDefined()
+      expect(epicStatusIndicator[s].length).toBeGreaterThan(0)
+      expect(epicStatusLabel[s]).toBeDefined()
+      expect(epicStatusLabel[s].length).toBeGreaterThan(0)
+    }
+  })
+
+  it("non-deletion statuses use their status name as the display label", () => {
+    // Only queued_for_deletion has a remapped label; all others pass through.
+    expect(epicStatusLabel.error).toBe("error")
+    expect(epicStatusLabel.not_started).toBe("not_started")
+    expect(epicStatusLabel.active).toBe("active")
+    expect(epicStatusLabel.dirty).toBe("dirty")
   })
 })
