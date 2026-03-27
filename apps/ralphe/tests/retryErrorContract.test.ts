@@ -54,7 +54,7 @@ let epicDetailsByParentId: Map<string, WatchTask | undefined> = new Map()
 let worktreePathsByEpicId: Map<string, string> = new Map()
 let worktreeCalls: Array<{ epicId: string; branch: string }> = []
 let worktreeFailure: FatalError | undefined = undefined
-let workspacePrepareCalls: Array<{ worktreePath: string; branch: string; sourceWorkspace: string }> = []
+let workspacePrepareCalls: Array<{ worktreePath: string; branch: string; sourceWorkspace: string; sourceCwd?: string }> = []
 let workspacePrepareFailure: FatalError | undefined = undefined
 const mockRepoRoot = "/tmp/mock-repo-root"
 let runtimeStateByEpicId: Map<string, EpicRuntimeStatus> = new Map()
@@ -176,6 +176,7 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
         worktreePath: input.worktreePath,
         branch: input.branch,
         sourceWorkspace: input.sourceWorkspace,
+        sourceCwd: input.sourceCwd,
       })
       if (workspacePrepareFailure) {
         return Effect.fail(workspacePrepareFailure)

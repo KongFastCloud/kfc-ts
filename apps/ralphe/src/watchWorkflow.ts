@@ -187,7 +187,30 @@ export const processClaimedTask = (
     // -----------------------------------------------------------------------
 
     // Derive the canonical worktree path (pure path resolution, no creation)
-    const epicWorktreePath = yield* deps.deriveEpicWorktreePath(epicContext.id)
+    const worktreePathResult = yield* deps.deriveEpicWorktreePath(epicContext.id).pipe(Effect.either)
+    if (worktreePathResult._tag === "Left") {
+      const reason = `Failed to derive epic worktree path: ${worktreePathResult.left.message}`
+      yield* Effect.logWarning(`Worktree path resolution failed for task ${issue.id}: ${reason}`)
+      const now = new Date().toISOString()
+      yield* deps.markTaskExhaustedFailure(
+        issue.id,
+        reason,
+        {
+          engine: config.engine,
+          workerId,
+          timestamp: now,
+          startedAt: now,
+          finishedAt: now,
+        },
+      )
+      return {
+        success: false,
+        taskId: issue.id,
+        engine: config.engine,
+        error: reason,
+      }
+    }
+    const epicWorktreePath = worktreePathResult.right
     const runtimeStatus = yield* deps.getEpicRuntimeStatus(epicContext.id)
 
     if (runtimeStatus !== "ready") {
@@ -201,11 +224,35 @@ export const processClaimedTask = (
       }
 
       // Full workspace-prepare pipeline: ensure → copy-ignored → bootstrap
-      const repoRoot = yield* deps.getRepoRoot()
+      const repoRootResult = yield* deps.getRepoRoot().pipe(Effect.either)
+      if (repoRootResult._tag === "Left") {
+        const reason = `Failed to resolve repository root: ${repoRootResult.left.message}`
+        yield* Effect.logWarning(`Repository root resolution failed for task ${issue.id}: ${reason}`)
+        const now = new Date().toISOString()
+        yield* deps.markTaskExhaustedFailure(
+          issue.id,
+          reason,
+          {
+            engine: config.engine,
+            workerId,
+            timestamp: now,
+            startedAt: now,
+            finishedAt: now,
+          },
+        )
+        return {
+          success: false,
+          taskId: issue.id,
+          engine: config.engine,
+          error: reason,
+        }
+      }
+      const repoRoot = repoRootResult.right
       const prepareResult = yield* deps.workspacePrepare({
         worktreePath: epicWorktreePath,
         branch: epicContext.branch,
         sourceWorkspace: repoRoot,
+        sourceCwd: repoRoot,
       }).pipe(Effect.either)
 
       if (prepareResult._tag === "Left") {

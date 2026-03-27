@@ -27,7 +27,6 @@ import {
   getWorktreeState,
   isWorkspaceDirty,
   removeWorktreeWithCleanup,
-  worktreeExistsAt,
 } from "@workspace/blueprints"
 
 // ---------------------------------------------------------------------------

@@ -80,12 +80,16 @@ let worktreePathsByEpicId: Map<string, string> = new Map()
 let worktreeCalls: Array<{ epicId: string; branch: string }> = []
 // Optional failure override for ensureEpicWorktree
 let worktreeFailure: FatalError | undefined = undefined
+// Optional failure override for deriveEpicWorktreePath
+let deriveWorktreePathFailure: FatalError | undefined = undefined
 // Track workspace-prepare pipeline calls (used when runtime is NOT "ready")
-let workspacePrepareCalls: Array<{ worktreePath: string; branch: string; sourceWorkspace: string }> = []
+let workspacePrepareCalls: Array<{ worktreePath: string; branch: string; sourceWorkspace: string; sourceCwd?: string }> = []
 // Optional failure override for workspace-prepare pipeline
 let workspacePrepareFailure: FatalError | undefined = undefined
 // Mock repo root for getRepoRoot
 const mockRepoRoot = "/tmp/mock-repo-root"
+// Optional failure override for getRepoRoot
+let repoRootFailure: FatalError | undefined = undefined
 // Local runtime state by epic ID
 let runtimeStateByEpicId: Map<string, EpicRuntimeStatus> = new Map()
 
@@ -197,11 +201,19 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
     },
     // Pure path derivation (no creation)
     deriveEpicWorktreePath: (epicId: string) => {
+      if (deriveWorktreePathFailure) {
+        return Effect.fail(deriveWorktreePathFailure)
+      }
       const worktreePath = worktreePathsByEpicId.get(epicId) ?? `/tmp/ralphe-worktrees/${epicId}`
       return Effect.succeed(worktreePath)
     },
     // Repository root for workspace-prepare source workspace
-    getRepoRoot: () => Effect.succeed(mockRepoRoot),
+    getRepoRoot: () => {
+      if (repoRootFailure) {
+        return Effect.fail(repoRootFailure)
+      }
+      return Effect.succeed(mockRepoRoot)
+    },
     getEpicRuntimeStatus: (epicId: string) => Effect.succeed(runtimeStateByEpicId.get(epicId) ?? "no_attempt"),
     setEpicRuntimeStatus: (epicId: string, status: EpicRuntimeStatus) => {
       runtimeStateByEpicId.set(epicId, status)
@@ -213,6 +225,7 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
         worktreePath: input.worktreePath,
         branch: input.branch,
         sourceWorkspace: input.sourceWorkspace,
+        sourceCwd: input.sourceCwd,
       })
       if (workspacePrepareFailure) {
         return Effect.fail(workspacePrepareFailure)
@@ -240,8 +253,10 @@ beforeEach(() => {
   worktreeCalls = []
   worktreePathsByEpicId = new Map()
   worktreeFailure = undefined
+  deriveWorktreePathFailure = undefined
   workspacePrepareCalls = []
   workspacePrepareFailure = undefined
+  repoRootFailure = undefined
   runtimeStateByEpicId = new Map()
   // Pre-populate the default epic so existing tests pass with epic validation
   epicDetailsByParentId = new Map([
@@ -1222,8 +1237,49 @@ describe("processClaimedTask: epic worktree lifecycle", () => {
     expect(workspacePrepareCalls.length).toBe(1)
     expect(workspacePrepareCalls[0]!.branch).toBe("epic/wt-epic")
     expect(workspacePrepareCalls[0]!.sourceWorkspace).toBe(mockRepoRoot)
+    expect(workspacePrepareCalls[0]!.sourceCwd).toBe(mockRepoRoot)
     // ensureEpicWorktree should NOT be called when not ready (workspace-prepare handles ensure)
     expect(worktreeCalls.length).toBe(0)
+  })
+
+  test("deriveEpicWorktreePath failure marks task exhausted before workspace-prepare", async () => {
+    epicDetailsByParentId.set("wt-derive-fail", makeEpic("wt-derive-fail", "Derive Fail Epic", "PRD"))
+    const issue = makeIssue("wt-derive-task", "Task with derive failure", "wt-derive-fail")
+    deriveWorktreePathFailure = new FatalError({
+      command: "git rev-parse --show-toplevel",
+      message: "not a git repository",
+    })
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain("Failed to derive epic worktree path")
+    expect(result.error).toContain("not a git repository")
+    expect(calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "wt-derive-task")).toBe(true)
+    expect(workspacePrepareCalls).toHaveLength(0)
+    expect(worktreeCalls).toHaveLength(0)
+  })
+
+  test("getRepoRoot failure marks task exhausted before workspace-prepare", async () => {
+    epicDetailsByParentId.set("wt-root-fail", makeEpic("wt-root-fail", "Root Fail Epic", "PRD"))
+    const issue = makeIssue("wt-root-task", "Task with repo-root failure", "wt-root-fail")
+    repoRootFailure = new FatalError({
+      command: "git rev-parse --show-toplevel",
+      message: "permission denied",
+    })
+
+    const result = await Effect.runPromise(
+      processClaimedTask(issue, baseConfig, "worker-1", makeWorkflowDeps()),
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain("Failed to resolve repository root")
+    expect(result.error).toContain("permission denied")
+    expect(calls.some((c) => c.op === "markTaskExhaustedFailure" && c.id === "wt-root-task")).toBe(true)
+    expect(workspacePrepareCalls).toHaveLength(0)
+    expect(worktreeCalls).toHaveLength(0)
   })
 
   test("workspace-prepare failure marks task as exhausted failure", async () => {
