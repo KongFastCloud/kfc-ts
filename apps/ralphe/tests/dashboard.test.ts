@@ -460,11 +460,11 @@ describe("computePaneWidths", () => {
   })
 
   it("done row content fits pane budget at moderate-to-narrow terminals", () => {
-    // Below ~92 columns the done pane's fixed columns (37) + chrome (4) = 41
-    // plus safety margin exceed the pane allocation (floor(tw/2)), which is
-    // an inherent limitation at very narrow widths. Verify from 92 upward.
+    // Below ~82 columns the done pane allocation (floor(tw/2)) is smaller than
+    // fixed done columns (37) + chrome (4) = 41, an inherent limitation at very
+    // narrow widths. Verify from 82 upward.
     const fixedDone = 12 + 3 + 12 + 10 + 4 // id + sep + status + duration + chrome
-    for (const tw of [92, 100, 120, 150]) {
+    for (const tw of [82, 100, 120, 150]) {
       const w = computePaneWidths(tw)
       const total = fixedDone + w.doneTitleWidth + w.doneCompletedWidth
       expect(total).toBeLessThanOrEqual(w.donePaneWidth)

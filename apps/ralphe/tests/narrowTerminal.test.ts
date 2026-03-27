@@ -25,7 +25,7 @@ const PANE_CHROME = 4
 const ACTIVE_FIXED = 12 + 3 + 12 + 14 + 5 + 10 + PANE_CHROME // 64
 
 /** Fixed columns in a done row (excluding title and completed). */
-const DONE_FIXED = 12 + 3 + 12 + 10 + PANE_CHROME // 45 — id + sep + status + duration + chrome
+const DONE_FIXED = 12 + 3 + 12 + 10 + PANE_CHROME // 41 — id + sep + status + duration + chrome
 
 /** Fixed columns in an epic row (excluding title and status). */
 const EPIC_FIXED = 12 + 3 + PANE_CHROME // 19 — id + sep + chrome
@@ -70,11 +70,11 @@ describe("narrow-terminal pane width regression", () => {
     }
   })
 
-  it("done row content never exceeds its pane width (sweep 92–120)", () => {
-    // Below 92 columns the done pane allocation (floor(tw/2)) is smaller
-    // than the fixed done columns (45) + safety margin, so the invariant
-    // cannot hold.  At 92+, the done pane has enough room.
-    for (let tw = 92; tw <= 120; tw++) {
+  it("done row content never exceeds its pane width (sweep 82–120)", () => {
+    // Below 82 columns the done pane allocation (floor(tw/2)) is smaller
+    // than the fixed done columns (41), so the invariant cannot hold.
+    // At 82+, the done pane has enough room.
+    for (let tw = 82; tw <= 120; tw++) {
       const w = computePaneWidths(tw)
       const totalRow = DONE_FIXED + w.doneTitleWidth + w.doneCompletedWidth
       expect(totalRow).toBeLessThanOrEqual(w.donePaneWidth)
