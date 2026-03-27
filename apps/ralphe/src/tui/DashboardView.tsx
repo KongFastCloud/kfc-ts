@@ -40,7 +40,7 @@ const colors = {
 /**
  * Conservative slack so computed columns do not clip against pane borders.
  * Accounts for rounding differences between our integer math and the flex
- * engine's layout, plus breathing room for rounding drift in the 1:2 bottom-
+ * engine's layout, plus breathing room for rounding drift in the 1:1 bottom-
  * row split and any sub-pixel-to-character rounding in OpenTUI.
  */
 const WIDTH_SAFETY_MARGIN = 6
@@ -63,20 +63,31 @@ const taskStatusIndicator: Record<WatchTaskStatus, string> = {
   error: "✗",
 }
 
-const epicStatusColor: Record<EpicDisplayStatus, string> = {
+/** @internal Exported for testing the rendering contract. */
+export const epicStatusColor: Record<EpicDisplayStatus, string> = {
   error: colors.status.error,
   not_started: colors.fg.muted,
   active: colors.status.info,
   dirty: colors.status.warning,
-  queued_for_deletion: colors.status.error,
+  queued_for_deletion: colors.status.warning,
 }
 
-const epicStatusIndicator: Record<EpicDisplayStatus, string> = {
+/** @internal Exported for testing the rendering contract. */
+export const epicStatusIndicator: Record<EpicDisplayStatus, string> = {
   error: "✗",
   not_started: "·",
   active: "●",
   dirty: "△",
-  queued_for_deletion: "✗",
+  queued_for_deletion: "◌",
+}
+
+/** @internal Exported for testing the rendering contract. */
+export const epicStatusLabel: Record<EpicDisplayStatus, string> = {
+  error: "error",
+  not_started: "not_started",
+  active: "active",
+  dirty: "dirty",
+  queued_for_deletion: "deleting",
 }
 
 // ---------------------------------------------------------------------------
@@ -536,7 +547,8 @@ function EpicRow({
 
   const idStr = formatIdCell(epic.id)
   const titleStr = titleWidth > 0 ? pad(truncate(epic.title, titleWidth - 1), titleWidth) : ""
-  const statusStr = statusWidth > 0 ? pad(truncate(`${indicator} ${epic.status}`, statusWidth - 1), statusWidth) : ""
+  const statusLabel = epicStatusLabel[epic.status]
+  const statusStr = statusWidth > 0 ? pad(truncate(`${indicator} ${statusLabel}`, statusWidth - 1), statusWidth) : ""
 
   const idColor = effectiveDimmed ? colors.fg.dim : colors.fg.muted
   const titleColor = effectiveDimmed
@@ -733,16 +745,16 @@ export interface PaneWidths {
   epicStatusWidth: number
   /** Dynamic done-completed column width (capped at COL.completedDone). Shrinks when the done pane is narrow. */
   doneCompletedWidth: number
-  /** Estimated done-pane width matching the 2:1 flex split. */
+  /** Estimated done-pane width matching the 1:1 flex split. */
   donePaneWidth: number
-  /** Estimated epic-pane width matching the 2:1 flex split. */
+  /** Estimated epic-pane width matching the 1:1 flex split. */
   epicPaneWidth: number
 }
 
 /**
  * Derive pane-local column widths from the terminal width.
  *
- * The bottom row uses flexGrow 1 (epic) : 2 (done), so we mirror that
+ * The bottom row uses flexGrow 1 (epic) : 1 (done), so we mirror that
  * ratio.  Both pane estimates use Math.floor so they are conservatively
  * smaller-or-equal to the actual flex allocation — this prevents content
  * from overrunning the pane boundary even if the flex engine rounds
@@ -754,17 +766,17 @@ export interface PaneWidths {
  * This keeps the layout stable across terminal widths without clipping.
  */
 export function computePaneWidths(terminalWidth: number): PaneWidths {
-  // Bottom row: epic gets 1/3, done gets 2/3 — mirrors flexGrow 1:2.
+  // Bottom row: epic and done each get 1/2 — mirrors flexGrow 1:1.
   // BOTH estimates use Math.floor so they are strictly ≤ the actual flex
-  // allocation regardless of how the engine rounds.  The 1-2 chars "lost"
-  // between floor(tw/3) + floor(2tw/3) and tw are intentional slack that
-  // joins WIDTH_SAFETY_MARGIN in preventing right-edge clipping.
+  // allocation regardless of how the engine rounds.  The 0-1 char "lost"
+  // between 2×floor(tw/2) and tw is intentional slack that joins
+  // WIDTH_SAFETY_MARGIN in preventing right-edge clipping.
   //
   // No artificial minimum clamp — the flex engine allocates based on the
   // ratio, not our estimate, so clamping would make the estimate optimistic
   // relative to reality and risk right-edge overflow.
-  const epicPaneWidth = Math.floor(terminalWidth / 3)
-  const donePaneWidth = Math.floor((terminalWidth * 2) / 3)
+  const epicPaneWidth = Math.floor(terminalWidth / 2)
+  const donePaneWidth = Math.floor(terminalWidth / 2)
 
   // -- Active pane (full terminal width) --
   const activeTitleWidth = Math.max(0, terminalWidth - activeFixedWidth - WIDTH_SAFETY_MARGIN)
@@ -933,7 +945,7 @@ export function DashboardView({
         selectedIndex={focusedTable === "active" ? activeSelectedIndex : -1}
         scrollOffset={activeScrollOffset}
         titleWidth={activeTitleWidth}
-        flexGrow={2}
+        flexGrow={1}
         borderColor={
           focusedTable === "active"
             ? colors.accent.primary
@@ -977,7 +989,7 @@ export function DashboardView({
         </box>
         <box
           style={{
-            flexGrow: 2,
+            flexGrow: 1,
             flexShrink: 0,
             flexBasis: 0,
           }}
