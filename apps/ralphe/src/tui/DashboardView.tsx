@@ -37,8 +37,13 @@ const colors = {
   border: { normal: "#3d4259", active: "#7aa2f7", muted: "#2f3449" },
 } as const
 
-/** Conservative slack so computed columns do not clip against pane borders. */
-const WIDTH_SAFETY_MARGIN = 3
+/**
+ * Conservative slack so computed columns do not clip against pane borders.
+ * Accounts for rounding differences between our integer math and the flex
+ * engine's layout, plus breathing room for rounding drift in the 1:2 bottom-
+ * row split and any sub-pixel-to-character rounding in OpenTUI.
+ */
+const WIDTH_SAFETY_MARGIN = 6
 
 const taskStatusColor: Record<WatchTaskStatus, string> = {
   backlog: colors.fg.muted,
@@ -283,8 +288,9 @@ function DashboardSectionTitle({ title }: { title: string }): ReactNode {
 // Table header
 // ---------------------------------------------------------------------------
 
-function DashboardTableHeader({ titleWidth, variant }: { titleWidth: number; variant: TableVariant }): ReactNode {
+function DashboardTableHeader({ titleWidth, variant, completedWidth }: { titleWidth: number; variant: TableVariant; completedWidth?: number }): ReactNode {
   const isDone = variant === "done"
+  const effectiveCompletedWidth = completedWidth ?? COL.completedDone
   return (
     <box
       style={{
@@ -304,7 +310,7 @@ function DashboardTableHeader({ titleWidth, variant }: { titleWidth: number; var
           {pad("Title", titleWidth)}
           {pad("Status", COL.status)}
           {isDone
-            ? pad("Completed", COL.completedDone)
+            ? pad("Completed", effectiveCompletedWidth)
             : `${pad("Ready", COL.ready)}${pad("Pri", COL.priority)}`}
           {pad("Duration", COL.duration)}
         </span>
@@ -323,12 +329,14 @@ function DashboardRow({
   titleWidth,
   variant,
   isMarkingReady,
+  completedWidth,
 }: {
   task: WatchTask
   isSelected: boolean
   titleWidth: number
   variant: TableVariant
   isMarkingReady?: boolean
+  completedWidth?: number
 }): ReactNode {
   const indicator = taskStatusIndicator[task.status]
   const sColor = taskStatusColor[task.status]
@@ -336,12 +344,15 @@ function DashboardRow({
   const effectiveDimmed = isDimmed && !isSelected
 
   const idStr = formatIdCell(task.id)
-  const titleStr = pad(truncate(task.title, titleWidth - 1), titleWidth)
+  const titleStr = titleWidth > 0 ? pad(truncate(task.title, titleWidth - 1), titleWidth) : ""
   const statusStr = pad(`${indicator} ${task.status}`, COL.status)
   const isDone = variant === "done"
+  const effectiveCompletedWidth = completedWidth ?? COL.completedDone
   const fourthColStr =
     isDone
-      ? pad(truncate(formatCompletedAt(task.closedAt), COL.completedDone - 1), COL.completedDone)
+      ? effectiveCompletedWidth > 0
+        ? pad(truncate(formatCompletedAt(task.closedAt), effectiveCompletedWidth - 1), effectiveCompletedWidth)
+        : ""
       : isMarkingReady
         ? pad("◌", COL.ready)
         : pad(
@@ -403,6 +414,7 @@ function DashboardTable({
   variant,
   markingReadyIds,
   onVisibleRowCountChange,
+  completedWidth,
 }: {
   title: string
   tasks: WatchTask[]
@@ -414,6 +426,8 @@ function DashboardTable({
   variant: TableVariant
   markingReadyIds?: Set<string>
   onVisibleRowCountChange?: (count: number) => void
+  /** Dynamic completed-column width for the done variant. */
+  completedWidth?: number
 }): ReactNode {
   const boxRef = useRef<BoxRenderable>(null)
   const [visibleRowCount, setVisibleRowCount] = useState(0)
@@ -448,7 +462,7 @@ function DashboardTable({
       }}
     >
       <DashboardSectionTitle title={title} />
-      <DashboardTableHeader titleWidth={titleWidth} variant={variant} />
+      <DashboardTableHeader titleWidth={titleWidth} variant={variant} completedWidth={completedWidth} />
       <box style={{ flexGrow: 1, width: "100%" }}>
         {tasks.length === 0 ? (
           <box style={{ paddingLeft: 1, paddingTop: 0 }}>
@@ -465,6 +479,7 @@ function DashboardTable({
                 titleWidth={titleWidth}
                 variant={variant}
                 isMarkingReady={markingReadyIds?.has(task.id) ?? false}
+                completedWidth={completedWidth}
               />
             )
           })
@@ -478,7 +493,7 @@ function DashboardTable({
 // Epic pane components
 // ---------------------------------------------------------------------------
 
-function EpicTableHeader({ titleWidth }: { titleWidth: number }): ReactNode {
+function EpicTableHeader({ titleWidth, statusWidth }: { titleWidth: number; statusWidth: number }): ReactNode {
   return (
     <box
       style={{
@@ -495,8 +510,8 @@ function EpicTableHeader({ titleWidth }: { titleWidth: number }): ReactNode {
         <span fg={colors.fg.dim}>{pad("ID", COL.id)}</span>
         <span fg={colors.border.normal}>{ID_TITLE_SEP}</span>
         <span fg={colors.fg.muted}>
-          {pad("Title", titleWidth)}
-          {pad("Status", COL.epicStatus)}
+          {titleWidth > 0 ? pad("Title", titleWidth) : ""}
+          {statusWidth > 0 ? pad("Status", statusWidth) : ""}
         </span>
       </text>
     </box>
@@ -507,10 +522,12 @@ function EpicRow({
   epic,
   isSelected,
   titleWidth,
+  statusWidth,
 }: {
   epic: EpicDisplayItem
   isSelected: boolean
   titleWidth: number
+  statusWidth: number
 }): ReactNode {
   const indicator = epicStatusIndicator[epic.status]
   const sColor = epicStatusColor[epic.status]
@@ -518,8 +535,8 @@ function EpicRow({
   const effectiveDimmed = isDimmed && !isSelected
 
   const idStr = formatIdCell(epic.id)
-  const titleStr = pad(truncate(epic.title, titleWidth - 1), titleWidth)
-  const statusStr = pad(`${indicator} ${epic.status}`, COL.epicStatus)
+  const titleStr = titleWidth > 0 ? pad(truncate(epic.title, titleWidth - 1), titleWidth) : ""
+  const statusStr = statusWidth > 0 ? pad(truncate(`${indicator} ${epic.status}`, statusWidth - 1), statusWidth) : ""
 
   const idColor = effectiveDimmed ? colors.fg.dim : colors.fg.muted
   const titleColor = effectiveDimmed
@@ -555,6 +572,7 @@ function EpicTable({
   selectedIndex,
   scrollOffset,
   titleWidth,
+  statusWidth,
   borderColor,
   flexGrow,
   onVisibleRowCountChange,
@@ -563,6 +581,8 @@ function EpicTable({
   selectedIndex: number
   scrollOffset: number
   titleWidth: number
+  /** Dynamic epic-status column width. */
+  statusWidth: number
   borderColor: string
   flexGrow: number
   onVisibleRowCountChange?: (count: number) => void
@@ -599,7 +619,7 @@ function EpicTable({
       }}
     >
       <DashboardSectionTitle title="Epics" />
-      <EpicTableHeader titleWidth={titleWidth} />
+      <EpicTableHeader titleWidth={titleWidth} statusWidth={statusWidth} />
       <box style={{ flexGrow: 1, width: "100%" }}>
         {epics.length === 0 ? (
           <box style={{ paddingLeft: 1, paddingTop: 0 }}>
@@ -614,6 +634,7 @@ function EpicTable({
                 epic={epic}
                 isSelected={absoluteIdx === selectedIndex}
                 titleWidth={titleWidth}
+                statusWidth={statusWidth}
               />
             )
           })
@@ -689,6 +710,93 @@ export const TABLE_CHROME_LINES = 4
  */
 export function deriveVisibleRowCount(measuredHeight: number): number {
   return Math.max(0, measuredHeight - TABLE_CHROME_LINES)
+}
+
+// ---------------------------------------------------------------------------
+// Pane width computation (exported for testing)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fixed-width sums for each pane variant. The +4 accounts for left/right
+ * border (2) plus left/right row padding (2).
+ */
+const PANE_CHROME = 4
+
+const activeFixedWidth =
+  COL.id + COL.idTitleSep + COL.status + COL.ready + COL.priority + COL.duration + PANE_CHROME
+
+export interface PaneWidths {
+  activeTitleWidth: number
+  doneTitleWidth: number
+  epicTitleWidth: number
+  /** Dynamic epic-status column width (capped at COL.epicStatus). Shrinks when the epic pane is narrow. */
+  epicStatusWidth: number
+  /** Dynamic done-completed column width (capped at COL.completedDone). Shrinks when the done pane is narrow. */
+  doneCompletedWidth: number
+  /** Estimated done-pane width matching the 2:1 flex split. */
+  donePaneWidth: number
+  /** Estimated epic-pane width matching the 2:1 flex split. */
+  epicPaneWidth: number
+}
+
+/**
+ * Derive pane-local column widths from the terminal width.
+ *
+ * The bottom row uses flexGrow 1 (epic) : 2 (done), so we mirror that
+ * ratio.  Both pane estimates use Math.floor so they are conservatively
+ * smaller-or-equal to the actual flex allocation — this prevents content
+ * from overrunning the pane boundary even if the flex engine rounds
+ * differently than our integer math.
+ *
+ * When a pane is too narrow for all fixed columns at their maximum size,
+ * the title column shrinks to zero first, then the variable-width column
+ * (epicStatus / completedDone) shrinks to fit the remaining budget.
+ * This keeps the layout stable across terminal widths without clipping.
+ */
+export function computePaneWidths(terminalWidth: number): PaneWidths {
+  // Bottom row: epic gets 1/3, done gets 2/3 — mirrors flexGrow 1:2.
+  // BOTH estimates use Math.floor so they are strictly ≤ the actual flex
+  // allocation regardless of how the engine rounds.  The 1-2 chars "lost"
+  // between floor(tw/3) + floor(2tw/3) and tw are intentional slack that
+  // joins WIDTH_SAFETY_MARGIN in preventing right-edge clipping.
+  //
+  // No artificial minimum clamp — the flex engine allocates based on the
+  // ratio, not our estimate, so clamping would make the estimate optimistic
+  // relative to reality and risk right-edge overflow.
+  const epicPaneWidth = Math.floor(terminalWidth / 3)
+  const donePaneWidth = Math.floor((terminalWidth * 2) / 3)
+
+  // -- Active pane (full terminal width) --
+  const activeTitleWidth = Math.max(0, terminalWidth - activeFixedWidth - WIDTH_SAFETY_MARGIN)
+
+  // -- Epic pane --
+  // Budget after chrome and safety margin:
+  const epicBudget = Math.max(0, epicPaneWidth - PANE_CHROME - WIDTH_SAFETY_MARGIN)
+  // Fixed base columns that are always present at full size:
+  const epicBase = COL.id + COL.idTitleSep // 15
+  const epicRemaining = Math.max(0, epicBudget - epicBase)
+  // Status column gets priority; title gets the rest.
+  const epicStatusWidth = Math.min(COL.epicStatus, epicRemaining)
+  const epicTitleWidth = Math.max(0, epicRemaining - epicStatusWidth)
+
+  // -- Done pane --
+  const doneBudget = Math.max(0, donePaneWidth - PANE_CHROME - WIDTH_SAFETY_MARGIN)
+  // Fixed base: ID + sep + status + duration (always rendered at full size)
+  const doneBase = COL.id + COL.idTitleSep + COL.status + COL.duration // 37
+  const doneRemaining = Math.max(0, doneBudget - doneBase)
+  // Completed column gets priority; title gets the rest.
+  const doneCompletedWidth = Math.min(COL.completedDone, doneRemaining)
+  const doneTitleWidth = Math.max(0, doneRemaining - doneCompletedWidth)
+
+  return {
+    activeTitleWidth,
+    doneTitleWidth,
+    epicTitleWidth,
+    epicStatusWidth,
+    doneCompletedWidth,
+    donePaneWidth,
+    epicPaneWidth,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -807,19 +915,9 @@ export function DashboardView({
   const { active, done: unsortedDone } = partitionTasks(tasks)
   const done = sortDoneTasks(unsortedDone)
 
-  // Compute dynamic title column width from available terminal space.
-  const activeFixedWidth =
-    COL.id + COL.idTitleSep + COL.status + COL.ready + COL.priority + COL.duration + 4 // +4 for padding/border
-  const bottomPaneTotalWidth = Math.max(terminalWidth, 40)
-  const donePaneWidth = Math.floor(bottomPaneTotalWidth * 0.68)
-  const epicPaneWidth = Math.max(24, bottomPaneTotalWidth - donePaneWidth)
-  const doneFixedWidth =
-    COL.id + COL.idTitleSep + COL.status + COL.completedDone + COL.duration + 4
-  const epicFixedWidth =
-    COL.id + COL.idTitleSep + COL.epicStatus + 4
-  const activeTitleWidth = Math.max(10, terminalWidth - activeFixedWidth - WIDTH_SAFETY_MARGIN)
-  const doneTitleWidth = Math.max(10, donePaneWidth - doneFixedWidth - WIDTH_SAFETY_MARGIN)
-  const epicTitleWidth = Math.max(10, epicPaneWidth - epicFixedWidth - WIDTH_SAFETY_MARGIN)
+  // Derive pane-local column widths from the live terminal width.
+  const { activeTitleWidth, doneTitleWidth, epicTitleWidth, epicStatusWidth, doneCompletedWidth } =
+    computePaneWidths(terminalWidth)
 
   return (
     <box
@@ -867,6 +965,7 @@ export function DashboardView({
             selectedIndex={focusedTable === "epic" ? epicSelectedIndex : -1}
             scrollOffset={epicScrollOffset}
             titleWidth={epicTitleWidth}
+            statusWidth={epicStatusWidth}
             borderColor={
               focusedTable === "epic"
                 ? colors.accent.primary
@@ -896,6 +995,7 @@ export function DashboardView({
                 : colors.border.normal
             }
             variant="done"
+            completedWidth={doneCompletedWidth}
             onVisibleRowCountChange={onDoneVisibleRowCountChange}
           />
         </box>

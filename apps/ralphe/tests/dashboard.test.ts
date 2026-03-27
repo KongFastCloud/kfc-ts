@@ -1,12 +1,15 @@
 /**
- * ABOUTME: Tests for the dashboard partitioning logic and row-count derivation.
+ * ABOUTME: Tests for the dashboard partitioning logic, row-count derivation,
+ * and pane width budgeting.
  * Verifies that tasks are correctly split into non-done and done buckets,
- * preserving original ordering within each bucket, and that measured box
- * heights are correctly converted to visible row counts.
+ * preserving original ordering within each bucket, that measured box
+ * heights are correctly converted to visible row counts, and that pane
+ * title widths are conservatively derived so content never clips on the
+ * right edge.
  */
 
 import { describe, it, expect } from "bun:test"
-import { partitionTasks, sortDoneTasks, formatCompletedAt, formatIdCell, TABLE_CHROME_LINES, deriveVisibleRowCount } from "../src/tui/DashboardView.js"
+import { partitionTasks, sortDoneTasks, formatCompletedAt, formatIdCell, TABLE_CHROME_LINES, deriveVisibleRowCount, computePaneWidths } from "../src/tui/DashboardView.js"
 import type { WatchTask } from "../src/beadsAdapter.js"
 
 function makeTask(id: string, status: WatchTask["status"]): WatchTask {
@@ -313,5 +316,168 @@ describe("TABLE_CHROME_LINES", () => {
   it("accounts for border-top, border-bottom, section title, and column header", () => {
     // border top (1) + border bottom (1) + section title (1) + column header (1) = 4
     expect(TABLE_CHROME_LINES).toBe(4)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computePaneWidths — right-edge safety regression tests
+// ---------------------------------------------------------------------------
+
+describe("computePaneWidths", () => {
+  it("produces non-negative title widths at a standard 80-column terminal", () => {
+    const w = computePaneWidths(80)
+    expect(w.activeTitleWidth).toBeGreaterThanOrEqual(0)
+    expect(w.doneTitleWidth).toBeGreaterThanOrEqual(0)
+    expect(w.epicTitleWidth).toBeGreaterThanOrEqual(0)
+  })
+
+  it("produces non-negative title widths at a narrow 40-column terminal", () => {
+    const w = computePaneWidths(40)
+    expect(w.activeTitleWidth).toBeGreaterThanOrEqual(0)
+    expect(w.doneTitleWidth).toBeGreaterThanOrEqual(0)
+    expect(w.epicTitleWidth).toBeGreaterThanOrEqual(0)
+  })
+
+  it("produces non-negative title widths at an extremely narrow terminal", () => {
+    const w = computePaneWidths(20)
+    expect(w.activeTitleWidth).toBe(0)
+    expect(w.doneTitleWidth).toBe(0)
+    expect(w.epicTitleWidth).toBe(0)
+  })
+
+  it("splits bottom panes using conservative floor for both epic and done", () => {
+    const w = computePaneWidths(120)
+    // Both use Math.floor so neither overestimates its actual flex allocation.
+    expect(w.epicPaneWidth).toBe(Math.floor(120 / 3))
+    expect(w.donePaneWidth).toBe(Math.floor((120 * 2) / 3))
+  })
+
+  it("bottom pane widths sum to at most the terminal width", () => {
+    for (const tw of [60, 80, 100, 120, 150, 200, 300]) {
+      const w = computePaneWidths(tw)
+      // donePaneWidth + epicPaneWidth should never exceed terminalWidth
+      expect(w.donePaneWidth + w.epicPaneWidth).toBeLessThanOrEqual(tw)
+    }
+  })
+
+  it("active row content fits within terminal width", () => {
+    // Active pane content: id(12) + sep(3) + title + status(12) + ready(14) + priority(5) + duration(10) + padding(2) + border(2)
+    const fixedActive = 12 + 3 + 12 + 14 + 5 + 10 + 2 + 2
+    for (const tw of [80, 120, 200, 300]) {
+      const w = computePaneWidths(tw)
+      const totalRowWidth = fixedActive + w.activeTitleWidth
+      expect(totalRowWidth).toBeLessThanOrEqual(tw)
+    }
+  })
+
+  it("done row content fits within its pane width at all practical widths", () => {
+    // Done pane content: id(12) + sep(3) + title + status(12) + completed(dynamic) + duration(10) + chrome(4)
+    const fixedDone = 12 + 3 + 12 + 10 + 4
+    for (const tw of [80, 100, 120, 150, 200, 300]) {
+      const w = computePaneWidths(tw)
+      const totalRowWidth = fixedDone + w.doneTitleWidth + w.doneCompletedWidth
+      expect(totalRowWidth).toBeLessThanOrEqual(w.donePaneWidth)
+    }
+  })
+
+  it("epic row content fits within its pane width at all practical widths", () => {
+    // Epic pane content: id(12) + sep(3) + title + epicStatus(dynamic) + chrome(4)
+    const fixedEpic = 12 + 3 + 4
+    for (const tw of [80, 100, 120, 150, 200, 300]) {
+      const w = computePaneWidths(tw)
+      const totalRowWidth = fixedEpic + w.epicTitleWidth + w.epicStatusWidth
+      expect(totalRowWidth).toBeLessThanOrEqual(w.epicPaneWidth)
+    }
+  })
+
+  it("title widths grow as terminal width increases", () => {
+    const w80 = computePaneWidths(80)
+    const w200 = computePaneWidths(200)
+    expect(w200.activeTitleWidth).toBeGreaterThan(w80.activeTitleWidth)
+    expect(w200.doneTitleWidth).toBeGreaterThan(w80.doneTitleWidth)
+    expect(w200.epicTitleWidth).toBeGreaterThan(w80.epicTitleWidth)
+  })
+
+  it("epic status column reaches full width at wide terminals", () => {
+    const w = computePaneWidths(300)
+    expect(w.epicStatusWidth).toBe(22) // COL.epicStatus
+  })
+
+  it("done completed column reaches full width at wide terminals", () => {
+    const w = computePaneWidths(300)
+    expect(w.doneCompletedWidth).toBe(22) // COL.completedDone
+  })
+
+  it("dynamic columns shrink gracefully at narrow terminals", () => {
+    const w = computePaneWidths(80)
+    // At 80 cols, panes are narrow — dynamic columns should shrink
+    expect(w.epicStatusWidth).toBeLessThan(22)
+    expect(w.epicStatusWidth).toBeGreaterThanOrEqual(0)
+    expect(w.doneCompletedWidth).toBeLessThanOrEqual(22)
+    expect(w.doneCompletedWidth).toBeGreaterThanOrEqual(0)
+  })
+
+  it("all column widths remain non-negative at any terminal width", () => {
+    for (const tw of [20, 40, 60, 80, 100, 120, 200]) {
+      const w = computePaneWidths(tw)
+      expect(w.activeTitleWidth).toBeGreaterThanOrEqual(0)
+      expect(w.doneTitleWidth).toBeGreaterThanOrEqual(0)
+      expect(w.epicTitleWidth).toBeGreaterThanOrEqual(0)
+      expect(w.epicStatusWidth).toBeGreaterThanOrEqual(0)
+      expect(w.doneCompletedWidth).toBeGreaterThanOrEqual(0)
+    }
+  })
+
+  it("both bottom pane estimates are individually ≤ their ideal flex share", () => {
+    // Regardless of how the flex engine rounds, our floor-based estimates
+    // must never exceed the share that a 1:2 split could yield.
+    for (const tw of [60, 79, 80, 81, 100, 119, 120, 121, 200, 301]) {
+      const w = computePaneWidths(tw)
+      // Epic should never exceed ceil(tw/3) — the most the engine could give it.
+      expect(w.epicPaneWidth).toBeLessThanOrEqual(Math.ceil(tw / 3))
+      // Done should never exceed ceil(2*tw/3).
+      expect(w.donePaneWidth).toBeLessThanOrEqual(Math.ceil((tw * 2) / 3))
+    }
+  })
+
+  it("bottom pane estimates never sum above terminal width (right-edge invariant)", () => {
+    // Sweep every width from 20 to 300 to catch any rounding edge case.
+    for (let tw = 20; tw <= 300; tw++) {
+      const w = computePaneWidths(tw)
+      expect(w.donePaneWidth + w.epicPaneWidth).toBeLessThanOrEqual(tw)
+    }
+  })
+
+  it("active row content fits terminal width with explicit margin at odd widths", () => {
+    // Active pane content: id(12) + sep(3) + title + status(12) + ready(14) + priority(5) + duration(10) + chrome(4)
+    const fixedActive = 12 + 3 + 12 + 14 + 5 + 10 + 4
+    for (const tw of [61, 79, 81, 99, 101, 121, 199]) {
+      const w = computePaneWidths(tw)
+      const totalRowWidth = fixedActive + w.activeTitleWidth
+      expect(totalRowWidth).toBeLessThanOrEqual(tw)
+    }
+  })
+
+  it("done row content fits pane budget at moderate-to-narrow terminals", () => {
+    // Below ~62 columns the done pane's fixed columns (37) + chrome (4) = 41
+    // exceed the pane allocation, which is an inherent limitation at very
+    // narrow widths. Verify the invariant holds from 62 upward.
+    const fixedDone = 12 + 3 + 12 + 10 + 4 // id + sep + status + duration + chrome
+    for (const tw of [62, 70, 80, 90]) {
+      const w = computePaneWidths(tw)
+      const total = fixedDone + w.doneTitleWidth + w.doneCompletedWidth
+      expect(total).toBeLessThanOrEqual(w.donePaneWidth)
+    }
+  })
+
+  it("epic row content fits pane budget at moderate-to-narrow terminals", () => {
+    // Below ~57 columns the epic pane's fixed columns (15) + chrome (4) = 19
+    // exceed the pane allocation. Verify the invariant holds from 57 upward.
+    const fixedEpic = 12 + 3 + 4 // id + sep + chrome
+    for (const tw of [57, 60, 70, 80]) {
+      const w = computePaneWidths(tw)
+      const total = fixedEpic + w.epicTitleWidth + w.epicStatusWidth
+      expect(total).toBeLessThanOrEqual(w.epicPaneWidth)
+    }
   })
 })

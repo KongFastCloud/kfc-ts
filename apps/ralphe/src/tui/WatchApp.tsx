@@ -143,6 +143,68 @@ function formatConfigSummary(config: RalpheConfig): string {
   ].join(" │ ")
 }
 
+/** Max display width for a worker task ID in the header. */
+const MAX_TASK_ID_DISPLAY = 16
+
+/**
+ * Extra slack to absorb potential double-width emoji rendering (◉, ⚡, ⏱, ⚠)
+ * and any sub-character rounding differences between measured and actual width.
+ */
+const HEADER_SAFETY_MARGIN = 4
+
+/**
+ * Compute the width budget for the header's right section so we can
+ * dynamically allocate the remaining space to the error message.
+ *
+ * Exported (via the test-only re-export) so we can verify the invariant that
+ * left + config + right never exceeds the available content width.
+ */
+export function computeHeaderRightWidth(
+  workerStatus: { state: string; currentTaskId?: string | null } | undefined,
+  totalTasks: number,
+  timeStr: string,
+): { rightWidth: number; taskIdDisplay: string | undefined } {
+  const taskCountStr = `${totalTasks} tasks`
+  const timeDisplay = `⏱ ${timeStr}`
+  const taskIdDisplay = workerStatus?.currentTaskId
+    ? truncate(workerStatus.currentTaskId, MAX_TASK_ID_DISPLAY)
+    : undefined
+  const workerLabel = workerStatus
+    ? (workerStatus.state === "running" ? "⚡ running" : "● idle")
+    : undefined
+  const workerWidth = workerLabel
+    ? workerLabel.length + (taskIdDisplay ? ` [${taskIdDisplay}]`.length : 0)
+    : 0
+
+  // Right section always contains task count + time, and optionally worker status.
+  // With `gap: 2`, total gap width is (itemCount - 1) * 2.
+  const rightItemCount = workerLabel ? 3 : 2
+  const rightGaps = Math.max(0, rightItemCount - 1) * 2
+  const rightWidth = workerWidth + rightGaps + taskCountStr.length + timeDisplay.length
+
+  return { rightWidth, taskIdDisplay }
+}
+
+/**
+ * Compute the maximum error display width that keeps total header content
+ * within `contentWidth`. Returns 0 when there is no room for the error.
+ */
+export function computeHeaderErrorBudget(
+  contentWidth: number,
+  rightWidth: number,
+  configWidth: number,
+  showConfig: boolean,
+): number {
+  // Left fixed: "◉ ralphe watch" occupies 14 visible columns.
+  // The left row uses `gap: 1` between title and error, and error prefix " ⚠ " adds 3.
+  const leftFixed = 14
+  const leftErrorGap = 1
+  const errorPrefix = 3 // " ⚠ "
+  const usedWidth =
+    leftFixed + rightWidth + (showConfig ? configWidth : 0) + HEADER_SAFETY_MARGIN
+  return Math.max(0, contentWidth - usedWidth - leftErrorGap - errorPrefix)
+}
+
 function WatchHeader({
   totalTasks,
   lastRefreshed,
@@ -157,21 +219,26 @@ function WatchHeader({
   config?: RalpheConfig | undefined
 }): ReactNode {
   const { width: termWidth } = useTerminalDimensions()
+  const contentWidth = Math.max(0, termWidth - 2) // paddingLeft + paddingRight
 
   const timeStr = lastRefreshed
     ? lastRefreshed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
     : "—"
 
-  // Measure whether config section fits.
-  // Left section: "◉ ralphe watch" = ~14 chars + possible error
-  // Right section: worker status + tasks + time ≈ varies, estimate ~30
-  // Config section: the formatted string
-  // Padding: 2 (paddingLeft+Right) + gaps
+  const { rightWidth, taskIdDisplay } = computeHeaderRightWidth(workerStatus, totalTasks, timeStr)
+
+  // Config section — only shown when there is enough room.
   const configStr = config ? formatConfigSummary(config) : null
-  const leftMinWidth = 15 + (error ? Math.min(error.length + 3, 63) : 0)
-  const rightMinWidth = 30
   const configWidth = configStr ? configStr.length + 4 : 0 // +4 for surrounding gaps
-  const showConfig = configStr != null && termWidth >= leftMinWidth + configWidth + rightMinWidth
+  const leftFixed = 14 // "◉ ralphe watch"
+  const showConfig =
+    configStr != null &&
+    contentWidth >= leftFixed + configWidth + rightWidth + HEADER_SAFETY_MARGIN
+
+  // Error budget: remaining space after left label, right section, optional config, and safety margin.
+  const errorBudget = error
+    ? computeHeaderErrorBudget(contentWidth, rightWidth, configWidth, showConfig)
+    : 0
 
   return (
     <box
@@ -191,9 +258,9 @@ function WatchHeader({
           <span fg={colors.accent.primary}>◉</span>
           <span fg={colors.fg.primary}> ralphe watch</span>
         </text>
-        {error && (
+        {error && errorBudget > 0 && (
           <text>
-            <span fg={colors.status.error}> ⚠ {truncate(error, 60)}</span>
+            <span fg={colors.status.error}> ⚠ {truncate(error, errorBudget)}</span>
           </text>
         )}
       </box>
@@ -212,8 +279,8 @@ function WatchHeader({
                 ? "⚡ running"
                 : "● idle"}
             </span>
-            {workerStatus.currentTaskId && (
-              <span fg={colors.accent.secondary}> [{workerStatus.currentTaskId}]</span>
+            {taskIdDisplay && (
+              <span fg={colors.accent.secondary}> [{taskIdDisplay}]</span>
             )}
           </text>
         )}
@@ -224,13 +291,34 @@ function WatchHeader({
   )
 }
 
-function WatchFooter({ viewMode, hasMarkReady, hasEpicDelete }: { viewMode: "dashboard" | "detail"; hasMarkReady?: boolean; hasEpicDelete?: boolean }): ReactNode {
-  const { width: termWidth } = useTerminalDimensions()
+/**
+ * Extra slack for the footer to absorb potential double-width arrow glyphs (↑↓)
+ * and any rounding differences.
+ */
+const FOOTER_SAFETY_MARGIN = 2
+
+/**
+ * Build the footer shortcut string and clamp it to the available width.
+ * Exported so tests can verify the truncation invariant without rendering.
+ */
+export function buildFooterText(
+  viewMode: "dashboard" | "detail",
+  termWidth: number,
+  hasMarkReady?: boolean,
+  hasEpicDelete?: boolean,
+): string {
   const navShortcuts =
     viewMode === "detail"
       ? "Esc/Backspace:Back  ^Q:Quit"
       : `↑↓:Navigate  Tab:Switch Pane  Enter:Detail  r:Refresh${hasMarkReady ? "  m:Mark Ready" : ""}${hasEpicDelete ? "  d:Delete Epic" : ""}  ^Q:Quit`
-  const safeWidth = Math.max(0, termWidth - 2)
+  // Content area = termWidth minus paddingLeft(1) + paddingRight(1) + safety margin
+  const safeWidth = Math.max(0, termWidth - 2 - FOOTER_SAFETY_MARGIN)
+  return truncate(navShortcuts, safeWidth)
+}
+
+function WatchFooter({ viewMode, hasMarkReady, hasEpicDelete }: { viewMode: "dashboard" | "detail"; hasMarkReady?: boolean; hasEpicDelete?: boolean }): ReactNode {
+  const { width: termWidth } = useTerminalDimensions()
+  const displayText = buildFooterText(viewMode, termWidth, hasMarkReady, hasEpicDelete)
   return (
     <box
       style={{
@@ -244,7 +332,7 @@ function WatchFooter({ viewMode, hasMarkReady, hasEpicDelete }: { viewMode: "das
         paddingRight: 1,
       }}
     >
-      <text fg={colors.fg.muted}>{truncate(navShortcuts, safeWidth)}</text>
+      <text fg={colors.fg.muted}>{displayText}</text>
     </box>
   )
 }
