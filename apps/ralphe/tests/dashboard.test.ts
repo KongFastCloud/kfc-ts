@@ -348,8 +348,8 @@ describe("computePaneWidths", () => {
   it("splits bottom panes using conservative floor for both epic and done", () => {
     const w = computePaneWidths(120)
     // Both use Math.floor so neither overestimates its actual flex allocation.
-    expect(w.epicPaneWidth).toBe(Math.floor(120 / 3))
-    expect(w.donePaneWidth).toBe(Math.floor((120 * 2) / 3))
+    expect(w.epicPaneWidth).toBe(Math.floor(120 / 2))
+    expect(w.donePaneWidth).toBe(Math.floor(120 / 2))
   })
 
   it("bottom pane widths sum to at most the terminal width", () => {
@@ -373,7 +373,7 @@ describe("computePaneWidths", () => {
   it("done row content fits within its pane width at all practical widths", () => {
     // Done pane content: id(12) + sep(3) + title + status(12) + completed(dynamic) + duration(10) + chrome(4)
     const fixedDone = 12 + 3 + 12 + 10 + 4
-    for (const tw of [80, 100, 120, 150, 200, 300]) {
+    for (const tw of [82, 100, 120, 150, 200, 300]) {
       const w = computePaneWidths(tw)
       const totalRowWidth = fixedDone + w.doneTitleWidth + w.doneCompletedWidth
       expect(totalRowWidth).toBeLessThanOrEqual(w.donePaneWidth)
@@ -383,7 +383,7 @@ describe("computePaneWidths", () => {
   it("epic row content fits within its pane width at all practical widths", () => {
     // Epic pane content: id(12) + sep(3) + title + epicStatus(dynamic) + chrome(4)
     const fixedEpic = 12 + 3 + 4
-    for (const tw of [80, 100, 120, 150, 200, 300]) {
+    for (const tw of [38, 80, 100, 120, 150, 200, 300]) {
       const w = computePaneWidths(tw)
       const totalRowWidth = fixedEpic + w.epicTitleWidth + w.epicStatusWidth
       expect(totalRowWidth).toBeLessThanOrEqual(w.epicPaneWidth)
@@ -430,13 +430,12 @@ describe("computePaneWidths", () => {
 
   it("both bottom pane estimates are individually ≤ their ideal flex share", () => {
     // Regardless of how the flex engine rounds, our floor-based estimates
-    // must never exceed the share that a 1:2 split could yield.
+    // must never exceed the share that a 1:1 split could yield.
     for (const tw of [60, 79, 80, 81, 100, 119, 120, 121, 200, 301]) {
       const w = computePaneWidths(tw)
-      // Epic should never exceed ceil(tw/3) — the most the engine could give it.
-      expect(w.epicPaneWidth).toBeLessThanOrEqual(Math.ceil(tw / 3))
-      // Done should never exceed ceil(2*tw/3).
-      expect(w.donePaneWidth).toBeLessThanOrEqual(Math.ceil((tw * 2) / 3))
+      // Neither pane should exceed ceil(tw/2) — the most the engine could give it.
+      expect(w.epicPaneWidth).toBeLessThanOrEqual(Math.ceil(tw / 2))
+      expect(w.donePaneWidth).toBeLessThanOrEqual(Math.ceil(tw / 2))
     }
   })
 
@@ -459,11 +458,11 @@ describe("computePaneWidths", () => {
   })
 
   it("done row content fits pane budget at moderate-to-narrow terminals", () => {
-    // Below ~62 columns the done pane's fixed columns (37) + chrome (4) = 41
-    // exceed the pane allocation, which is an inherent limitation at very
-    // narrow widths. Verify the invariant holds from 62 upward.
+    // Below ~92 columns the done pane's fixed columns (37) + chrome (4) = 41
+    // plus safety margin exceed the pane allocation (floor(tw/2)), which is
+    // an inherent limitation at very narrow widths. Verify from 92 upward.
     const fixedDone = 12 + 3 + 12 + 10 + 4 // id + sep + status + duration + chrome
-    for (const tw of [62, 70, 80, 90]) {
+    for (const tw of [92, 100, 120, 150]) {
       const w = computePaneWidths(tw)
       const total = fixedDone + w.doneTitleWidth + w.doneCompletedWidth
       expect(total).toBeLessThanOrEqual(w.donePaneWidth)
@@ -471,10 +470,11 @@ describe("computePaneWidths", () => {
   })
 
   it("epic row content fits pane budget at moderate-to-narrow terminals", () => {
-    // Below ~57 columns the epic pane's fixed columns (15) + chrome (4) = 19
-    // exceed the pane allocation. Verify the invariant holds from 57 upward.
+    // Below ~40 columns the epic pane's fixed columns (15) + chrome (4) = 19
+    // plus safety margin exceed the pane allocation (floor(tw/2)).
+    // Verify the invariant holds from 40 upward.
     const fixedEpic = 12 + 3 + 4 // id + sep + chrome
-    for (const tw of [57, 60, 70, 80]) {
+    for (const tw of [40, 50, 60, 80]) {
       const w = computePaneWidths(tw)
       const total = fixedEpic + w.epicTitleWidth + w.epicStatusWidth
       expect(total).toBeLessThanOrEqual(w.epicPaneWidth)

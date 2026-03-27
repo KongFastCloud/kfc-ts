@@ -40,7 +40,7 @@ const colors = {
 /**
  * Conservative slack so computed columns do not clip against pane borders.
  * Accounts for rounding differences between our integer math and the flex
- * engine's layout, plus breathing room for rounding drift in the 1:2 bottom-
+ * engine's layout, plus breathing room for rounding drift in the 1:1 bottom-
  * row split and any sub-pixel-to-character rounding in OpenTUI.
  */
 const WIDTH_SAFETY_MARGIN = 6
@@ -755,17 +755,17 @@ export interface PaneWidths {
  * This keeps the layout stable across terminal widths without clipping.
  */
 export function computePaneWidths(terminalWidth: number): PaneWidths {
-  // Bottom row: epic gets 1/3, done gets 2/3 — mirrors flexGrow 1:2.
+  // Bottom row: epic and done each get 1/2 — mirrors flexGrow 1:1.
   // BOTH estimates use Math.floor so they are strictly ≤ the actual flex
-  // allocation regardless of how the engine rounds.  The 1-2 chars "lost"
-  // between floor(tw/3) + floor(2tw/3) and tw are intentional slack that
-  // joins WIDTH_SAFETY_MARGIN in preventing right-edge clipping.
+  // allocation regardless of how the engine rounds.  The 0-1 char "lost"
+  // between 2×floor(tw/2) and tw is intentional slack that joins
+  // WIDTH_SAFETY_MARGIN in preventing right-edge clipping.
   //
   // No artificial minimum clamp — the flex engine allocates based on the
   // ratio, not our estimate, so clamping would make the estimate optimistic
   // relative to reality and risk right-edge overflow.
-  const epicPaneWidth = Math.floor(terminalWidth / 3)
-  const donePaneWidth = Math.floor((terminalWidth * 2) / 3)
+  const epicPaneWidth = Math.floor(terminalWidth / 2)
+  const donePaneWidth = Math.floor(terminalWidth / 2)
 
   // -- Active pane (full terminal width) --
   const activeTitleWidth = Math.max(0, terminalWidth - activeFixedWidth - WIDTH_SAFETY_MARGIN)
@@ -978,7 +978,7 @@ export function DashboardView({
         </box>
         <box
           style={{
-            flexGrow: 2,
+            flexGrow: 1,
             flexShrink: 0,
             flexBasis: 0,
           }}
