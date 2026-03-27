@@ -199,8 +199,9 @@ export const claimTask = (
 
 /**
  * Close a task with a success reason.
- * Also removes the `error` label so stale failure state does not persist
- * on successfully completed tasks.
+ * Uses `bd update --status closed` (not `bd close`) to avoid Beads'
+ * parent-epic auto-close behavior. Also removes the `error` label so stale
+ * failure state does not persist on successfully completed tasks.
  */
 export const closeTaskSuccess = (
   id: string,
@@ -208,20 +209,23 @@ export const closeTaskSuccess = (
 ): Effect.Effect<void, FatalError> =>
   Effect.gen(function* () {
     yield* removeLabel(id, "error")
-    yield* runBd(["close", id, "--reason", reason])
+    yield* runBd(["update", id, "--status", "closed"])
+    yield* addComment(id, `[ralphe] close reason: ${reason}`)
   })
 
 /**
  * Close a task with a failure reason.
- * The reason includes a failure keyword to preserve Beads failure semantics.
+ * Uses `bd update --status closed` (not `bd close`) to avoid Beads'
+ * parent-epic auto-close behavior.
  */
 export const closeTaskFailure = (
   id: string,
   reason: string,
 ): Effect.Effect<void, FatalError> =>
-  runBd(["close", id, "--reason", `failed: ${reason}`]).pipe(
-    Effect.map(() => undefined),
-  )
+  Effect.gen(function* () {
+    yield* runBd(["update", id, "--status", "closed"])
+    yield* addComment(id, `[ralphe] close reason: failed: ${reason}`)
+  })
 
 /**
  * Add a label to a task.
@@ -471,7 +475,8 @@ export const closeEpic = (
 ): Effect.Effect<EpicWorktreeCleanupResult, FatalError> =>
   Effect.gen(function* () {
     // Close the epic issue in Beads
-    yield* runBd(["close", id, "--reason", reason])
+    yield* runBd(["update", id, "--status", "closed"])
+    yield* addComment(id, `[ralphe] close reason: ${reason}`)
     yield* Effect.logInfo(`Epic ${id} closed: ${reason}`)
 
     // Trigger worktree cleanup
