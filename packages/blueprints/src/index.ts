@@ -86,3 +86,22 @@ export type {
 export { buildCiGitStep, executePostLoopGitOps, defaultGitOps } from "./git-steps.js"
 export type { GitMode, GitOps } from "./git-steps.js"
 
+// ============================================================================
+// Workspace lifecycle primitives
+// ============================================================================
+
+export {
+  sanitizeWorkspaceId,
+  getRepoRoot,
+  worktreeExistsAt,
+  getWorktreeBranch,
+  createWorktree,
+  removeWorktree,
+  recreateWorktree,
+  ensureWorktree,
+  getWorktreeState,
+  isWorktreeDirty as isWorkspaceDirty,
+  removeWorktreeWithCleanup,
+} from "./workspace.js"
+export type { WorktreeState, WorktreeCleanupResult } from "./workspace.js"
+
