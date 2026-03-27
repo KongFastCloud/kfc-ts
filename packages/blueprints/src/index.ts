@@ -105,3 +105,14 @@ export {
 } from "./workspace.js"
 export type { WorktreeState, WorktreeCleanupResult } from "./workspace.js"
 
+// ============================================================================
+// Bootstrap install primitives
+// ============================================================================
+
+export {
+  detectPackageManager,
+  bootstrapCommandFor,
+  bootstrapInstall,
+} from "./bootstrap.js"
+export type { BootstrapPackageManager } from "./bootstrap.js"
+
