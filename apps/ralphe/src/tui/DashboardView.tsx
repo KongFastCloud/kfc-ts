@@ -68,7 +68,7 @@ const epicStatusColor: Record<EpicDisplayStatus, string> = {
   not_started: colors.fg.muted,
   active: colors.status.info,
   dirty: colors.status.warning,
-  queued_for_deletion: colors.status.error,
+  queued_for_deletion: colors.status.warning,
 }
 
 const epicStatusIndicator: Record<EpicDisplayStatus, string> = {
@@ -76,7 +76,7 @@ const epicStatusIndicator: Record<EpicDisplayStatus, string> = {
   not_started: "·",
   active: "●",
   dirty: "△",
-  queued_for_deletion: "✗",
+  queued_for_deletion: "◌",
 }
 
 // ---------------------------------------------------------------------------
@@ -536,7 +536,8 @@ function EpicRow({
 
   const idStr = formatIdCell(epic.id)
   const titleStr = titleWidth > 0 ? pad(truncate(epic.title, titleWidth - 1), titleWidth) : ""
-  const statusStr = statusWidth > 0 ? pad(truncate(`${indicator} ${epic.status}`, statusWidth - 1), statusWidth) : ""
+  const statusLabel = epic.status === "queued_for_deletion" ? "deleting" : epic.status
+  const statusStr = statusWidth > 0 ? pad(truncate(`${indicator} ${statusLabel}`, statusWidth - 1), statusWidth) : ""
 
   const idColor = effectiveDimmed ? colors.fg.dim : colors.fg.muted
   const titleColor = effectiveDimmed
