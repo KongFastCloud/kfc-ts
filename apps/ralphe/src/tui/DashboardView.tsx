@@ -743,7 +743,7 @@ export interface PaneWidths {
 /**
  * Derive pane-local column widths from the terminal width.
  *
- * The bottom row uses flexGrow 1 (epic) : 2 (done), so we mirror that
+ * The bottom row uses flexGrow 1 (epic) : 1 (done), so we mirror that
  * ratio.  Both pane estimates use Math.floor so they are conservatively
  * smaller-or-equal to the actual flex allocation — this prevents content
  * from overrunning the pane boundary even if the flex engine rounds
@@ -934,7 +934,7 @@ export function DashboardView({
         selectedIndex={focusedTable === "active" ? activeSelectedIndex : -1}
         scrollOffset={activeScrollOffset}
         titleWidth={activeTitleWidth}
-        flexGrow={2}
+        flexGrow={1}
         borderColor={
           focusedTable === "active"
             ? colors.accent.primary
