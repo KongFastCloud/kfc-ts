@@ -152,8 +152,8 @@ describe("narrow-terminal header width regression", () => {
       const contentWidth = tw - 2
       const budget = computeHeaderErrorBudget(contentWidth, rightWidth, configWidth, false)
       if (budget > 0) {
-        // leftFixed(14) + errorPrefix(3) + budget + rightWidth must fit
-        const totalUsed = 14 + 3 + budget + rightWidth
+        // leftFixed(14) + leftGap(1) + errorPrefix(3) + budget + rightWidth must fit
+        const totalUsed = 14 + 1 + 3 + budget + rightWidth
         expect(totalUsed).toBeLessThanOrEqual(contentWidth)
       }
     }
@@ -167,7 +167,7 @@ describe("narrow-terminal header width regression", () => {
       const showConfig = contentWidth >= 14 + configWidth + rightWidth + 4
       const budget = computeHeaderErrorBudget(contentWidth, rightWidth, configWidth, showConfig)
       if (budget > 0 && showConfig) {
-        const totalUsed = 14 + 3 + budget + configWidth + rightWidth
+        const totalUsed = 14 + 1 + 3 + budget + configWidth + rightWidth
         expect(totalUsed).toBeLessThanOrEqual(contentWidth)
       }
     }
@@ -239,7 +239,7 @@ describe("cross-layer narrow-terminal consistency", () => {
       const errorBudget = computeHeaderErrorBudget(contentWidth, rightWidth, 0, false)
       expect(errorBudget).toBeGreaterThanOrEqual(0)
       if (errorBudget > 0) {
-        expect(14 + 3 + errorBudget + rightWidth).toBeLessThanOrEqual(contentWidth)
+        expect(14 + 1 + 3 + errorBudget + rightWidth).toBeLessThanOrEqual(contentWidth)
       }
 
       // Footer layer

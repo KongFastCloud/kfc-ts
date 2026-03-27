@@ -176,8 +176,10 @@ export function computeHeaderRightWidth(
     ? workerLabel.length + (taskIdDisplay ? ` [${taskIdDisplay}]`.length : 0)
     : 0
 
-  // Gaps between the three items in the right section (gap: 2 between each)
-  const rightGaps = workerLabel ? 4 : 0 // two gaps of 2 when worker is present
+  // Right section always contains task count + time, and optionally worker status.
+  // With `gap: 2`, total gap width is (itemCount - 1) * 2.
+  const rightItemCount = workerLabel ? 3 : 2
+  const rightGaps = Math.max(0, rightItemCount - 1) * 2
   const rightWidth = workerWidth + rightGaps + taskCountStr.length + timeDisplay.length
 
   return { rightWidth, taskIdDisplay }
@@ -194,12 +196,13 @@ export function computeHeaderErrorBudget(
   showConfig: boolean,
 ): number {
   // Left fixed: "◉ ralphe watch" occupies 14 visible columns.
-  // The error prefix " ⚠ " adds 3 more characters.
+  // The left row uses `gap: 1` between title and error, and error prefix " ⚠ " adds 3.
   const leftFixed = 14
+  const leftErrorGap = 1
   const errorPrefix = 3 // " ⚠ "
   const usedWidth =
     leftFixed + rightWidth + (showConfig ? configWidth : 0) + HEADER_SAFETY_MARGIN
-  return Math.max(0, contentWidth - usedWidth - errorPrefix)
+  return Math.max(0, contentWidth - usedWidth - leftErrorGap - errorPrefix)
 }
 
 function WatchHeader({

@@ -40,6 +40,14 @@ describe("computeHeaderRightWidth", () => {
     expect(rightWidth).toBeGreaterThan(0)
   })
 
+  it("accounts for the single gap between task count and time when worker is absent", () => {
+    const totalTasks = 3
+    const timeStr = "08:00:00"
+    const { rightWidth } = computeHeaderRightWidth(undefined, totalTasks, timeStr)
+    const expected = `${totalTasks} tasks`.length + `⏱ ${timeStr}`.length + 2
+    expect(rightWidth).toBe(expected)
+  })
+
   it("truncates long task IDs to at most 16 characters", () => {
     const longId = "very-long-task-identifier-that-exceeds-limit"
     const { taskIdDisplay } = computeHeaderRightWidth(
@@ -101,7 +109,8 @@ describe("computeHeaderErrorBudget", () => {
   })
 
   it("total header content stays within content width at practical widths", () => {
-    // When budget > 0 the error is rendered: leftFixed(14) + errorPrefix(3) + budget + rightWidth
+    // When budget > 0 the error is rendered:
+    // leftFixed(14) + leftGap(1) + errorPrefix(3) + budget + rightWidth
     // When budget === 0 the error is hidden entirely — we only check that
     // the error + prefix does not push past the available space.
     // Use a realistic rightWidth (32) which requires at least ~50 cols to fit
@@ -112,7 +121,7 @@ describe("computeHeaderErrorBudget", () => {
       const contentWidth = tw - 2
       const budget = computeHeaderErrorBudget(contentWidth, rightWidth, configWidth, false)
       if (budget > 0) {
-        const totalUsed = 14 + 3 + budget + rightWidth
+        const totalUsed = 14 + 1 + 3 + budget + rightWidth
         expect(totalUsed).toBeLessThanOrEqual(contentWidth)
       }
     }
