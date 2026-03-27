@@ -149,7 +149,9 @@ function makeWorkflowDeps(): WatchWorkflowDeps {
     },
     getEpicRuntimeStatus: () => Effect.succeed("ready"),
     setEpicRuntimeStatus: () => Effect.succeed(undefined),
-    bootstrapEpicWorktree: () => Effect.succeed(undefined),
+    workspacePrepare: (input) => Effect.succeed({ worktreePath: input.worktreePath, copyResult: { copied: 0, skipped: 0, failures: [] }, completedStage: "bootstrap" as const }),
+    deriveEpicWorktreePath: (epicId: string) => Effect.succeed(`/tmp/ralphe-worktrees/${epicId}`),
+    getRepoRoot: () => Effect.succeed("/tmp/mock-repo-root"),
   }
 }
 
