@@ -116,3 +116,15 @@ export {
 } from "./bootstrap.js"
 export type { BootstrapPackageManager } from "./bootstrap.js"
 
+// ============================================================================
+// Copy-ignored primitives
+// ============================================================================
+
+export {
+  discoverIgnoredEntries,
+  readWorktreeInclude,
+  filterByWorktreeInclude,
+  copyIgnored,
+} from "./copy.js"
+export type { CopyIgnoredResult } from "./copy.js"
+
