@@ -16,6 +16,7 @@
  * - Git primitives (commit, push, CI wait, dirty check)
  * - Git composition helpers (buildCiGitStep, executePostLoopGitOps)
  * - Shared tagged error types (CheckFailure, FatalError)
+ * - Workspace-prepare pipeline (ensure → copy-ignored → bootstrap)
  *
  * ## What apps own
  *
@@ -127,4 +128,11 @@ export {
   copyIgnored,
 } from "./copy.js"
 export type { CopyIgnoredResult } from "./copy.js"
+
+// ============================================================================
+// Workspace-prepare pipeline
+// ============================================================================
+
+export { workspacePrepare } from "./workspace-prepare.js"
+export type { WorkspacePrepareInput, WorkspacePrepareResult } from "./workspace-prepare.js"
 
